@@ -335,7 +335,7 @@ class CryptoTailStrategyExecutionService(
                 failReason = body.errorMsg ?: "unknown"
             } else {
                 val errorBody = response.errorBody()?.string().orEmpty()
-                failReason = "HTTP ${response.code()} $errorBody"
+                failReason = errorBody.ifEmpty { "请求失败" }
             }
         } catch (e: Exception) {
             failReason = e.message ?: e.toString()
