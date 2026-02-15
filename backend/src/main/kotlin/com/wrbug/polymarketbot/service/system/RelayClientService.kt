@@ -8,9 +8,12 @@ import com.wrbug.polymarketbot.enums.WalletType
 import com.wrbug.polymarketbot.util.EthereumUtils
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.createClient
+import kotlinx.coroutines.delay
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import retrofit2.Response
 import java.math.BigInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * RelayClient 服务
@@ -59,6 +62,59 @@ class RelayClientService(
     private val polygonRpcApi: EthereumRpcApi by lazy {
         val rpcUrl = rpcNodeService.getHttpUrl()
         retrofitFactory.createEthereumRpcApi(rpcUrl)
+    }
+
+    /** 遇到 429 限流时的重试次数 */
+    private val builderRelayerRateLimitMaxAttempts = 3
+
+    /** 429 限流重试退避基数（毫秒），第 n 次重试等待 baseMs * 2^(n-1) */
+    private val builderRelayerRateLimitBackoffMs = 2000L
+
+    /** Builder Relayer 配额用尽后的冷却截止时间（毫秒时间戳），在此时间前不再发起赎回 */
+    private val builderRelayerQuotaBlockedUntilMs = AtomicLong(0)
+
+    /**
+     * 是否处于 Builder Relayer 配额冷却期（配额用尽后在该时间内不再发起赎回）。
+     */
+    fun isBuilderRelayerQuotaBlocked(): Boolean = System.currentTimeMillis() < builderRelayerQuotaBlockedUntilMs.get()
+
+    /**
+     * 配额冷却剩余秒数，未在冷却期时返回 0。
+     */
+    fun getBuilderRelayerQuotaBlockedRemainingSeconds(): Long {
+        val remaining = (builderRelayerQuotaBlockedUntilMs.get() - System.currentTimeMillis()) / 1000
+        return maxOf(0, remaining)
+    }
+
+    /**
+     * 从 API 错误响应中解析 "quota exceeded... resets in N seconds"，并设置配额冷却截止时间。
+     */
+    private fun updateQuotaBlockedFromErrorBody(errorBody: String) {
+        if (!errorBody.contains("quota exceeded", ignoreCase = true)) return
+        val regex = Regex("resets\\s+in\\s+(\\d+)\\s+seconds", RegexOption.IGNORE_CASE)
+        regex.find(errorBody)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { seconds ->
+            val untilMs = System.currentTimeMillis() + seconds * 1000
+            builderRelayerQuotaBlockedUntilMs.set(untilMs)
+            logger.warn("Builder Relayer 配额已用尽，${seconds}秒内不再发起赎回")
+        }
+    }
+
+    /**
+     * 对 Builder Relayer API 调用进行 429 限流重试（指数退避）。
+     * 当 HTTP 状态为 429（Too Many Requests，如 Cloudflare 1015）时等待后重试，避免瞬时限流导致赎回失败。
+     */
+    private suspend fun <T> withBuilderRelayerRateLimitRetry(block: suspend () -> Response<T>): Response<T> {
+        var lastResponse: Response<T>? = null
+        for (attempt in 1..builderRelayerRateLimitMaxAttempts) {
+            val response = block()
+            lastResponse = response
+            if (response.code() != 429) return response
+            if (attempt == builderRelayerRateLimitMaxAttempts) return response
+            val delayMs = builderRelayerRateLimitBackoffMs * (1L shl (attempt - 1))
+            logger.warn("Builder Relayer API 限流(429)，${delayMs}ms 后重试 (${attempt}/${builderRelayerRateLimitMaxAttempts})")
+            delay(delayMs)
+        }
+        return lastResponse!!
     }
 
     /**
@@ -131,6 +187,7 @@ class RelayClientService(
                 Result.success(responseTime)
             } else {
                 val errorBody = response.errorBody()?.string() ?: "未知错误"
+                updateQuotaBlockedFromErrorBody(errorBody)
                 Result.failure(Exception("Builder Relayer API 调用失败: ${response.code()} - $errorBody"))
             }
         } catch (e: Exception) {
@@ -395,9 +452,10 @@ class RelayClientService(
         val credentials = org.web3j.crypto.Credentials.create(privateKeyBigInt.toString(16))
         val fromAddress = credentials.address
 
-        val relayPayloadResponse = relayerApi.getRelayPayload(fromAddress, RELAYER_TYPE_PROXY)
+        val relayPayloadResponse = withBuilderRelayerRateLimitRetry { relayerApi.getRelayPayload(fromAddress, RELAYER_TYPE_PROXY) }
         if (!relayPayloadResponse.isSuccessful || relayPayloadResponse.body() == null) {
             val errorBody = relayPayloadResponse.errorBody()?.string() ?: "未知错误"
+            updateQuotaBlockedFromErrorBody(errorBody)
             logger.error("获取 Relay Payload 失败: code=${relayPayloadResponse.code()}, body=$errorBody")
             return Result.failure(Exception("获取 Relay Payload 失败: ${relayPayloadResponse.code()} - $errorBody"))
         }
@@ -461,9 +519,10 @@ class RelayClientService(
             metadata = "Redeem positions via Builder Relayer PROXY"
         )
 
-        val response = relayerApi.submitTransaction(request)
+        val response = withBuilderRelayerRateLimitRetry { relayerApi.submitTransaction(request) }
         if (!response.isSuccessful || response.body() == null) {
             val errorBody = response.errorBody()?.string() ?: "未知错误"
+            updateQuotaBlockedFromErrorBody(errorBody)
             logger.error("Builder Relayer PROXY API 调用失败: code=${response.code()}, body=$errorBody")
             return Result.failure(Exception("Builder Relayer PROXY 调用失败: ${response.code()} - $errorBody"))
         }
@@ -625,10 +684,11 @@ class RelayClientService(
         // safeTx.data 已经是带 0x 前缀的完整调用数据
         val redeemCallData = safeTx.data
 
-        // 获取 Proxy 的 nonce（通过 Builder Relayer API）
-        val nonceResponse = relayerApi.getNonce(fromAddress, RELAYER_TYPE_SAFE)
+        // 获取 Proxy 的 nonce（通过 Builder Relayer API，遇 429 限流时重试）
+        val nonceResponse = withBuilderRelayerRateLimitRetry { relayerApi.getNonce(fromAddress, RELAYER_TYPE_SAFE) }
         if (!nonceResponse.isSuccessful || nonceResponse.body() == null) {
             val errorBody = nonceResponse.errorBody()?.string() ?: "未知错误"
+            updateQuotaBlockedFromErrorBody(errorBody)
             logger.error("获取 nonce 失败: code=${nonceResponse.code()}, body=$errorBody")
             return Result.failure(Exception("获取 nonce 失败: ${nonceResponse.code()} - $errorBody"))
         }
@@ -710,11 +770,12 @@ class RelayClientService(
             }
         )
 
-        // 调用 Builder Relayer API（认证头通过拦截器添加）
-        val response = relayerApi.submitTransaction(request)
+        // 调用 Builder Relayer API（认证头通过拦截器添加，遇 429 限流时重试）
+        val response = withBuilderRelayerRateLimitRetry { relayerApi.submitTransaction(request) }
 
         if (!response.isSuccessful || response.body() == null) {
             val errorBody = response.errorBody()?.string() ?: "未知错误"
+            updateQuotaBlockedFromErrorBody(errorBody)
             logger.error("Builder Relayer API 调用失败: code=${response.code()}, body=$errorBody")
             return Result.failure(Exception("Builder Relayer API 调用失败: ${response.code()} - $errorBody"))
         }
