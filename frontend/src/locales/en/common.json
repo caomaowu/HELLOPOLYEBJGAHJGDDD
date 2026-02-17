@@ -1428,7 +1428,8 @@
       "delete": "Delete",
       "viewTriggers": "Orders",
       "deleteConfirm": "Delete this strategy?",
-      "fetchFailed": "Failed to fetch list"
+      "fetchFailed": "Failed to fetch list",
+      "configGuide": "Configuration Guide"
     },
     "form": {
       "walletTip": "Use a dedicated wallet to avoid balance or order issues.",

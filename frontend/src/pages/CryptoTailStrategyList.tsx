@@ -26,16 +26,17 @@ import {
 } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
-import { PlusOutlined, EditOutlined, UnorderedListOutlined, InfoCircleOutlined, WarningOutlined, CalendarOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, UnorderedListOutlined, InfoCircleOutlined, WarningOutlined, CalendarOutlined, ArrowUpOutlined, ArrowDownOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
 import { apiService } from '../services/api'
 import { useAccountStore } from '../store/accountStore'
 import type { CryptoTailStrategyDto, CryptoTailStrategyTriggerDto, CryptoTailMarketOptionDto } from '../types'
 import { formatUSDC, formatNumber } from '../utils'
+import { getVersionInfo } from '../utils/version'
 
 const CryptoTailStrategyList: React.FC = () => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const { accounts, fetchAccounts } = useAccountStore()
@@ -531,9 +532,25 @@ const CryptoTailStrategyList: React.FC = () => {
     })
   }, [formModalOpen, editingId, selectedMarket, intervalSeconds])
 
+  const getGuideUrl = () => {
+    const { githubRepoUrl } = getVersionInfo()
+    const lang = i18n.language === 'zh-CN' || i18n.language === 'zh-TW' ? 'zh' : 'en'
+    return `${githubRepoUrl}/blob/main/docs/${lang}/crypto-tail-strategy-user-guide.md`
+  }
+
   return (
     <div style={{ padding: isMobile ? 12 : 24 }}>
-      <h1 style={{ marginBottom: 16, fontSize: isMobile ? 20 : 24 }}>{t('cryptoTailStrategy.list.title')}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <h1 style={{ margin: 0, fontSize: isMobile ? 20 : 24 }}>{t('cryptoTailStrategy.list.title')}</h1>
+        <Button
+          type="link"
+          icon={<FileTextOutlined />}
+          onClick={() => window.open(getGuideUrl(), '_blank')}
+          style={{ padding: 0, height: 'auto', fontSize: isMobile ? 14 : 16 }}
+        >
+          {t('cryptoTailStrategy.list.configGuide')}
+        </Button>
+      </div>
       {binanceUnhealthy.length > 0 && (
         <Alert
           type="error"

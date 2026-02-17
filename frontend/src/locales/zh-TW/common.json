@@ -1428,7 +1428,8 @@
       "delete": "刪除",
       "viewTriggers": "訂單",
       "deleteConfirm": "確定刪除該策略？",
-      "fetchFailed": "獲取列表失敗"
+      "fetchFailed": "獲取列表失敗",
+      "configGuide": "配置指南"
     },
     "form": {
       "walletTip": "建議使用專用錢包，避免手動操作等導致餘額或下單異常。",

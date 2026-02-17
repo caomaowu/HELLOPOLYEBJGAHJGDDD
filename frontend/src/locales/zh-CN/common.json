@@ -1427,7 +1427,8 @@
       "delete": "删除",
       "viewTriggers": "订单",
       "deleteConfirm": "确定删除该策略？",
-      "fetchFailed": "获取列表失败"
+      "fetchFailed": "获取列表失败",
+      "configGuide": "配置指南"
     },
     "form": {
       "walletTip": "建议使用专用钱包，避免手动操作等导致余额或下单异常。",
