@@ -97,6 +97,10 @@ class CryptoTailMonitorService(
     private val strategyHistoryPeriod = ConcurrentHashMap<Long, Long>()
     private val maxHistorySize = 300
 
+    /** price_change 推送节流：每策略最近一次推送时间，1s 内不重复推送 */
+    private val lastPriceChangePushTime = ConcurrentHashMap<Long, Long>()
+    private val priceChangePushThrottleMs = 1_000L
+
     data class MonitorEntry(
         val strategyId: Long,
         val strategy: CryptoTailStrategy,
@@ -652,8 +656,13 @@ class CryptoTailMonitorService(
 
             strategyPriceData[strategy.id!!] = newPriceData
 
-            val pushData = buildPushData(strategy, newPriceData)
-            addToHistoryAndPush(strategy.id!!, pushData)
+            val now = System.currentTimeMillis()
+            val last = lastPriceChangePushTime[strategy.id!!] ?: 0L
+            if (now - last >= priceChangePushThrottleMs) {
+                lastPriceChangePushTime[strategy.id!!] = now
+                val pushData = buildPushData(strategy, newPriceData)
+                addToHistoryAndPush(strategy.id!!, pushData)
+            }
         }
     }
 

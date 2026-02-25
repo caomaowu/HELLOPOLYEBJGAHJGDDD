@@ -159,15 +159,19 @@ const CryptoTailMonitor: React.FC = () => {
       setInitData(prev => prev ? { ...prev, periodStartUnix: pushPeriod } : null)
       setPriceHistory([newPoint])
     } else {
-      // 同周期：追加数据
-      // 记录首次数据时间（仅在中途进入且未切换过周期时记录）
+      // 同周期：追加数据（同周期内至少间隔 1s 才追加一点，避免 1s 内多条推送导致点过密）
       setFirstDataTime(prev => {
         if (prev == null) {
           return newPoint.time
         }
         return prev
       })
+      const minIntervalMs = 1_000
       setPriceHistory(prev => {
+        const lastTime = prev.length > 0 ? prev[prev.length - 1].time : 0
+        if (prev.length > 0 && newPoint.time - lastTime < minIntervalMs) {
+          return prev
+        }
         const maxPoints = 300
         const newHistory = [...prev, newPoint]
         return newHistory.slice(-maxPoints)
