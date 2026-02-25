@@ -92,6 +92,7 @@
     "accountNamePlaceholder": "账户名称（可选）",
     "accountIdRequired": "账户ID不能为空",
     "walletAddress": "钱包地址",
+    "walletType": "钱包类型",
     "proxyAddress": "代理钱包地址",
     "apiCredentials": "API 凭证",
     "apiKey": "API Key",
@@ -417,6 +418,40 @@
       "saveSuccess": "自动赎回配置已保存",
       "saveFailed": "保存自动赎回配置失败"
     }
+  },
+  "systemUpdate": {
+    "title": "系统更新",
+    "currentVersion": "当前版本",
+    "ready": "就绪",
+    "hasNewVersion": "发现新版本: {{version}}",
+    "alreadyLatest": "当前已是最新版本",
+    "checkFailed": "检查更新失败",
+    "confirmTitle": "确认更新",
+    "confirmContent1": "确定要更新到版本 {{version}} 吗？",
+    "confirmContent2": "更新过程中系统将暂时不可用（约30-60秒）。",
+    "confirmContent3": "更新完成后页面将自动刷新。",
+    "okText": "立即更新",
+    "cancelText": "取消",
+    "updateStarted": "更新已启动，请稍候...",
+    "updateFailedWithMessage": "更新失败: {{message}}",
+    "updateSuccessRefresh": "更新成功！页面将在3秒后刷新...",
+    "needAdmin": "需要管理员权限才能执行更新",
+    "startFailed": "启动更新失败",
+    "updating": "系统正在更新",
+    "updateFailedTitle": "更新失败",
+    "checkUpdate": "检查更新",
+    "newVersionFound": "发现新版本",
+    "publishedAt": "发布时间",
+    "releaseNotes": "更新内容",
+    "upgradeNow": "立即升级到 v{{version}}",
+    "usageTitle": "使用说明",
+    "usage1": "点击「检查更新」按钮检查是否有新版本",
+    "usage2": "更新过程约需30-60秒，期间系统将暂时不可用",
+    "usage3": "更新成功后页面将自动刷新",
+    "usage4": "如果更新失败，系统会自动回滚到当前版本",
+    "versionTooltipNew": "有新版本可用，点击前往系统更新",
+    "versionTooltipLatest": "当前已是最新版本",
+    "prerelease": "预发布"
   },
   "builderApiKey": {
     "title": "Builder API Key 配置",
@@ -1578,20 +1613,36 @@
       "title": "分时图",
       "btcTitle": "BTC 分时图",
       "marketTitle": "市场分时图",
-      "price": "BTC 价格",
+      "priceChart": "价格分时图",
+      "price": "价格",
       "openPrice": "开盘价",
       "spread": "价差",
       "minSpreadLine": "最小价差线",
+      "maxSpreadLine": "最大价差线",
       "marketUp": "Up",
       "marketDown": "Down",
-      "time": "时间"
+      "time": "时间",
+      "latestPrice": "最新价",
+      "timeWindowStart": "区间开始",
+      "timeWindowEnd": "区间结束"
     },
     "strategyInfo": {
       "title": "策略信息",
       "market": "市场",
       "interval": "周期",
       "account": "账户",
-      "spreadMode": "价差模式"
+      "spreadMode": "价差模式",
+      "spreadDirection": "价差方向"
+    },
+    "periodSwitch": {
+      "mode": "周期切换模式",
+      "auto": "自动",
+      "manual": "手动",
+      "autoDesc": "周期结束时自动切换到最新周期",
+      "manualDesc": "周期结束时保留完整数据",
+      "switchToLatest": "切换到最新周期",
+      "periodEnded": "当前周期已结束",
+      "newPeriodAvailable": "新周期已开始"
     }
   }
 }

@@ -293,7 +293,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 alignItems: 'center',
                 verticalAlign: 'middle'
               }}
-              title={hasUpdate ? '有新版本可用，点击前往系统更新' : '当前已是最新版本'}
+              title={hasUpdate ? t('systemUpdate.versionTooltipNew') : t('systemUpdate.versionTooltipLatest')}
             >
               {getVersionInfo().gitTag || `v${getVersionText()}`}
             </Tag>
@@ -415,7 +415,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 alignItems: 'center',
                 verticalAlign: 'middle'
               }}
-              title={hasUpdate ? '有新版本可用，点击前往系统更新' : '当前已是最新版本'}
+              title={hasUpdate ? t('systemUpdate.versionTooltipNew') : t('systemUpdate.versionTooltipLatest')}
             >
               {getVersionInfo().gitTag || `v${getVersionText()}`}
             </Tag>
