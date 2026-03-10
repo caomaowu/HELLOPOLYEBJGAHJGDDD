@@ -25,8 +25,8 @@ jobs:
           BODY="${{ github.event.pull_request.body }}"
           HEAD_REF="${{ github.event.pull_request.head.ref }}"
 
-          # 优先从 PR 描述解析
-          ISSUE_NUM=$(echo "$BODY" | grep -oE '(Closes|Fixes|Resolves) #([0-9]+)' | head -1 | grep -oE '[0-9]+')
+          # 优先从 PR 描述解析（无匹配时 grep 会 exit 1，需 || true 避免 set -e 导致脚本退出）
+          ISSUE_NUM=$(echo "$BODY" | grep -oE '(Closes|Fixes|Resolves) #([0-9]+)' | head -1 | grep -oE '[0-9]+' || true)
           if [ -z "$ISSUE_NUM" ]; then
             # 从分支名解析 ai_fix/N_xxx
             ISSUE_NUM=$(echo "$HEAD_REF" | sed -n 's|^ai_fix/\([0-9]*\)_.*|\1|p')
