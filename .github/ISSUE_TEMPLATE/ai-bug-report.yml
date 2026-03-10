@@ -1,6 +1,6 @@
 ---
 name: 🤖 Bug Report for AI Fix / AI Bug 报告
-description: Bug 报告模板（提交后请手动添加 'fix via ai' 标签触发自动修复）
+description: Bug 报告模板
 title: '[Bug] / '
 assignees: []
 body:
@@ -12,8 +12,6 @@ body:
         本模板用于报告 PolyHermes 项目的 bug。
 
         ⚠️ **Important / 重要提示**：
-        - After submission, if you need AI auto-fix, please manually add the `fix via ai` label
-          / 提交后，如需 AI 自动修复，请手动添加 `fix via ai` 标签
         - AI fixes will be on the `fix_issues_by_ai` branch / AI 修复将在 `fix_issues_by_ai` 分支上进行
         - All AI fixes require human review before merging / 所有 AI 修复需要人工审核后才能合并
         - Security vulnerabilities, database migrations, major changes are not recommended for AI auto-fix
