@@ -183,19 +183,3 @@ body:
         - Does it only occur with specific datasets or users? / 是否只在特定数据集或特定用户情况下出现？
         / ...
         Any other context / 其他任何上下文信息...
-
-  - type: checkboxes
-    id: ai-fix-approval
-    attributes:
-      label: 🤖 AI Auto-Fix Confirmation / AI 自动修复确认
-      description: If you need AI to auto-fix this issue, check the options below (remember to add 'fix via ai' label after submission)
-        / 如需 AI 自动修复此 issue，请勾选下方选项（提交后记得添加 'fix via ai' 标签）
-      options:
-        - label: |
-            I understand the AI auto-fix workflow and agree to manually review the AI-created PR
-            / 我已了解 AI 自动修复的工作流程，并同意在 AI 创建 PR 后进行人工审核
-          required: false
-        - label: |
-            This issue is suitable for AI auto-fix (not a security vulnerability, not a database migration, not a major change)
-            / 此问题适合 AI 自动修复（非安全漏洞、非数据库迁移、非重大变更）
-          required: false
