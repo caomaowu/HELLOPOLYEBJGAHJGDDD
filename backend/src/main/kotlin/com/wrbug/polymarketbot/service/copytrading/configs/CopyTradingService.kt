@@ -19,6 +19,8 @@ import org.springframework.context.ApplicationContextAware
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport.COPY_MODE_ADAPTIVE
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport.MULTIPLIER_MODE_NONE
 
 /**
  * 跟单配置管理服务（独立配置，不再绑定模板）
@@ -84,10 +86,18 @@ class CopyTradingService(
                     copyMode = request.copyMode ?: template.copyMode,
                     copyRatio = request.copyRatio?.toSafeBigDecimal() ?: template.copyRatio,
                     fixedAmount = request.fixedAmount?.toSafeBigDecimal() ?: template.fixedAmount,
+                    adaptiveMinRatio = request.adaptiveMinRatio?.toSafeBigDecimal() ?: template.adaptiveMinRatio,
+                    adaptiveMaxRatio = request.adaptiveMaxRatio?.toSafeBigDecimal() ?: template.adaptiveMaxRatio,
+                    adaptiveThreshold = request.adaptiveThreshold?.toSafeBigDecimal() ?: template.adaptiveThreshold,
+                    multiplierMode = request.multiplierMode ?: template.multiplierMode,
+                    tradeMultiplier = request.tradeMultiplier?.toSafeBigDecimal() ?: template.tradeMultiplier,
+                    tieredMultipliers = request.tieredMultipliers?.let { CopyTradingSizingSupport.serializeTieredMultipliers(it) }
+                        ?: template.tieredMultipliers,
                     maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: template.maxOrderSize,
                     minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: template.minOrderSize,
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: template.maxDailyLoss,
                     maxDailyOrders = request.maxDailyOrders ?: template.maxDailyOrders,
+                    maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: template.maxDailyVolume,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                     delaySeconds = request.delaySeconds ?: template.delaySeconds,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -115,10 +125,17 @@ class CopyTradingService(
                     copyMode = request.copyMode,
                     copyRatio = request.copyRatio?.toSafeBigDecimal() ?: BigDecimal.ONE,
                     fixedAmount = request.fixedAmount?.toSafeBigDecimal(),
+                    adaptiveMinRatio = request.adaptiveMinRatio?.toSafeBigDecimal(),
+                    adaptiveMaxRatio = request.adaptiveMaxRatio?.toSafeBigDecimal(),
+                    adaptiveThreshold = request.adaptiveThreshold?.toSafeBigDecimal(),
+                    multiplierMode = request.multiplierMode ?: MULTIPLIER_MODE_NONE,
+                    tradeMultiplier = request.tradeMultiplier?.toSafeBigDecimal(),
+                    tieredMultipliers = CopyTradingSizingSupport.serializeTieredMultipliers(request.tieredMultipliers),
                     maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: "1000".toSafeBigDecimal(),
                     minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: "1".toSafeBigDecimal(),
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                     maxDailyOrders = request.maxDailyOrders ?: 100,
+                    maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                     delaySeconds = request.delaySeconds ?: 0,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -137,6 +154,8 @@ class CopyTradingService(
                     pushFilteredOrders = request.pushFilteredOrders ?: false  // 手动输入时使用请求中的值，默认为 false
                 )
             }
+
+            validateConfig(config)?.let { return Result.failure(IllegalArgumentException(it)) }
             
             // 6. 创建跟单配置
             val copyTrading = CopyTrading(
@@ -146,10 +165,17 @@ class CopyTradingService(
                 copyMode = config.copyMode,
                 copyRatio = config.copyRatio,
                 fixedAmount = config.fixedAmount,
+                adaptiveMinRatio = config.adaptiveMinRatio,
+                adaptiveMaxRatio = config.adaptiveMaxRatio,
+                adaptiveThreshold = config.adaptiveThreshold,
+                multiplierMode = config.multiplierMode,
+                tradeMultiplier = config.tradeMultiplier,
+                tieredMultipliers = config.tieredMultipliers,
                 maxOrderSize = config.maxOrderSize,
                 minOrderSize = config.minOrderSize,
                 maxDailyLoss = config.maxDailyLoss,
                 maxDailyOrders = config.maxDailyOrders,
+                maxDailyVolume = config.maxDailyVolume,
                 priceTolerance = config.priceTolerance,
                 delaySeconds = config.delaySeconds,
                 pollIntervalSeconds = config.pollIntervalSeconds,
@@ -217,10 +243,21 @@ class CopyTradingService(
                 copyMode = request.copyMode ?: copyTrading.copyMode,
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: copyTrading.copyRatio,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal() ?: copyTrading.fixedAmount,
+                adaptiveMinRatio = mergeOptionalDecimal(request.adaptiveMinRatio, copyTrading.adaptiveMinRatio),
+                adaptiveMaxRatio = mergeOptionalDecimal(request.adaptiveMaxRatio, copyTrading.adaptiveMaxRatio),
+                adaptiveThreshold = mergeOptionalDecimal(request.adaptiveThreshold, copyTrading.adaptiveThreshold),
+                multiplierMode = request.multiplierMode ?: copyTrading.multiplierMode,
+                tradeMultiplier = mergeOptionalDecimal(request.tradeMultiplier, copyTrading.tradeMultiplier),
+                tieredMultipliers = if (request.tieredMultipliers != null) {
+                    CopyTradingSizingSupport.serializeTieredMultipliers(request.tieredMultipliers)
+                } else {
+                    copyTrading.tieredMultipliers
+                },
                 maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: copyTrading.maxOrderSize,
                 minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: copyTrading.minOrderSize,
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: copyTrading.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: copyTrading.maxDailyOrders,
+                maxDailyVolume = mergeOptionalDecimal(request.maxDailyVolume, copyTrading.maxDailyVolume),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: copyTrading.priceTolerance,
                 delaySeconds = request.delaySeconds ?: copyTrading.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: copyTrading.pollIntervalSeconds,
@@ -302,6 +339,41 @@ class CopyTradingService(
                 },
                 updatedAt = System.currentTimeMillis()
             )
+
+            validateConfig(
+                CopyTradingConfig(
+                    copyMode = updated.copyMode,
+                    copyRatio = updated.copyRatio,
+                    fixedAmount = updated.fixedAmount,
+                    adaptiveMinRatio = updated.adaptiveMinRatio,
+                    adaptiveMaxRatio = updated.adaptiveMaxRatio,
+                    adaptiveThreshold = updated.adaptiveThreshold,
+                    multiplierMode = updated.multiplierMode,
+                    tradeMultiplier = updated.tradeMultiplier,
+                    tieredMultipliers = updated.tieredMultipliers,
+                    maxOrderSize = updated.maxOrderSize,
+                    minOrderSize = updated.minOrderSize,
+                    maxDailyLoss = updated.maxDailyLoss,
+                    maxDailyOrders = updated.maxDailyOrders,
+                    maxDailyVolume = updated.maxDailyVolume,
+                    priceTolerance = updated.priceTolerance,
+                    delaySeconds = updated.delaySeconds,
+                    pollIntervalSeconds = updated.pollIntervalSeconds,
+                    useWebSocket = updated.useWebSocket,
+                    websocketReconnectInterval = updated.websocketReconnectInterval,
+                    websocketMaxRetries = updated.websocketMaxRetries,
+                    supportSell = updated.supportSell,
+                    minOrderDepth = updated.minOrderDepth,
+                    maxSpread = updated.maxSpread,
+                    minPrice = updated.minPrice,
+                    maxPrice = updated.maxPrice,
+                    maxPositionValue = updated.maxPositionValue,
+                    keywordFilterMode = updated.keywordFilterMode,
+                    keywords = updated.keywords,
+                    maxMarketEndDate = updated.maxMarketEndDate,
+                    pushFilteredOrders = updated.pushFilteredOrders
+                )
+            )?.let { return Result.failure(IllegalArgumentException(it)) }
             
             val saved = copyTradingRepository.save(updated)
             
@@ -491,10 +563,17 @@ class CopyTradingService(
             copyMode = copyTrading.copyMode,
             copyRatio = copyTrading.copyRatio.toPlainString(),
             fixedAmount = copyTrading.fixedAmount?.toPlainString(),
+            adaptiveMinRatio = copyTrading.adaptiveMinRatio?.toPlainString(),
+            adaptiveMaxRatio = copyTrading.adaptiveMaxRatio?.toPlainString(),
+            adaptiveThreshold = copyTrading.adaptiveThreshold?.toPlainString(),
+            multiplierMode = copyTrading.multiplierMode,
+            tradeMultiplier = copyTrading.tradeMultiplier?.toPlainString(),
+            tieredMultipliers = CopyTradingSizingSupport.toTierDtoList(copyTrading.tieredMultipliers),
             maxOrderSize = copyTrading.maxOrderSize.toPlainString(),
             minOrderSize = copyTrading.minOrderSize.toPlainString(),
             maxDailyLoss = copyTrading.maxDailyLoss.toPlainString(),
             maxDailyOrders = copyTrading.maxDailyOrders,
+            maxDailyVolume = copyTrading.maxDailyVolume?.toPlainString(),
             priceTolerance = copyTrading.priceTolerance.toPlainString(),
             delaySeconds = copyTrading.delaySeconds,
             pollIntervalSeconds = copyTrading.pollIntervalSeconds,
@@ -555,10 +634,17 @@ class CopyTradingService(
         val copyMode: String,
         val copyRatio: BigDecimal,
         val fixedAmount: BigDecimal?,
+        val adaptiveMinRatio: BigDecimal?,
+        val adaptiveMaxRatio: BigDecimal?,
+        val adaptiveThreshold: BigDecimal?,
+        val multiplierMode: String,
+        val tradeMultiplier: BigDecimal?,
+        val tieredMultipliers: String?,
         val maxOrderSize: BigDecimal,
         val minOrderSize: BigDecimal,
         val maxDailyLoss: BigDecimal,
         val maxDailyOrders: Int,
+        val maxDailyVolume: BigDecimal?,
         val priceTolerance: BigDecimal,
         val delaySeconds: Int,
         val pollIntervalSeconds: Int,
@@ -576,4 +662,34 @@ class CopyTradingService(
         val maxMarketEndDate: Long?,  // 市场截止时间限制（毫秒时间戳）
         val pushFilteredOrders: Boolean  // 推送已过滤订单（默认关闭）
     )
+
+    private fun mergeOptionalDecimal(rawValue: String?, currentValue: BigDecimal?): BigDecimal? {
+        if (rawValue == null) {
+            return currentValue
+        }
+        if (rawValue.isBlank()) {
+            return null
+        }
+        val converted = rawValue.toSafeBigDecimal()
+        return if (converted == IllegalBigDecimal) currentValue else converted
+    }
+
+    private fun validateConfig(config: CopyTradingConfig): String? {
+        val sizingConfig = CopyTradingSizingConfig(
+            copyMode = config.copyMode,
+            copyRatio = config.copyRatio,
+            fixedAmount = config.fixedAmount,
+            adaptiveMinRatio = config.adaptiveMinRatio,
+            adaptiveMaxRatio = config.adaptiveMaxRatio,
+            adaptiveThreshold = config.adaptiveThreshold,
+            multiplierMode = config.multiplierMode,
+            tradeMultiplier = config.tradeMultiplier,
+            tieredMultipliers = CopyTradingSizingSupport.parseTieredMultipliers(config.tieredMultipliers),
+            maxOrderSize = config.maxOrderSize,
+            minOrderSize = config.minOrderSize,
+            maxPositionValue = config.maxPositionValue,
+            maxDailyVolume = config.maxDailyVolume
+        )
+        return CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()
+    }
 }

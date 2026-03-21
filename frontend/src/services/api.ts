@@ -816,13 +816,20 @@ export const backtestService = {
     leaderId: number
     initialBalance: string
     backtestDays: number
-    copyMode?: 'RATIO' | 'FIXED'
+    copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
     copyRatio?: string
     fixedAmount?: string
+    adaptiveMinRatio?: string
+    adaptiveMaxRatio?: string
+    adaptiveThreshold?: string
+    multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+    tradeMultiplier?: string
+    tieredMultipliers?: Array<{ min: string; max?: string | null; multiplier: string }>
     maxOrderSize?: string
     minOrderSize?: string
     maxDailyLoss?: string
     maxDailyOrders?: number
+    maxDailyVolume?: string
     priceTolerance?: string
     delaySeconds?: number
     supportSell?: boolean

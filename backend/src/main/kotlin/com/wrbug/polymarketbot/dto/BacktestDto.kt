@@ -11,13 +11,20 @@ data class BacktestCreateRequest(
     val initialBalance: String,  // 初始资金
     val backtestDays: Int,  // 回测天数 (1-30)
     // 跟单配置（与 CopyTrading 一致，但不包含 max_position_count）
-    val copyMode: String? = null,  // "RATIO" 或 "FIXED"
+    val copyMode: String? = null,  // "RATIO"、"FIXED" 或 "ADAPTIVE"
     val copyRatio: String? = null,  // 仅在 copyMode="RATIO" 时生效
     val fixedAmount: String? = null,  // 仅在 copyMode="FIXED" 时生效
+    val adaptiveMinRatio: String? = null,
+    val adaptiveMaxRatio: String? = null,
+    val adaptiveThreshold: String? = null,
+    val multiplierMode: String? = null,
+    val tradeMultiplier: String? = null,
+    val tieredMultipliers: List<MultiplierTierDto>? = null,
     val maxOrderSize: String? = null,
     val minOrderSize: String? = null,
     val maxDailyLoss: String? = null,
     val maxDailyOrders: Int? = null,
+    val maxDailyVolume: String? = null,
     val supportSell: Boolean? = null,
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表
@@ -161,10 +168,17 @@ data class BacktestConfigDto(
     val copyMode: String,
     val copyRatio: String,
     val fixedAmount: String?,
+    val adaptiveMinRatio: String?,
+    val adaptiveMaxRatio: String?,
+    val adaptiveThreshold: String?,
+    val multiplierMode: String,
+    val tradeMultiplier: String?,
+    val tieredMultipliers: List<MultiplierTierDto>?,
     val maxOrderSize: String,
     val minOrderSize: String,
     val maxDailyLoss: String,
     val maxDailyOrders: Int,
+    val maxDailyVolume: String?,
     val supportSell: Boolean,
     val keywordFilterMode: String?,
     val keywords: List<String>?,

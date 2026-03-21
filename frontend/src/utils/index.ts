@@ -171,3 +171,139 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 }
 
+export const formatMultiplierSummary = (mode?: string, tradeMultiplier?: string | null, tieredMultipliers?: MultiplierTier[] | null): string => {
+  if (!mode || mode === 'NONE') {
+    return '无'
+  }
+
+  if (mode === 'SINGLE') {
+    return tradeMultiplier ? `${formatNumber(tradeMultiplier, 4)}x` : '未设置'
+  }
+
+  if (mode === 'TIERED') {
+    if (!tieredMultipliers || tieredMultipliers.length === 0) {
+      return '未设置'
+    }
+    return tieredMultipliers
+      .map((tier) => `${tier.min}-${tier.max ?? '∞'}:${tier.multiplier}x`)
+      .join(', ')
+  }
+
+  return mode
+}
+
+export const formatCopyModeSummary = (config: {
+  copyMode?: string
+  copyRatio?: string | null
+  fixedAmount?: string | null
+  adaptiveMinRatio?: string | null
+  adaptiveMaxRatio?: string | null
+  adaptiveThreshold?: string | null
+}): string => {
+  if (config.copyMode === 'FIXED') {
+    return `固定 ${formatUSDC(config.fixedAmount)} USDC`
+  }
+
+  if (config.copyMode === 'ADAPTIVE') {
+    return `自适应 ${formatNumber(config.copyRatio || '0', 4)}x (${formatNumber(config.adaptiveMinRatio || '0', 4)}x-${formatNumber(config.adaptiveMaxRatio || '0', 4)}x / ${formatUSDC(config.adaptiveThreshold)} USDC)`
+  }
+
+  return `比例 ${formatNumber(config.copyRatio || '0', 4)}x`
+}
+
+type MultiplierTierInput = {
+  min?: string | number | null
+  max?: string | number | null
+  multiplier?: string | number | null
+}
+
+type NormalizedMultiplierTier = {
+  min: string
+  max: string | null
+  multiplier: string
+}
+
+type MultiplierTierValidationResult = {
+  isValid: boolean
+  message?: string
+  tiers: NormalizedMultiplierTier[]
+}
+
+const parseTierValue = (value: string | number | null | undefined): number | null => {
+  if (value === undefined || value === null || value === '') {
+    return null
+  }
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export const validateAndNormalizeMultiplierTiers = (
+  tiers?: MultiplierTierInput[] | null
+): MultiplierTierValidationResult => {
+  if (!tiers || tiers.length === 0) {
+    return {
+      isValid: false,
+      message: '请至少配置一档分层 multiplier',
+      tiers: []
+    }
+  }
+
+  try {
+    const normalized = tiers.map((tier, index) => {
+      const min = parseTierValue(tier.min)
+      const max = parseTierValue(tier.max)
+      const multiplier = parseTierValue(tier.multiplier)
+
+      if (min === null) {
+        throw new Error(`第 ${index + 1} 档的最小金额不能为空`)
+      }
+      if (multiplier === null) {
+        throw new Error(`第 ${index + 1} 档的 multiplier 不能为空`)
+      }
+      if (min < 0) {
+        throw new Error(`第 ${index + 1} 档的最小金额不能小于 0`)
+      }
+      if (multiplier < 0) {
+        throw new Error(`第 ${index + 1} 档的 multiplier 不能小于 0`)
+      }
+      if (max !== null && max <= min) {
+        throw new Error(`第 ${index + 1} 档的最大金额必须大于最小金额`)
+      }
+
+      return {
+        min,
+        max,
+        multiplier
+      }
+    }).sort((a, b) => a.min - b.min)
+
+    normalized.forEach((tier, index) => {
+      if (tier.max === null && index !== normalized.length - 1) {
+        throw new Error('无上界档位只能放在最后一档')
+      }
+      if (index < normalized.length - 1) {
+        const next = normalized[index + 1]
+        if (tier.max !== null && tier.max > next.min) {
+          throw new Error('分层区间不能重叠')
+        }
+      }
+    })
+
+    return {
+      isValid: true,
+      tiers: normalized.map((tier) => ({
+        min: tier.min.toString(),
+        max: tier.max === null ? null : tier.max.toString(),
+        multiplier: tier.multiplier.toString()
+      }))
+    }
+  } catch (error) {
+    return {
+      isValid: false,
+      message: error instanceof Error ? error.message : '分层 multiplier 配置无效',
+      tiers: []
+    }
+  }
+}
+
+import type { MultiplierTier } from '../types'

@@ -8,6 +8,8 @@ import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.repository.BacktestTaskRepository
 import com.wrbug.polymarketbot.repository.BacktestTradeRepository
 import com.wrbug.polymarketbot.repository.LeaderRepository
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingConfig
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import com.wrbug.polymarketbot.util.toJson
 import com.wrbug.polymarketbot.util.fromJson
@@ -71,10 +73,17 @@ class BacktestService(
                 copyMode = request.copyMode ?: "RATIO",
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: BigDecimal.ONE,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal(),
+                adaptiveMinRatio = request.adaptiveMinRatio?.toSafeBigDecimal(),
+                adaptiveMaxRatio = request.adaptiveMaxRatio?.toSafeBigDecimal(),
+                adaptiveThreshold = request.adaptiveThreshold?.toSafeBigDecimal(),
+                multiplierMode = request.multiplierMode ?: CopyTradingSizingSupport.MULTIPLIER_MODE_NONE,
+                tradeMultiplier = request.tradeMultiplier?.toSafeBigDecimal(),
+                tieredMultipliers = CopyTradingSizingSupport.serializeTieredMultipliers(request.tieredMultipliers),
                 maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: "1000".toSafeBigDecimal(),
                 minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: "1".toSafeBigDecimal(),
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                 maxDailyOrders = request.maxDailyOrders ?: 100,
+                maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
                 supportSell = request.supportSell ?: true,
                 keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                 keywords = if (request.keywords != null && request.keywords.isNotEmpty()) {
@@ -86,6 +95,8 @@ class BacktestService(
                 minPrice = request.minPrice?.toSafeBigDecimal(),
                 maxPrice = request.maxPrice?.toSafeBigDecimal()
             )
+
+            validateTask(task)?.let { return Result.failure(IllegalArgumentException(it)) }
 
             backtestTaskRepository.save(task)
 
@@ -183,10 +194,17 @@ class BacktestService(
                 copyMode = task.copyMode,
                 copyRatio = task.copyRatio.toPlainString(),
                 fixedAmount = task.fixedAmount?.toPlainString(),
+                adaptiveMinRatio = task.adaptiveMinRatio?.toPlainString(),
+                adaptiveMaxRatio = task.adaptiveMaxRatio?.toPlainString(),
+                adaptiveThreshold = task.adaptiveThreshold?.toPlainString(),
+                multiplierMode = task.multiplierMode,
+                tradeMultiplier = task.tradeMultiplier?.toPlainString(),
+                tieredMultipliers = CopyTradingSizingSupport.toTierDtoList(task.tieredMultipliers),
                 maxOrderSize = task.maxOrderSize.toPlainString(),
                 minOrderSize = task.minOrderSize.toPlainString(),
                 maxDailyLoss = task.maxDailyLoss.toPlainString(),
                 maxDailyOrders = task.maxDailyOrders,
+                maxDailyVolume = task.maxDailyVolume?.toPlainString(),
                 supportSell = task.supportSell,
                 keywordFilterMode = task.keywordFilterMode,
                 keywords = if (task.keywords != null) {
@@ -376,10 +394,17 @@ class BacktestService(
                 copyMode = source.copyMode,
                 copyRatio = source.copyRatio,
                 fixedAmount = source.fixedAmount,
+                adaptiveMinRatio = source.adaptiveMinRatio,
+                adaptiveMaxRatio = source.adaptiveMaxRatio,
+                adaptiveThreshold = source.adaptiveThreshold,
+                multiplierMode = source.multiplierMode,
+                tradeMultiplier = source.tradeMultiplier,
+                tieredMultipliers = source.tieredMultipliers,
                 maxOrderSize = source.maxOrderSize,
                 minOrderSize = source.minOrderSize,
                 maxDailyLoss = source.maxDailyLoss,
                 maxDailyOrders = source.maxDailyOrders,
+                maxDailyVolume = source.maxDailyVolume,
                 supportSell = source.supportSell,
                 keywordFilterMode = source.keywordFilterMode,
                 keywords = source.keywords,
@@ -395,6 +420,25 @@ class BacktestService(
             logger.error("按配置重新测试失败", e)
             Result.failure(e)
         }
+    }
+
+    private fun validateTask(task: BacktestTask): String? {
+        val config = CopyTradingSizingConfig(
+            copyMode = task.copyMode,
+            copyRatio = task.copyRatio,
+            fixedAmount = task.fixedAmount,
+            adaptiveMinRatio = task.adaptiveMinRatio,
+            adaptiveMaxRatio = task.adaptiveMaxRatio,
+            adaptiveThreshold = task.adaptiveThreshold,
+            multiplierMode = task.multiplierMode,
+            tradeMultiplier = task.tradeMultiplier,
+            tieredMultipliers = CopyTradingSizingSupport.parseTieredMultipliers(task.tieredMultipliers),
+            maxOrderSize = task.maxOrderSize,
+            minOrderSize = task.minOrderSize,
+            maxPositionValue = task.maxPositionValue,
+            maxDailyVolume = task.maxDailyVolume
+        )
+        return CopyTradingSizingSupport.validateConfig(config).firstOrNull()
     }
 }
 

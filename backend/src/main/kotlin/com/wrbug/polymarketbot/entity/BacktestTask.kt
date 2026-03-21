@@ -52,6 +52,24 @@ data class BacktestTask(
     @Column(name = "fixed_amount", precision = 20, scale = 8)
     val fixedAmount: BigDecimal? = null,
 
+    @Column(name = "adaptive_min_ratio", precision = 20, scale = 8)
+    val adaptiveMinRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_max_ratio", precision = 20, scale = 8)
+    val adaptiveMaxRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_threshold", precision = 20, scale = 8)
+    val adaptiveThreshold: BigDecimal? = null,
+
+    @Column(name = "multiplier_mode", nullable = false, length = 10)
+    val multiplierMode: String = "NONE",
+
+    @Column(name = "trade_multiplier", precision = 20, scale = 8)
+    val tradeMultiplier: BigDecimal? = null,
+
+    @Column(name = "tiered_multipliers", columnDefinition = "JSON")
+    val tieredMultipliers: String? = null,
+
     @Column(name = "max_order_size", nullable = false, precision = 20, scale = 8)
     val maxOrderSize: BigDecimal = "1000".toSafeBigDecimal(),
 
@@ -75,6 +93,9 @@ data class BacktestTask(
 
     @Column(name = "max_position_value", precision = 20, scale = 8)
     val maxPositionValue: BigDecimal? = null,  // 最大仓位金额（USDC），NULL表示不启用
+
+    @Column(name = "max_daily_volume", precision = 20, scale = 8)
+    val maxDailyVolume: BigDecimal? = null,
 
     @Column(name = "min_price", precision = 20, scale = 8)
     val minPrice: BigDecimal? = null,  // 最低价格（可选），NULL表示不限制最低价

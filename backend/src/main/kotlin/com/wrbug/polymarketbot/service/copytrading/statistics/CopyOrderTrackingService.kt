@@ -16,7 +16,9 @@ import org.springframework.dao.DuplicateKeyException
 import java.sql.SQLException
 import java.util.concurrent.ConcurrentHashMap
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterService
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
 import com.wrbug.polymarketbot.service.copytrading.configs.FilterStatus
+import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
 import com.wrbug.polymarketbot.service.common.BlockchainService
 import com.wrbug.polymarketbot.service.common.MarketService
@@ -45,6 +47,7 @@ open class CopyOrderTrackingService(
     private val copyTradingRepository: CopyTradingRepository,
     private val accountRepository: AccountRepository,
     private val filterService: CopyTradingFilterService,
+    private val sizingService: CopyTradingSizingService,
     private val leaderRepository: LeaderRepository,
     private val orderSigningService: OrderSigningService,
     private val blockchainService: BlockchainService,
@@ -289,18 +292,8 @@ open class CopyOrderTrackingService(
                         continue
                     }
 
-                    // 先计算跟单金额（用于仓位检查）
-                    // 注意：这里先计算金额，即使后续被过滤也会记录
                     val tradePrice = trade.price.toSafeBigDecimal()
-                    var buyQuantity = try {
-                        calculateBuyQuantity(trade, copyTrading)
-                    } catch (e: Exception) {
-                        logger.warn("计算买入数量失败: ${e.message}", e)
-                        continue
-                    }
-
-                    // 计算跟单金额（USDC）= 买入数量 × 价格
-                    val copyOrderAmount = buyQuantity.multi(tradePrice)
+                    val leaderOrderAmount = trade.size.toSafeBigDecimal().multi(tradePrice)
 
                     // 如果启用了关键字过滤或市场截止时间过滤，需要先获取市场信息
                     var marketTitle: String? = null
@@ -318,178 +311,60 @@ open class CopyOrderTrackingService(
                         }
                     }
 
-                    // 过滤条件检查（在计算订单参数之前）
-                    // 传入 Leader 交易价格，用于价格区间检查
-                    // 传入跟单金额和市场ID，用于仓位检查（按市场+方向检查仓位）
-                    // 传入市场标题，用于关键字过滤
-                    // 传入市场截止时间，用于市场截止时间检查
-                    // 订单簿只请求一次，返回给后续逻辑使用
+                    // 过滤条件检查：只负责订单簿/关键字/价格区间/市场截止时间等过滤
                     val filterResult = filterService.checkFilters(
                         copyTrading,
                         tokenId,
                         tradePrice = tradePrice,
-                        copyOrderAmount = copyOrderAmount,
-                        marketId = effectiveMarketId,
                         marketTitle = marketTitle,
-                        marketEndDate = marketEndDate,
-                        outcomeIndex = effectiveOutcomeIndex
+                        marketEndDate = marketEndDate
                     )
                     val orderbook = filterResult.orderbook  // 获取订单簿（如果需要）
                     if (!filterResult.isPassed) {
                         logger.warn("过滤条件检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${filterResult.reason}")
-
-                        // 记录被过滤的订单并发送通知（异步，不阻塞）
-                        notificationScope.launch {
-                            try {
-                                // 获取市场信息（标题和slug）
-                                val market = marketService.getMarket(effectiveMarketId)
-                                val marketTitle = market?.title ?: effectiveMarketId
-                                val marketSlug = market?.slug  // 显示用的 slug
-
-                                // 从过滤结果中提取 filterType
-                                val filterType = extractFilterType(filterResult.status, filterResult.reason)
-
-                                // 计算买入数量（用于记录，即使被过滤也记录）
-                                val calculatedQuantity = try {
-                                    calculateBuyQuantity(trade, copyTrading)
-                                } catch (e: Exception) {
-                                    logger.warn("计算买入数量失败: ${e.message}", e)
-                                    null
-                                }
-
-                                // 记录到数据库
-                                val filteredOrder = FilteredOrder(
-                                    copyTradingId = copyTrading.id!!,
-                                    accountId = copyTrading.accountId,
-                                    leaderId = copyTrading.leaderId,
-                                    leaderTradeId = trade.id,
-                                    marketId = effectiveMarketId,
-                                    marketTitle = marketTitle,
-                                    marketSlug = marketSlug,
-                                    side = "BUY",
-                                    outcomeIndex = effectiveOutcomeIndex,
-                                    outcome = trade.outcome,
-                                    price = trade.price.toSafeBigDecimal(),
-                                    size = trade.size.toSafeBigDecimal(),
-                                    calculatedQuantity = calculatedQuantity,
-                                    filterReason = filterResult.reason,
-                                    filterType = filterType
-                                )
-
-                                try {
-                                    filteredOrderRepository.save(filteredOrder)
-                                    logger.info("已记录被过滤的订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, filterType=$filterType")
-                                } catch (e: Exception) {
-                                    logger.error("保存被过滤订单失败: ${e.message}", e)
-                                }
-
-                                // 发送 Telegram 通知（仅在 pushFilteredOrders 为 true 时发送）
-                                if (copyTrading.pushFilteredOrders) {
-                                    val locale = try {
-                                        org.springframework.context.i18n.LocaleContextHolder.getLocale()
-                                    } catch (e: Exception) {
-                                        java.util.Locale("zh", "CN")  // 默认简体中文
-                                    }
-
-                                    telegramNotificationService?.sendOrderFilteredNotification(
-                                        marketTitle = marketTitle,
-                                        marketId = effectiveMarketId,
-                                        marketSlug = marketSlug,
-                                        side = "BUY",
-                                        outcome = trade.outcome,
-                                        price = trade.price,
-                                        size = trade.size,
-                                        filterReason = filterResult.reason,
-                                        filterType = filterType,
-                                        accountName = account.accountName,
-                                        walletAddress = account.walletAddress,
-                                        locale = locale
-                                    )
-                                }
-                            } catch (e: Exception) {
-                                logger.error("处理被过滤订单通知失败: ${e.message}", e)
-                            }
-                        }
-
+                        recordFilteredBuyOrderAsync(
+                            copyTrading = copyTrading,
+                            account = account,
+                            trade = trade,
+                            marketId = effectiveMarketId,
+                            outcomeIndex = effectiveOutcomeIndex,
+                            filterReason = filterResult.reason,
+                            filterType = extractFilterType(filterResult.status, filterResult.reason),
+                            calculatedQuantity = null
+                        )
                         continue
                     }
 
-                    // 买入数量已在过滤检查前计算，这里直接使用
-                    // 如果数量为0或负数，跳过
-                    if (buyQuantity.lte(BigDecimal.ZERO)) {
+                    val sizingResult = sizingService.calculateRealTimeBuySizing(
+                        copyTrading = copyTrading,
+                        leaderOrderAmount = leaderOrderAmount,
+                        tradePrice = tradePrice,
+                        marketId = effectiveMarketId,
+                        outcomeIndex = effectiveOutcomeIndex
+                    )
+                    if (sizingResult.status != SizingStatus.EXECUTABLE) {
+                        logger.warn("sizing 检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${sizingResult.reason}")
+                        recordFilteredBuyOrderAsync(
+                            copyTrading = copyTrading,
+                            account = account,
+                            trade = trade,
+                            marketId = effectiveMarketId,
+                            outcomeIndex = effectiveOutcomeIndex,
+                            filterReason = sizingResult.reason,
+                            filterType = "SIZING",
+                            calculatedQuantity = null
+                        )
+                        continue
+                    }
+
+                    var finalBuyQuantity = sizingResult.finalQuantity
+                    if (finalBuyQuantity.lte(BigDecimal.ZERO)) {
                         logger.warn("计算得到的买入数量为0，跳过跟单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}")
                         continue
                     }
-
-                    if (buyQuantity.lt(BigDecimal.ONE)) {
-                        logger.warn("计算得到的买入数量小于1，自动调整为1 (Polymarket 最小下单数量): copyTradingId=${copyTrading.id}, tradeId=${trade.id}, originalQuantity=$buyQuantity")
-                        buyQuantity = BigDecimal.ONE
-                    }
-                    // 验证订单数量限制（仅比例模式）
-                    var finalBuyQuantity = buyQuantity
-                    if (copyTrading.copyMode == "RATIO") {
-                        val tradePrice = trade.price.toSafeBigDecimal()
-                        val rawOrderAmount = buyQuantity.multi(tradePrice)
-
-                        // 对按比例计算的金额进行向上取整处理（确保满足最小限制）
-                        // 向上取整到 2 位小数（USDC 精度）
-                        val roundedOrderAmount = rawOrderAmount.setScale(2, java.math.RoundingMode.CEILING)
-
-                        // 如果原始金额或向上取整后的金额小于最小限制，调整 buyQuantity 以满足最小限制
-                        // 这样可以避免精度问题导致订单被错误地跳过
-                        if (roundedOrderAmount.lt(copyTrading.minOrderSize)) {
-                            logger.debug("订单金额（向上取整后）低于最小限制，调整数量以满足最小限制: copyTradingId=${copyTrading.id}, rawAmount=$rawOrderAmount, roundedAmount=$roundedOrderAmount, min=${copyTrading.minOrderSize}")
-                            // 计算满足最小限制所需的数量（向上取整）
-                            val minQuantity =
-                                copyTrading.minOrderSize.div(tradePrice, 8, java.math.RoundingMode.CEILING)
-                            if (minQuantity.lte(BigDecimal.ZERO)) {
-                                logger.warn("计算出的最小数量为0或负数，跳过: copyTradingId=${copyTrading.id}")
-                                continue
-                            }
-                            // 使用调整后的数量
-                            finalBuyQuantity = minQuantity
-                            logger.debug(
-                                "已调整数量以满足最小限制: copyTradingId=${copyTrading.id}, originalQuantity=$buyQuantity, adjustedQuantity=$finalBuyQuantity, adjustedAmount=${
-                                    finalBuyQuantity.multi(
-                                        tradePrice
-                                    )
-                                }"
-                            )
-                        } else if (rawOrderAmount.lt(copyTrading.minOrderSize)) {
-                            // 原始金额小于最小限制，但向上取整后满足，调整数量以满足最小限制
-                            logger.debug("订单金额（精度处理后）低于最小限制，调整数量以满足最小限制: copyTradingId=${copyTrading.id}, rawAmount=$rawOrderAmount, min=${copyTrading.minOrderSize}")
-                            // 计算满足最小限制所需的数量（向上取整）
-                            val minQuantity =
-                                copyTrading.minOrderSize.div(tradePrice, 8, java.math.RoundingMode.CEILING)
-                            if (minQuantity.lte(BigDecimal.ZERO)) {
-                                logger.warn("计算出的最小数量为0或负数，跳过: copyTradingId=${copyTrading.id}")
-                                continue
-                            }
-                            // 使用调整后的数量
-                            finalBuyQuantity = minQuantity
-                            logger.debug(
-                                "已调整数量以满足最小限制: copyTradingId=${copyTrading.id}, originalQuantity=$buyQuantity, adjustedQuantity=$finalBuyQuantity, adjustedAmount=${
-                                    finalBuyQuantity.multi(
-                                        tradePrice
-                                    )
-                                }"
-                            )
-                        }
-
-                        // 检查最大限制（使用调整后的数量）
-                        val finalOrderAmount = finalBuyQuantity.multi(tradePrice)
-                        if (finalOrderAmount.gt(copyTrading.maxOrderSize)) {
-                            logger.warn("订单金额超过最大限制，调整数量: copyTradingId=${copyTrading.id}, amount=$finalOrderAmount, max=${copyTrading.maxOrderSize}")
-                            // 调整数量到最大值
-                            val adjustedQuantity =
-                                copyTrading.maxOrderSize.div(tradePrice, 8, java.math.RoundingMode.DOWN)
-                            if (adjustedQuantity.lte(BigDecimal.ZERO)) {
-                                logger.warn("调整后的数量为0或负数，跳过: copyTradingId=${copyTrading.id}")
-                                continue
-                            }
-                            // 使用调整后的数量
-                            finalBuyQuantity = adjustedQuantity
-                        }
+                    if (finalBuyQuantity.lt(BigDecimal.ONE)) {
+                        logger.warn("计算得到的买入数量小于1，自动调整为1 (Polymarket 最小下单数量): copyTradingId=${copyTrading.id}, tradeId=${trade.id}, originalQuantity=$finalBuyQuantity")
+                        finalBuyQuantity = BigDecimal.ONE
                     }
 
                     // 风险控制检查
@@ -723,34 +598,75 @@ open class CopyOrderTrackingService(
         }
     }
 
-    /**
-     * 计算买入数量
-     * 根据模板的copyMode计算
-     */
-    private fun calculateBuyQuantity(trade: TradeResponse, copyTrading: CopyTrading): BigDecimal {
-        return when (copyTrading.copyMode) {
-            "RATIO" -> {
-                // 比例模式：Leader 数量 × 比例倍数（copyRatio 已经是倍数值，如 1.3 表示 130%）
-                trade.size.toSafeBigDecimal().multi(copyTrading.copyRatio)
-            }
+    private fun recordFilteredBuyOrderAsync(
+        copyTrading: CopyTrading,
+        account: Account,
+        trade: TradeResponse,
+        marketId: String,
+        outcomeIndex: Int?,
+        filterReason: String,
+        filterType: String,
+        calculatedQuantity: BigDecimal?
+    ) {
+        notificationScope.launch {
+            try {
+                val market = marketService.getMarket(marketId)
+                val marketTitle = market?.title ?: marketId
+                val marketSlug = market?.slug
 
-            "FIXED" -> {
-                // 固定金额模式：固定金额 / 买入价格
-                val fixedAmount = copyTrading.fixedAmount
-                    ?: throw IllegalStateException("固定金额模式下 fixedAmount 不能为空")
-                val buyPrice = trade.price.toSafeBigDecimal()
-                fixedAmount.div(buyPrice)
-            }
+                val filteredOrder = FilteredOrder(
+                    copyTradingId = copyTrading.id!!,
+                    accountId = copyTrading.accountId,
+                    leaderId = copyTrading.leaderId,
+                    leaderTradeId = trade.id,
+                    marketId = marketId,
+                    marketTitle = marketTitle,
+                    marketSlug = marketSlug,
+                    side = "BUY",
+                    outcomeIndex = outcomeIndex,
+                    outcome = trade.outcome,
+                    price = trade.price.toSafeBigDecimal(),
+                    size = trade.size.toSafeBigDecimal(),
+                    calculatedQuantity = calculatedQuantity,
+                    filterReason = filterReason,
+                    filterType = filterType
+                )
 
-            else -> throw IllegalArgumentException("不支持的 copyMode: ${copyTrading.copyMode}")
+                filteredOrderRepository.save(filteredOrder)
+                logger.info("已记录被过滤的订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, filterType=$filterType")
+
+                if (copyTrading.pushFilteredOrders) {
+                    val locale = try {
+                        org.springframework.context.i18n.LocaleContextHolder.getLocale()
+                    } catch (e: Exception) {
+                        java.util.Locale("zh", "CN")
+                    }
+
+                    telegramNotificationService?.sendOrderFilteredNotification(
+                        marketTitle = marketTitle,
+                        marketId = marketId,
+                        marketSlug = marketSlug,
+                        side = "BUY",
+                        outcome = trade.outcome,
+                        price = trade.price,
+                        size = trade.size,
+                        filterReason = filterReason,
+                        filterType = filterType,
+                        accountName = account.accountName,
+                        walletAddress = account.walletAddress,
+                        locale = locale
+                    )
+                }
+            } catch (e: Exception) {
+                logger.error("处理被过滤订单通知失败: ${e.message}", e)
+            }
         }
     }
 
     /**
-     * 计算固定金额模式下的卖出数量
-     * 根据未匹配订单的实际买入比例计算
+     * 根据未匹配订单的实际买入比例计算卖出数量
      */
-    private suspend fun calculateSellQuantityForFixedMode(
+    private suspend fun calculateSellQuantityByActualRatio(
         unmatchedOrders: List<CopyOrderTracking>,
         leaderSellQuantity: BigDecimal,
         copyTrading: CopyTrading
@@ -829,7 +745,7 @@ open class CopyOrderTrackingService(
             }
         }
 
-        logger.info("固定金额模式计算结果汇总: copyTradingId=${copyTrading.id}, successCount=$successCount, failCount=$failCount, totalCopyQuantity=$totalCopyQuantity, totalLeaderQuantity=$totalLeaderQuantity")
+        logger.info("实际持仓比例计算结果汇总: copyTradingId=${copyTrading.id}, successCount=$successCount, failCount=$failCount, totalCopyQuantity=$totalCopyQuantity, totalLeaderQuantity=$totalLeaderQuantity")
 
         // 如果无法计算总比例（查询失败），使用默认比例
         if (totalLeaderQuantity.lte(BigDecimal.ZERO)) {
@@ -896,29 +812,12 @@ open class CopyOrderTrackingService(
             return
         }
 
-        // 3. 计算需要匹配的数量
-        // 对于 FIXED 模式，需要根据实际买入比例计算；对于 RATIO 模式，使用配置的 copyRatio
-        val needMatch = when (copyTrading.copyMode) {
-            "FIXED" -> {
-                // 固定金额模式：根据未匹配订单的实际比例计算
-                // 需要查询每个订单对应的 Leader 买入交易，计算实际比例
-                calculateSellQuantityForFixedMode(
-                    unmatchedOrders = unmatchedOrders,
-                    leaderSellQuantity = leaderSellTrade.size.toSafeBigDecimal(),
-                    copyTrading = copyTrading
-                )
-            }
-
-            "RATIO" -> {
-                // 比例模式：直接使用配置的 copyRatio（已经是倍数值，如 1.3 表示 130%）
-                leaderSellTrade.size.toSafeBigDecimal().multi(copyTrading.copyRatio)
-            }
-
-            else -> {
-                logger.warn("不支持的 copyMode: ${copyTrading.copyMode}，使用默认比例模式")
-                leaderSellTrade.size.toSafeBigDecimal().multi(copyTrading.copyRatio)
-            }
-        }
+        // 3. 计算需要匹配的数量：优先使用真实持仓比例，避免 BUY 侧被裁剪后的卖出偏差
+        val needMatch = calculateSellQuantityByActualRatio(
+            unmatchedOrders = unmatchedOrders,
+            leaderSellQuantity = leaderSellTrade.size.toSafeBigDecimal(),
+            copyTrading = copyTrading
+        )
 
         // 如果需要卖出的数量小于1（但大于0），自动调整为1（Polymarket 最小下单数量）
         // 注意：如果实际持有数量不足1，后续的 totalMatched 检查会拦截

@@ -25,7 +25,25 @@ data class CopyTradingTemplate(
     
     @Column(name = "fixed_amount", precision = 20, scale = 8)
     val fixedAmount: BigDecimal? = null,  // 仅在 copyMode="FIXED" 时生效
-    
+
+    @Column(name = "adaptive_min_ratio", precision = 20, scale = 8)
+    val adaptiveMinRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_max_ratio", precision = 20, scale = 8)
+    val adaptiveMaxRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_threshold", precision = 20, scale = 8)
+    val adaptiveThreshold: BigDecimal? = null,
+
+    @Column(name = "multiplier_mode", nullable = false, length = 10)
+    val multiplierMode: String = "NONE",
+
+    @Column(name = "trade_multiplier", precision = 20, scale = 8)
+    val tradeMultiplier: BigDecimal? = null,
+
+    @Column(name = "tiered_multipliers", columnDefinition = "JSON")
+    val tieredMultipliers: String? = null,
+
     @Column(name = "max_order_size", nullable = false, precision = 20, scale = 8)
     val maxOrderSize: BigDecimal = "1000".toSafeBigDecimal(),
     
@@ -74,7 +92,10 @@ data class CopyTradingTemplate(
     
     @Column(name = "push_filtered_orders", nullable = false)
     val pushFilteredOrders: Boolean = false,  // 推送已过滤订单（默认关闭）
-    
+
+    @Column(name = "max_daily_volume", precision = 20, scale = 8)
+    val maxDailyVolume: BigDecimal? = null,
+
     @Column(name = "created_at", nullable = false)
     val createdAt: Long = System.currentTimeMillis(),
     

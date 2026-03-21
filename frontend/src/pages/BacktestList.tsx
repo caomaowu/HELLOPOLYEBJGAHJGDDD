@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { Table, Card, Button, Select, Tag, Space, Modal, message, Row, Col, Form, Input, InputNumber, Switch, Statistic, Descriptions } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, EyeOutlined, RedoOutlined, CopyOutlined, SyncOutlined } from '@ant-design/icons'
-import { formatUSDC } from '../utils'
+import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
 import { backtestService, apiService } from '../services/api'
 import type { BacktestTaskDto, BacktestListRequest, BacktestCreateRequest, BacktestTradeDto } from '../types/backtest'
 import type { Leader } from '../types'
@@ -11,6 +11,7 @@ import { useMediaQuery } from 'react-responsive'
 import AddCopyTradingModal from './CopyTradingOrders/AddModal'
 import BacktestChart from './BacktestChart'
 import LeaderSelect from '../components/LeaderSelect'
+import MultiplierTierEditor from '../components/MultiplierTierEditor'
 
 const BacktestList: React.FC = () => {
   const { t } = useTranslation()
@@ -38,7 +39,8 @@ const BacktestList: React.FC = () => {
   const [createForm] = Form.useForm()
   const [createLoading, setCreateLoading] = useState(false)
   const [leaders, setLeaders] = useState<Leader[]>([])
-  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED'>('RATIO')
+  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
+  const [multiplierMode, setMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
 
   // 创建跟单配置 Modal
   const [addCopyTradingModalVisible, setAddCopyTradingModalVisible] = useState(false)
@@ -240,6 +242,7 @@ const BacktestList: React.FC = () => {
     createForm.setFieldsValue({
       copyMode: 'RATIO',
       copyRatio: 100, // 默认 100%（显示为百分比）
+      multiplierMode: 'NONE',
       maxOrderSize: 1000,
       minOrderSize: 1,
       maxDailyLoss: 500,
@@ -249,12 +252,22 @@ const BacktestList: React.FC = () => {
       backtestDays: 7
     })
     setCopyMode('RATIO')
+    setMultiplierMode('NONE')
   }
 
   // 提交创建回测任务
   const handleCreateSubmit = async () => {
     try {
       const values = await createForm.validateFields()
+
+      const normalizedTierResult = values.multiplierMode === 'TIERED'
+        ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
+        : null
+      if (normalizedTierResult && !normalizedTierResult.isValid) {
+        message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
+        return
+      }
+
       setCreateLoading(true)
 
       const request: BacktestCreateRequest = {
@@ -263,18 +276,27 @@ const BacktestList: React.FC = () => {
         initialBalance: values.initialBalance,
         backtestDays: values.backtestDays,
         copyMode: values.copyMode || 'RATIO',
-        copyRatio: values.copyMode === 'RATIO' && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
-        fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount : undefined,
+        copyRatio: (values.copyMode === 'RATIO' || values.copyMode === 'ADAPTIVE') && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
+        fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount?.toString() : undefined,
+        adaptiveMinRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMinRatio != null ? (values.adaptiveMinRatio / 100).toString() : undefined,
+        adaptiveMaxRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMaxRatio != null ? (values.adaptiveMaxRatio / 100).toString() : undefined,
+        adaptiveThreshold: values.copyMode === 'ADAPTIVE' ? values.adaptiveThreshold?.toString() : undefined,
+        multiplierMode: values.multiplierMode || 'NONE',
+        tradeMultiplier: values.multiplierMode === 'SINGLE' ? values.tradeMultiplier?.toString() : undefined,
+        tieredMultipliers: values.multiplierMode === 'TIERED'
+          ? normalizedTierResult?.tiers
+          : undefined,
         maxOrderSize: values.maxOrderSize,
         minOrderSize: values.minOrderSize,
         maxDailyLoss: values.maxDailyLoss,
         maxDailyOrders: values.maxDailyOrders,
+        maxDailyVolume: values.maxDailyVolume?.toString(),
         supportSell: values.supportSell,
         keywordFilterMode: values.keywordFilterMode,
         keywords: values.keywords,
-        maxPositionValue: values.maxPositionValue,
-        minPrice: values.minPrice,
-        maxPrice: values.maxPrice
+        maxPositionValue: values.maxPositionValue?.toString(),
+        minPrice: values.minPrice?.toString(),
+        maxPrice: values.maxPrice?.toString()
       }
 
       const response = await backtestService.create(request)
@@ -316,18 +338,29 @@ const BacktestList: React.FC = () => {
         const preFilled = {
           leaderId: taskDetail.leaderId,
           copyMode: taskConfig.copyMode,
-          copyRatio: taskConfig.copyMode === 'RATIO' ? parseFloat(taskConfig.copyRatio) * 100 : undefined,
+          copyRatio: (taskConfig.copyMode === 'RATIO' || taskConfig.copyMode === 'ADAPTIVE') ? parseFloat(taskConfig.copyRatio) * 100 : undefined,
           fixedAmount: taskConfig.copyMode === 'FIXED' ? taskConfig.fixedAmount : undefined,
+          adaptiveMinRatio: taskConfig.adaptiveMinRatio ? parseFloat(taskConfig.adaptiveMinRatio) * 100 : undefined,
+          adaptiveMaxRatio: taskConfig.adaptiveMaxRatio ? parseFloat(taskConfig.adaptiveMaxRatio) * 100 : undefined,
+          adaptiveThreshold: taskConfig.adaptiveThreshold ? parseFloat(taskConfig.adaptiveThreshold) : undefined,
+          multiplierMode: taskConfig.multiplierMode || 'NONE',
+          tradeMultiplier: taskConfig.tradeMultiplier ? parseFloat(taskConfig.tradeMultiplier) : undefined,
+          tieredMultipliers: taskConfig.tieredMultipliers?.map((tier: any) => ({
+            min: parseFloat(tier.min),
+            max: tier.max != null ? parseFloat(tier.max) : undefined,
+            multiplier: parseFloat(tier.multiplier)
+          })),
           maxOrderSize: parseFloat(taskConfig.maxOrderSize),
           minOrderSize: parseFloat(taskConfig.minOrderSize),
           maxDailyLoss: parseFloat(taskConfig.maxDailyLoss),
           maxDailyOrders: taskConfig.maxDailyOrders,
+          maxDailyVolume: taskConfig.maxDailyVolume ? parseFloat(taskConfig.maxDailyVolume) : undefined,
           supportSell: taskConfig.supportSell,
           keywordFilterMode: taskConfig.keywordFilterMode || 'DISABLED',
           keywords: taskConfig.keywords || [],
-          maxPositionValue: taskConfig.maxPositionValue,
-          minPrice: taskConfig.minPrice,
-          maxPrice: taskConfig.maxPrice,
+          maxPositionValue: taskConfig.maxPositionValue ? parseFloat(taskConfig.maxPositionValue) : undefined,
+          minPrice: taskConfig.minPrice ? parseFloat(taskConfig.minPrice) : undefined,
+          maxPrice: taskConfig.maxPrice ? parseFloat(taskConfig.maxPrice) : undefined,
           configName: `回测任务-${taskDetail.taskName}`
         }
 
@@ -887,12 +920,13 @@ const BacktestList: React.FC = () => {
               <Select onChange={(value) => setCopyMode(value)}>
                 <Select.Option value="RATIO">{t('backtest.copyModeRatio')}</Select.Option>
                 <Select.Option value="FIXED">{t('backtest.copyModeFixed')}</Select.Option>
+                <Select.Option value="ADAPTIVE">{t('backtest.copyModeAdaptive') || '自适应模式'}</Select.Option>
               </Select>
             </Form.Item>
 
-            {copyMode === 'RATIO' && (
+            {(copyMode === 'RATIO' || copyMode === 'ADAPTIVE') && (
               <Form.Item
-                label={t('backtest.copyRatio')}
+                label={copyMode === 'ADAPTIVE' ? (t('backtest.baseCopyRatio') || '基础跟单比例') : t('backtest.copyRatio')}
                 name="copyRatio"
                 tooltip={t('backtest.copyRatioTooltip') || '跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单'}
                 rules={[
@@ -942,6 +976,68 @@ const BacktestList: React.FC = () => {
               </Form.Item>
             )}
 
+            {copyMode === 'ADAPTIVE' && (
+              <Row gutter={24}>
+                <Col xs={24} sm={24} md={8}>
+                  <Form.Item
+                    label={t('backtest.adaptiveMinRatio') || '自适应最小比例'}
+                    name="adaptiveMinRatio"
+                    rules={[{ required: true, message: t('backtest.adaptiveMinRatioRequired') || '请输入自适应最小比例' }]}
+                  >
+                    <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={24} md={8}>
+                  <Form.Item
+                    label={t('backtest.adaptiveMaxRatio') || '自适应最大比例'}
+                    name="adaptiveMaxRatio"
+                    rules={[{ required: true, message: t('backtest.adaptiveMaxRatioRequired') || '请输入自适应最大比例' }]}
+                  >
+                    <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={24} md={8}>
+                  <Form.Item
+                    label={t('backtest.adaptiveThreshold') || '自适应阈值 (USDC)'}
+                    name="adaptiveThreshold"
+                    rules={[{ required: true, message: t('backtest.adaptiveThresholdRequired') || '请输入自适应阈值' }]}
+                  >
+                    <InputNumber min={0.0001} step={0.0001} precision={4} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            )}
+
+            <Form.Item
+              label={t('backtest.multiplierMode') || 'Multiplier 模式'}
+              name="multiplierMode"
+            >
+              <Select onChange={(value) => setMultiplierMode(value)} allowClear={false}>
+                <Select.Option value="NONE">{t('backtest.multiplierModeNone') || '无'}</Select.Option>
+                <Select.Option value="SINGLE">{t('backtest.multiplierModeSingle') || '单一倍率'}</Select.Option>
+                <Select.Option value="TIERED">{t('backtest.multiplierModeTiered') || '分层倍率'}</Select.Option>
+              </Select>
+            </Form.Item>
+
+            {multiplierMode === 'SINGLE' && (
+              <Form.Item
+                label={t('backtest.tradeMultiplier') || '倍率'}
+                name="tradeMultiplier"
+                rules={[{ required: true, message: t('backtest.tradeMultiplierRequired') || '请输入倍率' }]}
+              >
+                <InputNumber style={{ width: '100%' }} precision={4} min={0} step={0.0001} addonAfter="x" />
+              </Form.Item>
+            )}
+
+            {multiplierMode === 'TIERED' && (
+              <Form.Item
+                label={t('backtest.tieredMultipliers') || '分层倍率'}
+                required
+              >
+                <MultiplierTierEditor />
+              </Form.Item>
+            )}
+
             <Row gutter={24}>
               <Col xs={24} sm={24} md={12}>
                 <Form.Item
@@ -983,6 +1079,18 @@ const BacktestList: React.FC = () => {
                 </Form.Item>
               </Col>
             </Row>
+
+            <Form.Item
+              label={(t('backtest.maxDailyVolume') || '每日最大成交额') + ' (USDC)'}
+              name="maxDailyVolume"
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                placeholder={t('backtest.maxDailyVolumePlaceholder') || '留空表示不启用每日成交额限制'}
+                precision={2}
+                min={0}
+              />
+            </Form.Item>
 
             <Form.Item
               label={t('backtest.maxPositionValue') + ' (USDC)'}
@@ -1116,18 +1224,29 @@ const BacktestList: React.FC = () => {
                 const preFilled = {
                   leaderId: detailTask.leaderId,
                   copyMode: detailConfig.copyMode,
-                  copyRatio: detailConfig.copyMode === 'RATIO' ? parseFloat(detailConfig.copyRatio) * 100 : undefined,
+                  copyRatio: (detailConfig.copyMode === 'RATIO' || detailConfig.copyMode === 'ADAPTIVE') ? parseFloat(detailConfig.copyRatio) * 100 : undefined,
                   fixedAmount: detailConfig.copyMode === 'FIXED' ? detailConfig.fixedAmount : undefined,
+                  adaptiveMinRatio: detailConfig.adaptiveMinRatio ? parseFloat(detailConfig.adaptiveMinRatio) * 100 : undefined,
+                  adaptiveMaxRatio: detailConfig.adaptiveMaxRatio ? parseFloat(detailConfig.adaptiveMaxRatio) * 100 : undefined,
+                  adaptiveThreshold: detailConfig.adaptiveThreshold ? parseFloat(detailConfig.adaptiveThreshold) : undefined,
+                  multiplierMode: detailConfig.multiplierMode || 'NONE',
+                  tradeMultiplier: detailConfig.tradeMultiplier ? parseFloat(detailConfig.tradeMultiplier) : undefined,
+                  tieredMultipliers: detailConfig.tieredMultipliers?.map((tier: any) => ({
+                    min: parseFloat(tier.min),
+                    max: tier.max != null ? parseFloat(tier.max) : undefined,
+                    multiplier: parseFloat(tier.multiplier)
+                  })),
                   maxOrderSize: parseFloat(detailConfig.maxOrderSize),
                   minOrderSize: parseFloat(detailConfig.minOrderSize),
                   maxDailyLoss: parseFloat(detailConfig.maxDailyLoss),
                   maxDailyOrders: detailConfig.maxDailyOrders,
+                  maxDailyVolume: detailConfig.maxDailyVolume ? parseFloat(detailConfig.maxDailyVolume) : undefined,
                   supportSell: detailConfig.supportSell,
                   keywordFilterMode: detailConfig.keywordFilterMode,
                   keywords: detailConfig.keywords || [],
-                  maxPositionValue: detailConfig.maxPositionValue,
-                  minPrice: detailConfig.minPrice,
-                  maxPrice: detailConfig.maxPrice,
+                  maxPositionValue: detailConfig.maxPositionValue ? parseFloat(detailConfig.maxPositionValue) : undefined,
+                  minPrice: detailConfig.minPrice ? parseFloat(detailConfig.minPrice) : undefined,
+                  maxPrice: detailConfig.maxPrice ? parseFloat(detailConfig.maxPrice) : undefined,
                   configName: `回测任务-${detailTask.taskName}`
                 }
                 setPreFilledConfig(preFilled)
@@ -1280,11 +1399,11 @@ const BacktestList: React.FC = () => {
             {detailConfig && (
               <Card title={t('backtest.config')} size="small">
                 <Descriptions column={isMobile ? 1 : 2} bordered size="small">
-                  <Descriptions.Item label={t('backtest.copyMode')}>
-                    {detailConfig.copyMode === 'RATIO' 
-                      ? `${t('backtest.copyModeRatio')} ${parseFloat(detailConfig.copyRatio) * 100}%`
-                      : `${t('backtest.copyModeFixed')} ${formatUSDC(detailConfig.fixedAmount)} USDC`
-                    }
+                <Descriptions.Item label={t('backtest.copyMode')}>
+                    {formatCopyModeSummary(detailConfig)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('backtest.multiplierMode') || 'Multiplier'}>
+                    {formatMultiplierSummary(detailConfig.multiplierMode, detailConfig.tradeMultiplier, detailConfig.tieredMultipliers)}
                   </Descriptions.Item>
                   <Descriptions.Item label={t('backtest.maxOrderSize')}>
                     {formatUSDC(detailConfig.maxOrderSize)} USDC
@@ -1298,6 +1417,11 @@ const BacktestList: React.FC = () => {
                   <Descriptions.Item label={t('backtest.maxDailyOrders')}>
                     {detailConfig.maxDailyOrders}
                   </Descriptions.Item>
+                  {detailConfig.maxDailyVolume && (
+                    <Descriptions.Item label={t('backtest.maxDailyVolume') || '每日最大成交额'}>
+                      {formatUSDC(detailConfig.maxDailyVolume)} USDC
+                    </Descriptions.Item>
+                  )}
                   <Descriptions.Item label={t('backtest.supportSell')}>
                     {detailConfig.supportSell ? t('common.yes') : t('common.no')}
                   </Descriptions.Item>

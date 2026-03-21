@@ -81,6 +81,9 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
     @Query("SELECT SUM(t.remainingQuantity * t.price) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.marketId = :marketId AND t.outcomeIndex = :outcomeIndex AND t.remainingQuantity > 0")
     fun sumCurrentPositionValueByMarketAndOutcomeIndex(copyTradingId: Long, marketId: String, outcomeIndex: Int): BigDecimal?
 
+    @Query("SELECT SUM(t.quantity * t.price) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.createdAt >= :startTime AND t.createdAt < :endTime")
+    fun sumDailyBuyVolume(copyTradingId: Long, startTime: Long, endTime: Long): BigDecimal?
+
     /**
      * 查询指定跟单配置下，创建时间超过指定时间点的未匹配订单（FIFO顺序）
      * 用于避免刚创建的订单被误判为已卖出

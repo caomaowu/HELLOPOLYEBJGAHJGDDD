@@ -4,6 +4,9 @@ import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.entity.CopyTradingTemplate
 import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.CopyTradingTemplateRepository
+import com.wrbug.polymarketbot.util.IllegalBigDecimal
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingConfig
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -38,20 +41,25 @@ class CopyTradingTemplateService(
             }
             
             // 3. 验证 copyMode
-            if (request.copyMode !in listOf("RATIO", "FIXED")) {
-                return Result.failure(IllegalArgumentException("copyMode 必须是 RATIO 或 FIXED"))
-            }
-            
+            val copyMode = request.copyMode
+
             // 4. 创建模板
             val template = CopyTradingTemplate(
                 templateName = request.templateName,
-                copyMode = request.copyMode,
+                copyMode = copyMode,
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: BigDecimal.ONE,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal(),
+                adaptiveMinRatio = request.adaptiveMinRatio?.toSafeBigDecimal(),
+                adaptiveMaxRatio = request.adaptiveMaxRatio?.toSafeBigDecimal(),
+                adaptiveThreshold = request.adaptiveThreshold?.toSafeBigDecimal(),
+                multiplierMode = request.multiplierMode ?: CopyTradingSizingSupport.MULTIPLIER_MODE_NONE,
+                tradeMultiplier = request.tradeMultiplier?.toSafeBigDecimal(),
+                tieredMultipliers = CopyTradingSizingSupport.serializeTieredMultipliers(request.tieredMultipliers),
                 maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: "1000".toSafeBigDecimal(),
                 minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: "1".toSafeBigDecimal(),
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                 maxDailyOrders = request.maxDailyOrders ?: 100,
+                maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                 delaySeconds = request.delaySeconds ?: 0,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -65,6 +73,8 @@ class CopyTradingTemplateService(
                 maxPrice = request.maxPrice?.toSafeBigDecimal(),
                 pushFilteredOrders = request.pushFilteredOrders ?: false
             )
+
+            validateTemplate(template)?.let { return Result.failure(IllegalArgumentException(it)) }
             
             val saved = templateRepository.save(template)
             
@@ -98,19 +108,26 @@ class CopyTradingTemplateService(
             }
             
             // 验证 copyMode
-            if (request.copyMode != null && request.copyMode !in listOf("RATIO", "FIXED")) {
-                return Result.failure(IllegalArgumentException("copyMode 必须是 RATIO 或 FIXED"))
-            }
-            
             val updated = template.copy(
                 templateName = request.templateName ?: template.templateName,
                 copyMode = request.copyMode ?: template.copyMode,
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: template.copyRatio,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal() ?: template.fixedAmount,
+                adaptiveMinRatio = mergeOptionalDecimal(request.adaptiveMinRatio, template.adaptiveMinRatio),
+                adaptiveMaxRatio = mergeOptionalDecimal(request.adaptiveMaxRatio, template.adaptiveMaxRatio),
+                adaptiveThreshold = mergeOptionalDecimal(request.adaptiveThreshold, template.adaptiveThreshold),
+                multiplierMode = request.multiplierMode ?: template.multiplierMode,
+                tradeMultiplier = mergeOptionalDecimal(request.tradeMultiplier, template.tradeMultiplier),
+                tieredMultipliers = if (request.tieredMultipliers != null) {
+                    CopyTradingSizingSupport.serializeTieredMultipliers(request.tieredMultipliers)
+                } else {
+                    template.tieredMultipliers
+                },
                 maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: template.maxOrderSize,
                 minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: template.minOrderSize,
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: template.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: template.maxDailyOrders,
+                maxDailyVolume = mergeOptionalDecimal(request.maxDailyVolume, template.maxDailyVolume),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                 delaySeconds = request.delaySeconds ?: template.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -118,13 +135,15 @@ class CopyTradingTemplateService(
                 websocketReconnectInterval = request.websocketReconnectInterval ?: template.websocketReconnectInterval,
                 websocketMaxRetries = request.websocketMaxRetries ?: template.websocketMaxRetries,
                 supportSell = request.supportSell ?: template.supportSell,
-                minOrderDepth = request.minOrderDepth?.toSafeBigDecimal() ?: template.minOrderDepth,
-                maxSpread = request.maxSpread?.toSafeBigDecimal() ?: template.maxSpread,
-                minPrice = request.minPrice?.toSafeBigDecimal() ?: template.minPrice,
-                maxPrice = request.maxPrice?.toSafeBigDecimal() ?: template.maxPrice,
+                minOrderDepth = mergeOptionalDecimal(request.minOrderDepth, template.minOrderDepth),
+                maxSpread = mergeOptionalDecimal(request.maxSpread, template.maxSpread),
+                minPrice = mergeOptionalDecimal(request.minPrice, template.minPrice),
+                maxPrice = mergeOptionalDecimal(request.maxPrice, template.maxPrice),
                 pushFilteredOrders = request.pushFilteredOrders ?: template.pushFilteredOrders,
                 updatedAt = System.currentTimeMillis()
             )
+
+            validateTemplate(updated)?.let { return Result.failure(IllegalArgumentException(it)) }
             
             val saved = templateRepository.save(updated)
             
@@ -174,10 +193,18 @@ class CopyTradingTemplateService(
                 copyMode = request.copyMode ?: sourceTemplate.copyMode,
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: sourceTemplate.copyRatio,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal() ?: sourceTemplate.fixedAmount,
+                adaptiveMinRatio = request.adaptiveMinRatio?.toSafeBigDecimal() ?: sourceTemplate.adaptiveMinRatio,
+                adaptiveMaxRatio = request.adaptiveMaxRatio?.toSafeBigDecimal() ?: sourceTemplate.adaptiveMaxRatio,
+                adaptiveThreshold = request.adaptiveThreshold?.toSafeBigDecimal() ?: sourceTemplate.adaptiveThreshold,
+                multiplierMode = request.multiplierMode ?: sourceTemplate.multiplierMode,
+                tradeMultiplier = request.tradeMultiplier?.toSafeBigDecimal() ?: sourceTemplate.tradeMultiplier,
+                tieredMultipliers = request.tieredMultipliers?.let { CopyTradingSizingSupport.serializeTieredMultipliers(it) }
+                    ?: sourceTemplate.tieredMultipliers,
                 maxOrderSize = request.maxOrderSize?.toSafeBigDecimal() ?: sourceTemplate.maxOrderSize,
                 minOrderSize = request.minOrderSize?.toSafeBigDecimal() ?: sourceTemplate.minOrderSize,
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: sourceTemplate.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: sourceTemplate.maxDailyOrders,
+                maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: sourceTemplate.maxDailyVolume,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: sourceTemplate.priceTolerance,
                 delaySeconds = request.delaySeconds ?: sourceTemplate.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: sourceTemplate.pollIntervalSeconds,
@@ -191,6 +218,8 @@ class CopyTradingTemplateService(
                 maxPrice = request.maxPrice?.toSafeBigDecimal() ?: sourceTemplate.maxPrice,
                 pushFilteredOrders = request.pushFilteredOrders ?: sourceTemplate.pushFilteredOrders
             )
+
+            validateTemplate(newTemplate)?.let { return Result.failure(IllegalArgumentException(it)) }
             
             val saved = templateRepository.save(newTemplate)
             
@@ -248,10 +277,17 @@ class CopyTradingTemplateService(
             copyMode = template.copyMode,
             copyRatio = template.copyRatio.toPlainString(),
             fixedAmount = template.fixedAmount?.toPlainString(),
+            adaptiveMinRatio = template.adaptiveMinRatio?.toPlainString(),
+            adaptiveMaxRatio = template.adaptiveMaxRatio?.toPlainString(),
+            adaptiveThreshold = template.adaptiveThreshold?.toPlainString(),
+            multiplierMode = template.multiplierMode,
+            tradeMultiplier = template.tradeMultiplier?.toPlainString(),
+            tieredMultipliers = CopyTradingSizingSupport.toTierDtoList(template.tieredMultipliers),
             maxOrderSize = template.maxOrderSize.toPlainString(),
             minOrderSize = template.minOrderSize.toPlainString(),
             maxDailyLoss = template.maxDailyLoss.toPlainString(),
             maxDailyOrders = template.maxDailyOrders,
+            maxDailyVolume = template.maxDailyVolume?.toPlainString(),
             priceTolerance = template.priceTolerance.toPlainString(),
             delaySeconds = template.delaySeconds,
             pollIntervalSeconds = template.pollIntervalSeconds,
@@ -267,6 +303,36 @@ class CopyTradingTemplateService(
             createdAt = template.createdAt,
             updatedAt = template.updatedAt
         )
+    }
+
+    private fun mergeOptionalDecimal(rawValue: String?, currentValue: BigDecimal?): BigDecimal? {
+        if (rawValue == null) {
+            return currentValue
+        }
+        if (rawValue.isBlank()) {
+            return null
+        }
+        val converted = rawValue.toSafeBigDecimal()
+        return if (converted == IllegalBigDecimal) currentValue else converted
+    }
+
+    private fun validateTemplate(template: CopyTradingTemplate): String? {
+        val config = CopyTradingSizingConfig(
+            copyMode = template.copyMode,
+            copyRatio = template.copyRatio,
+            fixedAmount = template.fixedAmount,
+            adaptiveMinRatio = template.adaptiveMinRatio,
+            adaptiveMaxRatio = template.adaptiveMaxRatio,
+            adaptiveThreshold = template.adaptiveThreshold,
+            multiplierMode = template.multiplierMode,
+            tradeMultiplier = template.tradeMultiplier,
+            tieredMultipliers = CopyTradingSizingSupport.parseTieredMultipliers(template.tieredMultipliers),
+            maxOrderSize = template.maxOrderSize,
+            minOrderSize = template.minOrderSize,
+            maxPositionValue = null,
+            maxDailyVolume = template.maxDailyVolume
+        )
+        return CopyTradingSizingSupport.validateConfig(config).firstOrNull()
     }
 }
 

@@ -8,7 +8,7 @@ import { apiService } from '../services/api'
 import { useAccountStore } from '../store/accountStore'
 import type { CopyTrading, Leader, CopyTradingStatistics } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatUSDC } from '../utils'
+import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC } from '../utils'
 import CopyTradingOrdersModal from './CopyTradingOrders/index'
 import StatisticsModal from './CopyTradingOrders/StatisticsModal'
 import FilteredOrdersModal from './CopyTradingOrders/FilteredOrdersModal'
@@ -213,14 +213,18 @@ const CopyTradingList: React.FC = () => {
     {
       title: t('copyTradingList.copyMode') || '跟单模式',
       key: 'copyMode',
-      width: isMobile ? 100 : 120,
+      width: isMobile ? 140 : 220,
       render: (_: any, record: CopyTrading) => (
-        <Tag color={record.copyMode === 'RATIO' ? 'blue' : 'green'}>
-          {record.copyMode === 'RATIO' 
-            ? `${t('copyTradingList.ratioMode') || '比例'} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(2).replace(/\.0+$/, '')}%`
-            : `${t('copyTradingList.fixedAmountMode') || '固定'} ${formatUSDC(record.fixedAmount || '0')}`
-          }
-        </Tag>
+        <div>
+          <Tag color={record.copyMode === 'FIXED' ? 'green' : record.copyMode === 'ADAPTIVE' ? 'orange' : 'blue'}>
+            {formatCopyModeSummary(record)}
+          </Tag>
+          {record.multiplierMode && record.multiplierMode !== 'NONE' && (
+            <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
+              {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+            </div>
+          )}
+        </div>
       )
     },
     {
@@ -481,10 +485,15 @@ const CopyTradingList: React.FC = () => {
                           marginBottom: '8px',
                           color: '#666'
                         }}>
-                          {record.copyMode === 'RATIO' 
-                            ? `${t('copyTradingList.ratioMode') || '比例'} ${(parseFloat(record.copyRatio || '0') * 100).toFixed(2).replace(/\.0+$/, '')}%`
-                            : `${t('copyTradingList.fixedAmountMode') || '固定'} ${formatUSDC(record.fixedAmount || '0')}`
-                          }
+                          {formatCopyModeSummary(record)}
+                        </div>
+                        {record.multiplierMode && record.multiplierMode !== 'NONE' && (
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                            {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                          {t('copyTradingList.dailyVolumeLimit') || '每日成交额'}: {record.maxDailyVolume ? `${formatUSDC(record.maxDailyVolume)} USDC` : (t('copyTradingList.notSet') || '未设置')}
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Tag color={record.enabled ? 'green' : 'red'}>

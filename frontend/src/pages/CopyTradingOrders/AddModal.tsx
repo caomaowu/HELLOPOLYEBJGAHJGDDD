@@ -4,12 +4,13 @@ import { SaveOutlined, FileTextOutlined, PlusOutlined } from '@ant-design/icons'
 import { apiService } from '../../services/api'
 import { useAccountStore } from '../../store/accountStore'
 import type { Leader, CopyTradingTemplate, CopyTradingCreateRequest } from '../../types'
-import { formatUSDC } from '../../utils'
+import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../../utils'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
 import AccountImportForm from '../../components/AccountImportForm'
 import LeaderAddForm from '../../components/LeaderAddForm'
 import LeaderSelect from '../../components/LeaderSelect'
+import MultiplierTierEditor from '../../components/MultiplierTierEditor'
 
 const { Option } = Select
 
@@ -19,13 +20,20 @@ interface AddModalProps {
   onSuccess?: () => void
   preFilledConfig?: {
     leaderId?: number
-    copyMode?: 'RATIO' | 'FIXED'
+    copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
     copyRatio?: number
     fixedAmount?: string
+    adaptiveMinRatio?: number
+    adaptiveMaxRatio?: number
+    adaptiveThreshold?: number
+    multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+    tradeMultiplier?: number
+    tieredMultipliers?: Array<{ min: number; max?: number | null; multiplier: number }>
     maxOrderSize?: number
     minOrderSize?: number
     maxDailyLoss?: number
     maxDailyOrders?: number
+    maxDailyVolume?: number
     supportSell?: boolean
     keywordFilterMode?: string
     keywords?: string[]
@@ -48,7 +56,8 @@ const AddModal: React.FC<AddModalProps> = ({
   const [leaders, setLeaders] = useState<Leader[]>([])
   const [templates, setTemplates] = useState<CopyTradingTemplate[]>([])
   const [templateModalVisible, setTemplateModalVisible] = useState(false)
-  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED'>('RATIO')
+  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
+  const [multiplierMode, setMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
   const [keywords, setKeywords] = useState<string[]>([])
   const keywordInputRef = useRef<InputRef>(null)
   const [maxMarketEndDateValue, setMaxMarketEndDateValue] = useState<number | undefined>()
@@ -121,10 +130,17 @@ const AddModal: React.FC<AddModalProps> = ({
       copyMode: config.copyMode || 'RATIO',
       copyRatio: config.copyRatio,
       fixedAmount: config.fixedAmount,
+      adaptiveMinRatio: config.adaptiveMinRatio,
+      adaptiveMaxRatio: config.adaptiveMaxRatio,
+      adaptiveThreshold: config.adaptiveThreshold,
+      multiplierMode: config.multiplierMode || 'NONE',
+      tradeMultiplier: config.tradeMultiplier,
+      tieredMultipliers: config.tieredMultipliers,
       maxOrderSize: config.maxOrderSize,
       minOrderSize: config.minOrderSize,
       maxDailyLoss: config.maxDailyLoss,
       maxDailyOrders: config.maxDailyOrders,
+      maxDailyVolume: config.maxDailyVolume,
       supportSell: config.supportSell,
       keywordFilterMode: config.keywordFilterMode || 'DISABLED',
       maxPositionValue: config.maxPositionValue
@@ -133,6 +149,7 @@ const AddModal: React.FC<AddModalProps> = ({
     
     form.setFieldsValue(formValues)
     setCopyMode(config.copyMode || 'RATIO')
+    setMultiplierMode(config.multiplierMode || 'NONE')
     setKeywords(config.keywords || [])
     
     console.log('[AddModal] fillPreFilledConfig: form values set, copyMode:', config.copyMode, 'keywords:', config.keywords)
@@ -169,6 +186,7 @@ const AddModal: React.FC<AddModalProps> = ({
           configName: defaultConfigName,
           copyMode: 'RATIO',
           copyRatio: 100,
+          multiplierMode: 'NONE',
           maxOrderSize: 1000,
           minOrderSize: 1,
           maxDailyLoss: 10000,
@@ -177,6 +195,7 @@ const AddModal: React.FC<AddModalProps> = ({
           keywordFilterMode: 'DISABLED'
         })
         setCopyMode('RATIO')
+        setMultiplierMode('NONE')
       setKeywords([])
       }
     } else {
@@ -185,6 +204,7 @@ const AddModal: React.FC<AddModalProps> = ({
       form.resetFields()
       setKeywords([])
       setCopyMode('RATIO')
+      setMultiplierMode('NONE')
       setLeaderAssetInfo(null)
     }
   }, [open, preFilledConfig])
@@ -217,9 +237,21 @@ const AddModal: React.FC<AddModalProps> = ({
       copyMode: template.copyMode,
       copyRatio: template.copyRatio ? parseFloat(template.copyRatio) * 100 : 100, // 转换为百分比显示
       fixedAmount: template.fixedAmount ? parseFloat(template.fixedAmount) : undefined,
+      adaptiveMinRatio: template.adaptiveMinRatio ? parseFloat(template.adaptiveMinRatio) * 100 : undefined,
+      adaptiveMaxRatio: template.adaptiveMaxRatio ? parseFloat(template.adaptiveMaxRatio) * 100 : undefined,
+      adaptiveThreshold: template.adaptiveThreshold ? parseFloat(template.adaptiveThreshold) : undefined,
+      multiplierMode: template.multiplierMode || 'NONE',
+      tradeMultiplier: template.tradeMultiplier ? parseFloat(template.tradeMultiplier) : undefined,
+      tieredMultipliers: template.tieredMultipliers?.map((tier) => ({
+        min: parseFloat(tier.min),
+        max: tier.max != null ? parseFloat(tier.max) : undefined,
+        multiplier: parseFloat(tier.multiplier)
+      })),
       maxOrderSize: template.maxOrderSize ? parseFloat(template.maxOrderSize) : undefined,
       minOrderSize: template.minOrderSize ? parseFloat(template.minOrderSize) : undefined,
+      maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
+      maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
       priceTolerance: template.priceTolerance ? parseFloat(template.priceTolerance) : undefined,
       supportSell: template.supportSell,
       minOrderDepth: template.minOrderDepth ? parseFloat(template.minOrderDepth) : undefined,
@@ -230,11 +262,12 @@ const AddModal: React.FC<AddModalProps> = ({
       pushFilteredOrders: template.pushFilteredOrders ?? false
     })
     setCopyMode(template.copyMode)
+    setMultiplierMode(template.multiplierMode || 'NONE')
     setTemplateModalVisible(false)
     message.success(t('copyTradingAdd.templateFilled') || '模板内容已填充，您可以修改')
   }
   
-  const handleCopyModeChange = (mode: 'RATIO' | 'FIXED') => {
+  const handleCopyModeChange = (mode: 'RATIO' | 'FIXED' | 'ADAPTIVE') => {
     setCopyMode(mode)
   }
   
@@ -307,7 +340,7 @@ const AddModal: React.FC<AddModalProps> = ({
     setKeywords(newKeywords)
   }
   
-    const handleSubmit = async (values: any) => {
+  const handleSubmit = async (values: any) => {
     // 前端校验
     if (values.copyMode === 'FIXED') {
       if (!values.fixedAmount || Number(values.fixedAmount) < 1) {
@@ -315,9 +348,24 @@ const AddModal: React.FC<AddModalProps> = ({
         return
       }
     }
+
+    if (values.copyMode === 'ADAPTIVE') {
+      if (!values.copyRatio || !values.adaptiveMinRatio || !values.adaptiveMaxRatio || !values.adaptiveThreshold) {
+        message.error('请完整填写自适应策略参数')
+        return
+      }
+    }
     
-    if (values.copyMode === 'RATIO' && values.minOrderSize !== undefined && values.minOrderSize !== null && Number(values.minOrderSize) < 1) {
+    if (values.minOrderSize !== undefined && values.minOrderSize !== null && Number(values.minOrderSize) < 1) {
       message.error(t('copyTradingAdd.minOrderSizeMin') || '最小金额必须 >= 1')
+      return
+    }
+
+    const normalizedTierResult = values.multiplierMode === 'TIERED'
+      ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
+      : null
+    if (normalizedTierResult && !normalizedTierResult.isValid) {
+      message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
       return
     }
     
@@ -337,12 +385,21 @@ const AddModal: React.FC<AddModalProps> = ({
         leaderId: values.leaderId,
         enabled: true, // 默认启用
         copyMode: values.copyMode || 'RATIO',
-        copyRatio: values.copyMode === 'RATIO' && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
+        copyRatio: (values.copyMode === 'RATIO' || values.copyMode === 'ADAPTIVE') && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
         fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount?.toString() : undefined,
+        adaptiveMinRatio: values.copyMode === 'ADAPTIVE' ? (values.adaptiveMinRatio / 100).toString() : undefined,
+        adaptiveMaxRatio: values.copyMode === 'ADAPTIVE' ? (values.adaptiveMaxRatio / 100).toString() : undefined,
+        adaptiveThreshold: values.copyMode === 'ADAPTIVE' ? values.adaptiveThreshold?.toString() : undefined,
+        multiplierMode: values.multiplierMode || 'NONE',
+        tradeMultiplier: values.multiplierMode === 'SINGLE' ? values.tradeMultiplier?.toString() : undefined,
+        tieredMultipliers: values.multiplierMode === 'TIERED'
+          ? normalizedTierResult?.tiers
+          : undefined,
         maxOrderSize: values.maxOrderSize?.toString(),
         minOrderSize: values.minOrderSize?.toString(),
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
+        maxDailyVolume: values.maxDailyVolume?.toString(),
         priceTolerance: values.priceTolerance?.toString(),
         delaySeconds: values.delaySeconds,
         pollIntervalSeconds: values.pollIntervalSeconds,
@@ -402,6 +459,7 @@ const AddModal: React.FC<AddModalProps> = ({
           initialValues={{
             copyMode: 'RATIO',
             copyRatio: 100,
+            multiplierMode: 'NONE',
             maxOrderSize: 1000,
             minOrderSize: 1,
             maxDailyLoss: 10000,
@@ -563,18 +621,19 @@ const AddModal: React.FC<AddModalProps> = ({
           <Form.Item
             label={t('copyTradingAdd.copyMode') || '跟单金额模式'}
             name="copyMode"
-            tooltip={t('copyTradingAdd.copyModeTooltip') || '选择跟单金额的计算方式。比例模式：跟单金额随 Leader 订单大小按比例变化；固定金额模式：无论 Leader 订单大小如何，跟单金额都固定不变。'}
+            tooltip={t('copyTradingAdd.copyModeTooltip') || '选择跟单金额的计算方式。支持比例、固定金额和自适应模式。'}
             rules={[{ required: true }]}
           >
             <Radio.Group onChange={(e) => handleCopyModeChange(e.target.value)}>
               <Radio value="RATIO">{t('copyTradingAdd.ratioMode') || '比例模式'}</Radio>
               <Radio value="FIXED">{t('copyTradingAdd.fixedAmountMode') || '固定金额模式'}</Radio>
+              <Radio value="ADAPTIVE">{t('copyTradingAdd.adaptiveMode') || '自适应模式'}</Radio>
             </Radio.Group>
           </Form.Item>
           
-          {copyMode === 'RATIO' && (
+          {(copyMode === 'RATIO' || copyMode === 'ADAPTIVE') && (
             <Form.Item
-              label={t('copyTradingAdd.copyRatio') || '跟单比例'}
+              label={copyMode === 'ADAPTIVE' ? (t('copyTradingAdd.baseCopyRatio') || '基础跟单比例') : (t('copyTradingAdd.copyRatio') || '跟单比例')}
               name="copyRatio"
               tooltip={t('copyTradingAdd.copyRatioTooltip') || '跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单'}
             >
@@ -602,6 +661,52 @@ const AddModal: React.FC<AddModalProps> = ({
                 }}
               />
             </Form.Item>
+          )}
+
+          {copyMode === 'ADAPTIVE' && (
+            <>
+              <Form.Item
+                label={t('copyTradingAdd.adaptiveMinRatio') || '自适应最小比例'}
+                name="adaptiveMinRatio"
+                rules={[{ required: true, message: t('copyTradingAdd.adaptiveMinRatioRequired') || '请输入自适应最小比例' }]}
+              >
+                <InputNumber
+                  min={0.01}
+                  max={10000}
+                  step={0.01}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  addonAfter="%"
+                />
+              </Form.Item>
+              <Form.Item
+                label={t('copyTradingAdd.adaptiveMaxRatio') || '自适应最大比例'}
+                name="adaptiveMaxRatio"
+                rules={[{ required: true, message: t('copyTradingAdd.adaptiveMaxRatioRequired') || '请输入自适应最大比例' }]}
+              >
+                <InputNumber
+                  min={0.01}
+                  max={10000}
+                  step={0.01}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  addonAfter="%"
+                />
+              </Form.Item>
+              <Form.Item
+                label={t('copyTradingAdd.adaptiveThreshold') || '自适应阈值 (USDC)'}
+                name="adaptiveThreshold"
+                rules={[{ required: true, message: t('copyTradingAdd.adaptiveThresholdRequired') || '请输入自适应阈值' }]}
+              >
+                <InputNumber
+                  min={0.0001}
+                  step={0.0001}
+                  precision={4}
+                  style={{ width: '100%' }}
+                  placeholder={t('copyTradingAdd.adaptiveThresholdPlaceholder') || '达到该 Leader 订单金额后开始向最小比例收缩'}
+                />
+              </Form.Item>
+            </>
           )}
           
           {copyMode === 'FIXED' && (
@@ -642,62 +747,96 @@ const AddModal: React.FC<AddModalProps> = ({
             </Form.Item>
           )}
           
-          {copyMode === 'RATIO' && (
-            <>
-              <Form.Item
-                label={t('copyTradingAdd.maxOrderSize') || '单笔订单最大金额 (USDC)'}
-                name="maxOrderSize"
-                tooltip={t('copyTradingAdd.maxOrderSizeTooltip') || '比例模式下，限制单笔跟单订单的最大金额上限'}
-              >
-                <InputNumber
-                  min={0.0001}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder={t('copyTradingAdd.maxOrderSizePlaceholder') || '仅在比例模式下生效（可选）'}
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
-              </Form.Item>
-              
-              <Form.Item
-                label={t('copyTradingAdd.minOrderSize') || '单笔订单最小金额 (USDC)'}
-                name="minOrderSize"
-                tooltip={t('copyTradingAdd.minOrderSizeTooltip') || '比例模式下，限制单笔跟单订单的最小金额下限，必须 >= 1'}
-                rules={[
-                  { 
-                    validator: (_, value) => {
-                      if (value === undefined || value === null || value === '') {
-                        return Promise.resolve()
-                      }
-                      if (typeof value === 'number' && value < 1) {
-                        return Promise.reject(new Error(t('copyTradingAdd.minOrderSizeMin') || '最小金额必须 >= 1'))
-                      }
-                      return Promise.resolve()
-                    }
-                  }
-                ]}
-              >
-                <InputNumber
-                  min={1}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder={t('copyTradingAdd.minOrderSizePlaceholder') || '仅在比例模式下生效，必须 >= 1（可选）'}
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
-              </Form.Item>
-            </>
+          <Divider>{t('copyTradingAdd.sizingEnhancement') || 'Sizing 增强'}</Divider>
+
+          <Form.Item
+            label={t('copyTradingAdd.multiplierMode') || 'Multiplier 模式'}
+            name="multiplierMode"
+          >
+            <Radio.Group onChange={(e) => setMultiplierMode(e.target.value)}>
+              <Radio value="NONE">{t('copyTradingAdd.multiplierModeNone') || '无'}</Radio>
+              <Radio value="SINGLE">{t('copyTradingAdd.multiplierModeSingle') || '单一倍率'}</Radio>
+              <Radio value="TIERED">{t('copyTradingAdd.multiplierModeTiered') || '分层倍率'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          {multiplierMode === 'SINGLE' && (
+            <Form.Item
+              label={t('copyTradingAdd.tradeMultiplier') || '倍率'}
+              name="tradeMultiplier"
+              rules={[{ required: true, message: t('copyTradingAdd.tradeMultiplierRequired') || '请输入倍率' }]}
+            >
+              <InputNumber
+                min={0}
+                step={0.0001}
+                precision={4}
+                style={{ width: '100%' }}
+                addonAfter="x"
+              />
+            </Form.Item>
           )}
+
+          {multiplierMode === 'TIERED' && (
+            <Form.Item
+              label={t('copyTradingAdd.tieredMultipliers') || '分层倍率'}
+              required
+            >
+              <MultiplierTierEditor />
+            </Form.Item>
+          )}
+
+          <Form.Item
+            label={t('copyTradingAdd.maxOrderSize') || '单笔订单最大金额 (USDC)'}
+            name="maxOrderSize"
+            tooltip={t('copyTradingAdd.maxOrderSizeTooltip') || '对所有 sizing 模式统一生效的单笔最大金额'}
+          >
+            <InputNumber
+              min={0.0001}
+              step={0.0001}
+              precision={4}
+              style={{ width: '100%' }}
+              placeholder={t('copyTradingAdd.maxOrderSizePlaceholder') || '默认 1000（可选）'}
+              formatter={(value) => {
+                if (!value && value !== 0) return ''
+                const num = parseFloat(value.toString())
+                if (isNaN(num)) return ''
+                return num.toString().replace(/\.0+$/, '')
+              }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label={t('copyTradingAdd.minOrderSize') || '单笔订单最小金额 (USDC)'}
+            name="minOrderSize"
+            tooltip={t('copyTradingAdd.minOrderSizeTooltip') || '对所有 sizing 模式统一生效的单笔最小金额，必须 >= 1'}
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (value === undefined || value === null || value === '') {
+                    return Promise.resolve()
+                  }
+                  if (typeof value === 'number' && value < 1) {
+                    return Promise.reject(new Error(t('copyTradingAdd.minOrderSizeMin') || '最小金额必须 >= 1'))
+                  }
+                  return Promise.resolve()
+                }
+              }
+            ]}
+          >
+            <InputNumber
+              min={1}
+              step={0.0001}
+              precision={4}
+              style={{ width: '100%' }}
+              placeholder={t('copyTradingAdd.minOrderSizePlaceholder') || '默认 1（可选）'}
+              formatter={(value) => {
+                if (!value && value !== 0) return ''
+                const num = parseFloat(value.toString())
+                if (isNaN(num)) return ''
+                return num.toString().replace(/\.0+$/, '')
+              }}
+            />
+          </Form.Item>
           
           <Form.Item
             label={t('copyTradingAdd.maxDailyLoss') || '每日最大亏损限制 (USDC)'}
@@ -729,6 +868,20 @@ const AddModal: React.FC<AddModalProps> = ({
               step={1}
               style={{ width: '100%' }}
               placeholder={t('copyTradingAdd.maxDailyOrdersPlaceholder') || '默认 100（可选）'}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label={t('copyTradingAdd.maxDailyVolume') || '每日最大成交额 (USDC)'}
+            name="maxDailyVolume"
+            tooltip={t('copyTradingAdd.maxDailyVolumeTooltip') || '只统计 BUY 成交额；留空表示不启用'}
+          >
+            <InputNumber
+              min={0.0001}
+              step={0.0001}
+              precision={4}
+              style={{ width: '100%' }}
+              placeholder={t('copyTradingAdd.maxDailyVolumePlaceholder') || '例如：5000（可选）'}
             />
           </Form.Item>
           
@@ -1079,12 +1232,14 @@ const AddModal: React.FC<AddModalProps> = ({
               title: t('copyTradingAdd.copyMode') || '跟单模式',
               key: 'copyMode',
               render: (_: any, record: CopyTradingTemplate) => (
-                <span>
-                  {record.copyMode === 'RATIO' 
-                    ? `${t('copyTradingAdd.ratioMode') || '比例'} ${record.copyRatio}x`
-                    : `${t('copyTradingAdd.fixedAmountMode') || '固定'} ${formatUSDC(record.fixedAmount || '0')} USDC`
-                  }
-                </span>
+                <div>
+                  <div>{formatCopyModeSummary(record)}</div>
+                  {record.multiplierMode && record.multiplierMode !== 'NONE' && (
+                    <div style={{ fontSize: 12, color: '#666' }}>
+                      {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+                    </div>
+                  )}
+                </div>
               )
             },
             {

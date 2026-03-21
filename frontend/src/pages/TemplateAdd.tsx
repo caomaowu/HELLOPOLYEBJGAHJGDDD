@@ -4,6 +4,8 @@ import { Card, Form, Input, Button, Radio, InputNumber, Switch, message, Typogra
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
 import { useTranslation } from 'react-i18next'
+import MultiplierTierEditor from '../components/MultiplierTierEditor'
+import { validateAndNormalizeMultiplierTiers } from '../utils'
 
 const { Title } = Typography
 
@@ -12,7 +14,8 @@ const TemplateAdd: React.FC = () => {
   const navigate = useNavigate()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
-  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED'>('RATIO')
+  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
+  const [multiplierMode, setMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
   
   const handleSubmit = async (values: any) => {
     // 前端校验：如果填写了 minOrderSize，必须 >= 1
@@ -38,18 +41,35 @@ const TemplateAdd: React.FC = () => {
         return
       }
     }
+
+    const normalizedTierResult = values.multiplierMode === 'TIERED'
+      ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
+      : null
+    if (normalizedTierResult && !normalizedTierResult.isValid) {
+      message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
+      return
+    }
     
     setLoading(true)
     try {
       const response = await apiService.templates.create({
         templateName: values.templateName,
         copyMode: values.copyMode || 'RATIO',
-        // 将百分比转换为小数：100% -> 1.0
-        copyRatio: values.copyMode === 'RATIO' && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
+        copyRatio: (values.copyMode === 'RATIO' || values.copyMode === 'ADAPTIVE') && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
         fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount?.toString() : undefined,
-        maxOrderSize: values.copyMode === 'RATIO' ? values.maxOrderSize?.toString() : undefined,
-        minOrderSize: values.copyMode === 'RATIO' ? values.minOrderSize?.toString() : undefined,
+        adaptiveMinRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMinRatio != null ? (values.adaptiveMinRatio / 100).toString() : undefined,
+        adaptiveMaxRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMaxRatio != null ? (values.adaptiveMaxRatio / 100).toString() : undefined,
+        adaptiveThreshold: values.copyMode === 'ADAPTIVE' ? values.adaptiveThreshold?.toString() : undefined,
+        multiplierMode: values.multiplierMode || 'NONE',
+        tradeMultiplier: values.multiplierMode === 'SINGLE' ? values.tradeMultiplier?.toString() : undefined,
+        tieredMultipliers: values.multiplierMode === 'TIERED'
+          ? normalizedTierResult?.tiers
+          : undefined,
+        maxOrderSize: values.maxOrderSize?.toString(),
+        minOrderSize: values.minOrderSize?.toString(),
+        maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
+        maxDailyVolume: values.maxDailyVolume?.toString(),
         priceTolerance: values.priceTolerance?.toString(),
         supportSell: values.supportSell !== false,
         minOrderDepth: values.minOrderDepth?.toString(),
@@ -93,8 +113,10 @@ const TemplateAdd: React.FC = () => {
           initialValues={{
             copyMode: 'RATIO',
             copyRatio: 100, // 默认 100%（显示为百分比）
+            multiplierMode: 'NONE',
             maxOrderSize: 1000,
             minOrderSize: 1,
+            maxDailyLoss: 10000,
             maxDailyOrders: 100,
             priceTolerance: 5,
             supportSell: true,
@@ -119,12 +141,13 @@ const TemplateAdd: React.FC = () => {
             <Radio.Group onChange={(e) => setCopyMode(e.target.value)}>
               <Radio value="RATIO">{t('templateAdd.ratioMode') || '比例模式'}</Radio>
               <Radio value="FIXED">{t('templateAdd.fixedAmountMode') || '固定金额模式'}</Radio>
+              <Radio value="ADAPTIVE">{t('templateAdd.adaptiveMode') || '自适应模式'}</Radio>
             </Radio.Group>
           </Form.Item>
           
-          {copyMode === 'RATIO' && (
+          {(copyMode === 'RATIO' || copyMode === 'ADAPTIVE') && (
             <Form.Item
-              label={t('templateAdd.copyRatio') || '跟单比例'}
+              label={copyMode === 'ADAPTIVE' ? (t('templateAdd.baseCopyRatio') || '基础跟单比例') : (t('templateAdd.copyRatio') || '跟单比例')}
               name="copyRatio"
               tooltip={t('templateAdd.copyRatioTooltip') || '跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单'}
             >
@@ -189,75 +212,95 @@ const TemplateAdd: React.FC = () => {
               />
             </Form.Item>
           )}
-          
-          {copyMode === 'RATIO' && (
+
+          {copyMode === 'ADAPTIVE' && (
             <>
-              <Form.Item
-                label={t('templateAdd.maxOrderSize') || '单笔订单最大金额 (USDC)'}
-                name="maxOrderSize"
-                tooltip={t('templateAdd.maxOrderSizeTooltip') || '比例模式下，限制单笔跟单订单的最大金额上限，用于防止跟单金额过大，控制风险。例如：设置为 1000，即使计算出的跟单金额超过 1000，也会限制为 1000 USDC。'}
-              >
-                <InputNumber
-                  min={0.0001}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder={t('templateAdd.maxOrderSizePlaceholder') || '仅在比例模式下生效（可选）'}
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
+              <Form.Item label={t('templateAdd.adaptiveMinRatio') || '自适应最小比例'} name="adaptiveMinRatio" rules={[{ required: true, message: t('templateAdd.adaptiveMinRatioRequired') || '请输入自适应最小比例' }]}>
+                <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
               </Form.Item>
-              
-              <Form.Item
-                label={t('templateAdd.minOrderSize') || '单笔订单最小金额 (USDC)'}
-                name="minOrderSize"
-                tooltip={t('templateAdd.minOrderSizeTooltip') || '比例模式下，限制单笔跟单订单的最小金额下限，用于过滤掉金额过小的订单，避免频繁小额交易。如果填写，必须 >= 1 USDC。例如：设置为 10，如果计算出的跟单金额小于 10，则跳过该订单。'}
-                rules={[
-                  { 
-                    validator: (_, value) => {
-                      if (value === undefined || value === null || value === '') {
-                        return Promise.resolve() // 可选字段，允许为空
-                      }
-                      if (typeof value === 'number' && value < 1) {
-                        return Promise.reject(new Error(t('templateAdd.minOrderSizeError') || '最小金额必须 >= 1'))
-                      }
-                      return Promise.resolve()
-                    }
-                  }
-                ]}
-              >
-                <InputNumber
-                  min={1}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder={t('templateAdd.minOrderSizePlaceholder') || '仅在比例模式下生效，必须 >= 1（可选）'}
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
+              <Form.Item label={t('templateAdd.adaptiveMaxRatio') || '自适应最大比例'} name="adaptiveMaxRatio" rules={[{ required: true, message: t('templateAdd.adaptiveMaxRatioRequired') || '请输入自适应最大比例' }]}>
+                <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
+              </Form.Item>
+              <Form.Item label={t('templateAdd.adaptiveThreshold') || '自适应阈值 (USDC)'} name="adaptiveThreshold" rules={[{ required: true, message: t('templateAdd.adaptiveThresholdRequired') || '请输入自适应阈值' }]}>
+                <InputNumber min={0.0001} step={0.0001} precision={4} style={{ width: '100%' }} />
               </Form.Item>
             </>
           )}
+          
+          <Divider>{t('templateAdd.sizingEnhancement') || 'Sizing 增强'}</Divider>
+
+          <Form.Item label={t('templateAdd.multiplierMode') || 'Multiplier 模式'} name="multiplierMode">
+            <Radio.Group onChange={(e) => setMultiplierMode(e.target.value)}>
+              <Radio value="NONE">{t('templateAdd.multiplierModeNone') || '无'}</Radio>
+              <Radio value="SINGLE">{t('templateAdd.multiplierModeSingle') || '单一倍率'}</Radio>
+              <Radio value="TIERED">{t('templateAdd.multiplierModeTiered') || '分层倍率'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          {multiplierMode === 'SINGLE' && (
+            <Form.Item label={t('templateAdd.tradeMultiplier') || '倍率'} name="tradeMultiplier" rules={[{ required: true, message: t('templateAdd.tradeMultiplierRequired') || '请输入倍率' }]}>
+              <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} addonAfter="x" />
+            </Form.Item>
+          )}
+
+          {multiplierMode === 'TIERED' && (
+            <Form.Item label={t('templateAdd.tieredMultipliers') || '分层倍率'} required>
+              <MultiplierTierEditor />
+            </Form.Item>
+          )}
+
+          <Form.Item
+            label={t('templateAdd.maxOrderSize') || '单笔订单最大金额 (USDC)'}
+            name="maxOrderSize"
+          >
+            <InputNumber min={0.0001} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateAdd.minOrderSize') || '单笔订单最小金额 (USDC)'}
+            name="minOrderSize"
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (value === undefined || value === null || value === '') {
+                    return Promise.resolve()
+                  }
+                  if (typeof value === 'number' && value < 1) {
+                    return Promise.reject(new Error(t('templateAdd.minOrderSizeError') || '最小金额必须 >= 1'))
+                  }
+                  return Promise.resolve()
+                }
+              }
+            ]}
+          >
+            <InputNumber min={1} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateAdd.maxDailyLoss') || '每日最大亏损限制 (USDC)'}
+            name="maxDailyLoss"
+          >
+            <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
           
           <Form.Item
             label={t('templateAdd.maxDailyOrders') || '每日最大跟单订单数'}
             name="maxDailyOrders"
             tooltip={t('templateAdd.maxDailyOrdersTooltip') || '限制每日最多跟单的订单数量，用于风险控制，防止过度交易。例如：设置为 50，当日跟单订单数达到 50 后，停止跟单，次日重置。'}
+            >
+              <InputNumber
+                min={1}
+                step={1}
+                style={{ width: '100%' }}
+                placeholder={t('templateAdd.maxDailyOrdersPlaceholder') || '默认 100（可选）'}
+              />
+            </Form.Item>
+
+          <Form.Item
+            label={t('templateAdd.maxDailyVolume') || '每日最大成交额 (USDC)'}
+            name="maxDailyVolume"
           >
-            <InputNumber
-              min={1}
-              step={1}
-              style={{ width: '100%' }}
-              placeholder={t('templateAdd.maxDailyOrdersPlaceholder') || '默认 100（可选）'}
-            />
+            <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
           </Form.Item>
           
           <Form.Item

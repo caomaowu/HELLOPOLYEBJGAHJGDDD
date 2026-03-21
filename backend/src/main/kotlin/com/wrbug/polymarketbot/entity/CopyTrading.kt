@@ -32,7 +32,25 @@ data class CopyTrading(
     
     @Column(name = "fixed_amount", precision = 20, scale = 8)
     val fixedAmount: BigDecimal? = null,  // 仅在 copyMode="FIXED" 时生效
-    
+
+    @Column(name = "adaptive_min_ratio", precision = 20, scale = 8)
+    val adaptiveMinRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_max_ratio", precision = 20, scale = 8)
+    val adaptiveMaxRatio: BigDecimal? = null,
+
+    @Column(name = "adaptive_threshold", precision = 20, scale = 8)
+    val adaptiveThreshold: BigDecimal? = null,
+
+    @Column(name = "multiplier_mode", nullable = false, length = 10)
+    val multiplierMode: String = "NONE",
+
+    @Column(name = "trade_multiplier", precision = 20, scale = 8)
+    val tradeMultiplier: BigDecimal? = null,
+
+    @Column(name = "tiered_multipliers", columnDefinition = "JSON")
+    val tieredMultipliers: String? = null,
+
     @Column(name = "max_order_size", nullable = false, precision = 20, scale = 8)
     val maxOrderSize: BigDecimal = "1000".toSafeBigDecimal(),
     
@@ -82,6 +100,9 @@ data class CopyTrading(
     // 最大仓位配置
     @Column(name = "max_position_value", precision = 20, scale = 8)
     val maxPositionValue: BigDecimal? = null,  // 最大仓位金额（USDC），NULL表示不启用
+
+    @Column(name = "max_daily_volume", precision = 20, scale = 8)
+    val maxDailyVolume: BigDecimal? = null,  // 每日最大成交额（USDC），NULL表示不启用
     
     // 关键字过滤配置
     @Column(name = "keyword_filter_mode", nullable = false, length = 20)

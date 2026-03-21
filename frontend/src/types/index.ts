@@ -179,15 +179,29 @@ export interface LeaderUpdateRequest {
 /**
  * 跟单模板
  */
+export interface MultiplierTier {
+  min: string
+  max?: string | null
+  multiplier: string
+}
+
 export interface CopyTradingTemplate {
   id: number
   templateName: string
-  copyMode: 'RATIO' | 'FIXED'
+  copyMode: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
+  maxDailyLoss?: string
   maxDailyOrders: number
+  maxDailyVolume?: string
   priceTolerance: string
   supportSell: boolean
   // 过滤条件
@@ -213,12 +227,20 @@ export interface TemplateListResponse {
  */
 export interface TemplateCreateRequest {
   templateName: string
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
+  maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -229,12 +251,20 @@ export interface TemplateCreateRequest {
 export interface TemplateUpdateRequest {
   templateId: number
   templateName?: string
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
+  maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -245,12 +275,20 @@ export interface TemplateUpdateRequest {
 export interface TemplateCopyRequest {
   templateId: number
   templateName: string
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
+  maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -268,13 +306,20 @@ export interface CopyTrading {
   leaderAddress: string
   enabled: boolean
   // 跟单配置参数
-  copyMode: 'RATIO' | 'FIXED'
+  copyMode: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize: string
   minOrderSize: string
   maxDailyLoss: string
   maxDailyOrders: number
+  maxDailyVolume?: string
   priceTolerance: string
   delaySeconds: number
   pollIntervalSeconds: number
@@ -317,13 +362,20 @@ export interface CopyTradingCreateRequest {
   leaderId: number
   enabled?: boolean
   // 跟单配置参数
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
   maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string
   delaySeconds?: number
   pollIntervalSeconds?: number
@@ -355,13 +407,20 @@ export interface CopyTradingUpdateRequest {
   copyTradingId: number
   enabled?: boolean
   // 跟单配置参数（可选，只更新提供的字段）
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
   maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string
   delaySeconds?: number
   pollIntervalSeconds?: number

@@ -6,7 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { CopyTradingTemplate } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatUSDC } from '../utils'
+import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
+import MultiplierTierEditor from '../components/MultiplierTierEditor'
 
 const { Search } = Input
 
@@ -20,7 +21,8 @@ const TemplateList: React.FC = () => {
   const [copyModalVisible, setCopyModalVisible] = useState(false)
   const [copyForm] = Form.useForm()
   const [copyLoading, setCopyLoading] = useState(false)
-  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED'>('RATIO')
+  const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
+  const [copyMultiplierMode, setCopyMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
   const [_sourceTemplate, setSourceTemplate] = useState<CopyTradingTemplate | null>(null) // 用于跟踪复制的源模板
   
   useEffect(() => {
@@ -60,6 +62,7 @@ const TemplateList: React.FC = () => {
   const handleCopy = (template: CopyTradingTemplate) => {
     setSourceTemplate(template)
     setCopyMode(template.copyMode)
+    setCopyMultiplierMode((template.multiplierMode || 'NONE') as 'NONE' | 'SINGLE' | 'TIERED')
     
     // 填充表单数据
     copyForm.setFieldsValue({
@@ -67,9 +70,21 @@ const TemplateList: React.FC = () => {
       copyMode: template.copyMode,
       copyRatio: template.copyRatio ? parseFloat(template.copyRatio) * 100 : 100,
       fixedAmount: template.fixedAmount ? parseFloat(template.fixedAmount) : undefined,
+      adaptiveMinRatio: template.adaptiveMinRatio ? parseFloat(template.adaptiveMinRatio) * 100 : undefined,
+      adaptiveMaxRatio: template.adaptiveMaxRatio ? parseFloat(template.adaptiveMaxRatio) * 100 : undefined,
+      adaptiveThreshold: template.adaptiveThreshold ? parseFloat(template.adaptiveThreshold) : undefined,
+      multiplierMode: template.multiplierMode || 'NONE',
+      tradeMultiplier: template.tradeMultiplier ? parseFloat(template.tradeMultiplier) : undefined,
+      tieredMultipliers: template.tieredMultipliers?.map((tier) => ({
+        min: parseFloat(tier.min),
+        max: tier.max != null ? parseFloat(tier.max) : undefined,
+        multiplier: parseFloat(tier.multiplier)
+      })),
       maxOrderSize: template.maxOrderSize ? parseFloat(template.maxOrderSize) : undefined,
       minOrderSize: template.minOrderSize ? parseFloat(template.minOrderSize) : undefined,
+      maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
+      maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
       priceTolerance: parseFloat(template.priceTolerance),
       supportSell: template.supportSell,
       pushFilteredOrders: template.pushFilteredOrders ?? false,
@@ -106,18 +121,35 @@ const TemplateList: React.FC = () => {
         return
       }
     }
+
+    const normalizedTierResult = values.multiplierMode === 'TIERED'
+      ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
+      : null
+    if (normalizedTierResult && !normalizedTierResult.isValid) {
+      message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
+      return
+    }
     
     setCopyLoading(true)
     try {
       const response = await apiService.templates.create({
         templateName: values.templateName,
         copyMode: values.copyMode || 'RATIO',
-        // 将百分比转换为小数：100% -> 1.0
-        copyRatio: values.copyMode === 'RATIO' && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
+        copyRatio: (values.copyMode === 'RATIO' || values.copyMode === 'ADAPTIVE') && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
         fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount?.toString() : undefined,
-        maxOrderSize: values.copyMode === 'RATIO' ? values.maxOrderSize?.toString() : undefined,
-        minOrderSize: values.copyMode === 'RATIO' ? values.minOrderSize?.toString() : undefined,
+        adaptiveMinRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMinRatio != null ? (values.adaptiveMinRatio / 100).toString() : undefined,
+        adaptiveMaxRatio: values.copyMode === 'ADAPTIVE' && values.adaptiveMaxRatio != null ? (values.adaptiveMaxRatio / 100).toString() : undefined,
+        adaptiveThreshold: values.copyMode === 'ADAPTIVE' ? values.adaptiveThreshold?.toString() : undefined,
+        multiplierMode: values.multiplierMode || 'NONE',
+        tradeMultiplier: values.multiplierMode === 'SINGLE' ? values.tradeMultiplier?.toString() : undefined,
+        tieredMultipliers: values.multiplierMode === 'TIERED'
+          ? normalizedTierResult?.tiers
+          : undefined,
+        maxOrderSize: values.maxOrderSize?.toString(),
+        minOrderSize: values.minOrderSize?.toString(),
+        maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
+        maxDailyVolume: values.maxDailyVolume?.toString(),
         priceTolerance: values.priceTolerance?.toString(),
         supportSell: values.supportSell !== false,
         minOrderDepth: values.minOrderDepth?.toString(),
@@ -146,6 +178,7 @@ const TemplateList: React.FC = () => {
     setCopyModalVisible(false)
     copyForm.resetFields()
     setSourceTemplate(null)
+    setCopyMultiplierMode('NONE')
   }
   
   const filteredTemplates = templates.filter(template =>
@@ -164,8 +197,12 @@ const TemplateList: React.FC = () => {
       dataIndex: 'copyMode',
       key: 'copyMode',
       render: (mode: string) => (
-        <Tag color={mode === 'RATIO' ? 'blue' : 'green'}>
-          {mode === 'RATIO' ? t('templateList.ratio') || '比例' : t('templateList.fixedAmount') || '固定金额'}
+        <Tag color={mode === 'FIXED' ? 'green' : mode === 'ADAPTIVE' ? 'orange' : 'blue'}>
+          {mode === 'RATIO'
+            ? (t('templateList.ratio') || '比例')
+            : mode === 'ADAPTIVE'
+              ? (t('templateList.adaptive') || '自适应')
+              : (t('templateList.fixedAmount') || '固定金额')}
         </Tag>
       )
     },
@@ -173,12 +210,16 @@ const TemplateList: React.FC = () => {
       title: t('templateList.copyConfig') || '跟单配置',
       key: 'copyConfig',
       render: (_: any, record: CopyTradingTemplate) => {
-        if (record.copyMode === 'RATIO') {
-          return `${t('templateList.ratio') || '比例'} ${record.copyRatio}x`
-        } else if (record.copyMode === 'FIXED' && record.fixedAmount) {
-          return `${t('templateList.fixedAmount') || '固定'} ${formatUSDC(record.fixedAmount)} USDC`
-        }
-        return '-'
+        return (
+          <div>
+            <div>{formatCopyModeSummary(record)}</div>
+            {record.multiplierMode && record.multiplierMode !== 'NONE' && (
+              <div style={{ fontSize: 12, color: '#666' }}>
+                {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+              </div>
+            )}
+          </div>
+        )
       }
     },
     {
@@ -319,8 +360,12 @@ const TemplateList: React.FC = () => {
                           {template.templateName}
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                          <Tag color={template.copyMode === 'RATIO' ? 'blue' : 'green'}>
-                            {template.copyMode === 'RATIO' ? (t('templateList.ratioMode') || '比例模式') : (t('templateList.fixedAmountMode') || '固定金额模式')}
+                          <Tag color={template.copyMode === 'FIXED' ? 'green' : template.copyMode === 'ADAPTIVE' ? 'orange' : 'blue'}>
+                            {template.copyMode === 'RATIO'
+                              ? (t('templateList.ratioMode') || '比例模式')
+                              : template.copyMode === 'ADAPTIVE'
+                                ? (t('templateList.adaptiveMode') || '自适应模式')
+                                : (t('templateList.fixedAmountMode') || '固定金额模式')}
                           </Tag>
                           <Tag color={template.supportSell ? 'green' : 'red'}>
                             {template.supportSell ? (t('templateList.supportSell') || '跟单卖出') : (t('templateList.notSupportSell') || '不跟单卖出')}
@@ -334,31 +379,22 @@ const TemplateList: React.FC = () => {
                       <div style={{ marginBottom: '12px' }}>
                         <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('templateList.copyConfig') || '跟单配置'}</div>
                         <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                          {template.copyMode === 'RATIO' 
-                            ? `${t('templateList.ratio') || '比例'} ${template.copyRatio}x`
-                            : template.fixedAmount 
-                              ? `${t('templateList.fixedAmount') || '固定'} ${formatUSDC(template.fixedAmount)} USDC`
-                              : '-'
-                          }
+                          {formatCopyModeSummary(template)}
                         </div>
+                        {template.multiplierMode && template.multiplierMode !== 'NONE' && (
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                            {formatMultiplierSummary(template.multiplierMode, template.tradeMultiplier, template.tieredMultipliers)}
+                          </div>
+                        )}
                       </div>
                       
                       {/* 其他配置信息 */}
-                      {template.copyMode === 'RATIO' && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('templateList.amountLimit') || '金额限制'}</div>
-                          <div style={{ fontSize: '13px', color: '#333' }}>
-                            {template.maxOrderSize && (
-                              <span>{t('templateList.max') || '最大'}: {formatUSDC(template.maxOrderSize)} USDC</span>
-                            )}
-                            {template.maxOrderSize && template.minOrderSize && <span> | </span>}
-                            {template.minOrderSize && (
-                              <span>{t('templateList.min') || '最小'}: {formatUSDC(template.minOrderSize)} USDC</span>
-                            )}
-                            {!template.maxOrderSize && !template.minOrderSize && <span style={{ color: '#999' }}>{t('templateList.notSet') || '未设置'}</span>}
-                          </div>
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('templateList.amountLimit') || '金额限制'}</div>
+                        <div style={{ fontSize: '13px', color: '#333' }}>
+                          {t('templateList.max') || '最大'}: {formatUSDC(template.maxOrderSize)} USDC | {t('templateList.min') || '最小'}: {formatUSDC(template.minOrderSize)} USDC
                         </div>
-                      )}
+                      </div>
                       
                       <div style={{ marginBottom: '12px' }}>
                         <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('templateList.otherConfig') || '其他配置'}</div>
@@ -457,18 +493,19 @@ const TemplateList: React.FC = () => {
           <Form.Item
             label="跟单金额模式"
             name="copyMode"
-            tooltip="选择跟单金额的计算方式。比例模式：跟单金额随 Leader 订单大小按比例变化；固定金额模式：无论 Leader 订单大小如何，跟单金额都固定不变。复制模板时，跟单模式保持原模板设置，不可修改。"
+            tooltip="复制模板时保留原模板的金额模式，但允许编辑对应的 sizing 参数。"
             rules={[{ required: true }]}
           >
             <Radio.Group disabled>
               <Radio value="RATIO">比例模式</Radio>
               <Radio value="FIXED">固定金额模式</Radio>
+              <Radio value="ADAPTIVE">自适应模式</Radio>
             </Radio.Group>
           </Form.Item>
           
-          {copyMode === 'RATIO' && (
+          {(copyMode === 'RATIO' || copyMode === 'ADAPTIVE') && (
             <Form.Item
-              label="跟单比例"
+              label={copyMode === 'ADAPTIVE' ? '基础跟单比例' : '跟单比例'}
               name="copyRatio"
               tooltip="跟单比例表示跟单金额相对于 Leader 订单金额的百分比。例如：100% 表示 1:1 跟单，50% 表示半仓跟单，200% 表示双倍跟单"
             >
@@ -532,64 +569,74 @@ const TemplateList: React.FC = () => {
               />
             </Form.Item>
           )}
-          
-          {copyMode === 'RATIO' && (
+
+          {copyMode === 'ADAPTIVE' && (
             <>
-              <Form.Item
-                label="单笔订单最大金额 (USDC)"
-                name="maxOrderSize"
-                tooltip="比例模式下，限制单笔跟单订单的最大金额上限，用于防止跟单金额过大，控制风险。例如：设置为 1000，即使计算出的跟单金额超过 1000，也会限制为 1000 USDC。"
-              >
-                <InputNumber
-                  min={0.01}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder="仅在比例模式下生效（可选）"
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
+              <Form.Item label="自适应最小比例" name="adaptiveMinRatio" rules={[{ required: true, message: '请输入自适应最小比例' }]}>
+                <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
               </Form.Item>
-              
-              <Form.Item
-                label="单笔订单最小金额 (USDC)"
-                name="minOrderSize"
-                tooltip="比例模式下，限制单笔跟单订单的最小金额下限，用于过滤掉金额过小的订单，避免频繁小额交易。如果填写，必须 >= 1 USDC。例如：设置为 10，如果计算出的跟单金额小于 10，则跳过该订单。"
-                rules={[
-                  { 
-                    validator: (_, value) => {
-                      if (value === undefined || value === null || value === '') {
-                        return Promise.resolve()
-                      }
-                      if (typeof value === 'number' && value < 1) {
-                        return Promise.reject(new Error('最小金额必须 >= 1'))
-                      }
-                      return Promise.resolve()
-                    }
-                  }
-                ]}
-              >
-                <InputNumber
-                  min={1}
-                  step={0.0001}
-                  precision={4}
-                  style={{ width: '100%' }}
-                  placeholder="仅在比例模式下生效，必须 >= 1（可选）"
-                  formatter={(value) => {
-                    if (!value && value !== 0) return ''
-                    const num = parseFloat(value.toString())
-                    if (isNaN(num)) return ''
-                    return num.toString().replace(/\.0+$/, '')
-                  }}
-                />
+              <Form.Item label="自适应最大比例" name="adaptiveMaxRatio" rules={[{ required: true, message: '请输入自适应最大比例' }]}>
+                <InputNumber min={0.01} max={10000} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
+              </Form.Item>
+              <Form.Item label="自适应阈值 (USDC)" name="adaptiveThreshold" rules={[{ required: true, message: '请输入自适应阈值' }]}>
+                <InputNumber min={0.0001} step={0.0001} precision={4} style={{ width: '100%' }} />
               </Form.Item>
             </>
           )}
           
+          <Divider>Sizing 增强</Divider>
+
+          <Form.Item label="Multiplier 模式" name="multiplierMode">
+            <Radio.Group onChange={(e) => setCopyMultiplierMode(e.target.value)}>
+              <Radio value="NONE">无</Radio>
+              <Radio value="SINGLE">单一倍率</Radio>
+              <Radio value="TIERED">分层倍率</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          {copyMultiplierMode === 'SINGLE' && (
+            <Form.Item label="倍率" name="tradeMultiplier" rules={[{ required: true, message: '请输入倍率' }]}>
+              <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} addonAfter="x" />
+            </Form.Item>
+          )}
+
+          {copyMultiplierMode === 'TIERED' && (
+            <Form.Item label="分层倍率" required>
+              <MultiplierTierEditor />
+            </Form.Item>
+          )}
+
+          <Form.Item
+            label="单笔订单最大金额 (USDC)"
+            name="maxOrderSize"
+          >
+            <InputNumber min={0.01} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label="单笔订单最小金额 (USDC)"
+            name="minOrderSize"
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (value === undefined || value === null || value === '') {
+                    return Promise.resolve()
+                  }
+                  if (typeof value === 'number' && value < 1) {
+                    return Promise.reject(new Error('最小金额必须 >= 1'))
+                  }
+                  return Promise.resolve()
+                }
+              }
+            ]}
+          >
+            <InputNumber min={1} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item label="每日最大亏损限制 (USDC)" name="maxDailyLoss">
+            <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
           <Form.Item
             label="每日最大跟单订单数"
             name="maxDailyOrders"
@@ -601,6 +648,10 @@ const TemplateList: React.FC = () => {
               style={{ width: '100%' }}
               placeholder="默认 100（可选）"
             />
+          </Form.Item>
+
+          <Form.Item label="每日最大成交额 (USDC)" name="maxDailyVolume">
+            <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
           </Form.Item>
           
           <Form.Item

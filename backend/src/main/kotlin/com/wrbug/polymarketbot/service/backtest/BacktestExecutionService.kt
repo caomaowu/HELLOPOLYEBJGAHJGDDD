@@ -10,6 +10,8 @@ import com.wrbug.polymarketbot.repository.BacktestTaskRepository
 import com.wrbug.polymarketbot.service.common.MarketPriceService
 import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterService
+import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
+import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
 import com.wrbug.polymarketbot.util.gt
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
@@ -28,7 +30,8 @@ class BacktestExecutionService(
     private val backtestDataService: BacktestDataService,
     private val marketPriceService: MarketPriceService,
     private val marketService: MarketService,
-    private val copyTradingFilterService: CopyTradingFilterService
+    private val copyTradingFilterService: CopyTradingFilterService,
+    private val copyTradingSizingService: CopyTradingSizingService
 ) {
     private val logger = LoggerFactory.getLogger(BacktestExecutionService::class.java)
 
@@ -42,7 +45,7 @@ class BacktestExecutionService(
         val outcomeIndex: Int?,
         var quantity: BigDecimal,
         val avgPrice: BigDecimal,
-        val leaderBuyQuantity: BigDecimal?,
+        var leaderBuyQuantity: BigDecimal?,
         val marketEndDate: Long? = null
     )
 
@@ -58,7 +61,13 @@ class BacktestExecutionService(
             enabled = true,
             copyMode = task.copyMode,
             copyRatio = task.copyRatio,
-            fixedAmount = null,
+            fixedAmount = task.fixedAmount,
+            adaptiveMinRatio = task.adaptiveMinRatio,
+            adaptiveMaxRatio = task.adaptiveMaxRatio,
+            adaptiveThreshold = task.adaptiveThreshold,
+            multiplierMode = task.multiplierMode,
+            tradeMultiplier = task.tradeMultiplier,
+            tieredMultipliers = task.tieredMultipliers,
             maxOrderSize = task.maxOrderSize,
             minOrderSize = task.minOrderSize,
             maxDailyLoss = task.maxDailyLoss,
@@ -73,6 +82,7 @@ class BacktestExecutionService(
             minOrderDepth = null,  // 回测无实时订单簿数据
             maxSpread = null,  // 回测无实时价差数据
             maxPositionValue = task.maxPositionValue,
+            maxDailyVolume = task.maxDailyVolume,
             minPrice = task.minPrice,  // 最低价格
             maxPrice = task.maxPrice,  // 最高价格
             keywordFilterMode = task.keywordFilterMode,
@@ -107,7 +117,9 @@ class BacktestExecutionService(
             var currentBalance = task.initialBalance
             val positions = mutableMapOf<String, Position>()
             val trades = mutableListOf<BacktestTrade>()
+            val copyTrading = taskToCopyTrading(task)
             val dailyOrderCountCache = mutableMapOf<String, Int>()
+            val dailyBuyVolumeCache = mutableMapOf<String, BigDecimal>()
             val dailyLossCache = mutableMapOf<String, BigDecimal>()
             val seenTradeIds = mutableSetOf<String>()
 
@@ -214,16 +226,12 @@ class BacktestExecutionService(
                             }
 
                             // 5.3 应用过滤规则
-                            val copyTrading = taskToCopyTrading(task)
                             val filterResult = copyTradingFilterService.checkFilters(
                                 copyTrading,
                                 tokenId = "",
                                 tradePrice = leaderTrade.price,
-                                copyOrderAmount = null,
-                                marketId = leaderTrade.marketId,
                                 marketTitle = leaderTrade.marketTitle,
-                                marketEndDate = null,
-                                outcomeIndex = leaderTrade.outcomeIndex
+                                marketEndDate = null
                             )
 
                             if (!filterResult.isPassed) {
@@ -240,21 +248,6 @@ class BacktestExecutionService(
                                 continue
                             }
 
-
-                            // 5.6 计算跟单金额
-                            val followAmount = calculateFollowAmount(task, leaderTrade)
-
-                            // 5.6.1 检查订单大小限制
-                            val finalFollowAmount = if (followAmount > task.maxOrderSize) {
-                                logger.info("跟单金额超过最大限制: $followAmount > ${task.maxOrderSize}，调整为最大值")
-                                task.maxOrderSize
-                            } else if (followAmount < task.minOrderSize) {
-                                logger.info("跟单金额低于最小限制: $followAmount < ${task.minOrderSize}，调整为最小值")
-                                task.minOrderSize
-                            } else {
-                                followAmount
-                            }
-
                             // 5.6.2 检查每日最大亏损（买入订单）- 使用缓存
                             val dailyLoss = dailyLossCache.getOrDefault(tradeDate, BigDecimal.ZERO)
                             if (dailyLoss > task.maxDailyLoss) {
@@ -264,12 +257,32 @@ class BacktestExecutionService(
 
                             // 5.7 处理买卖逻辑
                             if (leaderTrade.side == "BUY") {
+                                val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
+                                val currentPosition = positions[positionKey]
+                                val currentPositionValue = if (currentPosition != null) {
+                                    currentPosition.quantity.multiply(currentPosition.avgPrice)
+                                } else {
+                                    BigDecimal.ZERO
+                                }
+                                val currentDailyVolume = dailyBuyVolumeCache.getOrDefault(tradeDate, BigDecimal.ZERO)
+                                val sizingResult = copyTradingSizingService.calculateBacktestBuySizing(
+                                    task = task,
+                                    leaderOrderAmount = leaderTrade.amount,
+                                    tradePrice = leaderTrade.price,
+                                    currentPositionValue = currentPositionValue,
+                                    currentDailyVolume = currentDailyVolume
+                                )
+                                if (sizingResult.status != SizingStatus.EXECUTABLE) {
+                                    logger.info("回测 sizing 拒绝买单: tradeId=${leaderTrade.tradeId}, reason=${sizingResult.reason}")
+                                    continue
+                                }
+
                                 // 余额不足时按最大可用余额交易，仍须满足最小订单金额
-                                val actualBuyAmount = if (currentBalance < finalFollowAmount) {
-                                    logger.debug("余额不足，按最大余额买入: balance=$currentBalance, 原需=$finalFollowAmount, marketId=${leaderTrade.marketId}")
+                                val actualBuyAmount = if (currentBalance < sizingResult.finalAmount) {
+                                    logger.debug("余额不足，按最大余额买入: balance=$currentBalance, 原需=${sizingResult.finalAmount}, marketId=${leaderTrade.marketId}")
                                     currentBalance
                                 } else {
-                                    finalFollowAmount
+                                    sizingResult.finalAmount
                                 }
                                 if (actualBuyAmount < task.minOrderSize) {
                                     logger.debug("可用金额低于最小订单限制跳过: actual=$actualBuyAmount, minOrderSize=${task.minOrderSize}")
@@ -282,29 +295,8 @@ class BacktestExecutionService(
                                 }
                                 val totalCost = actualBuyAmount
 
-                                // 5.6.3 检查最大仓位限制（如果配置了）
-                                if (task.maxPositionValue != null) {
-                                    val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
-                                    val currentPosition = positions[positionKey]
-                                    val currentPositionValue = if (currentPosition != null) {
-                                        currentPosition.quantity.multiply(currentPosition.avgPrice)
-                                    } else {
-                                        BigDecimal.ZERO
-                                    }
-                                    val totalValueAfterOrder = currentPositionValue.add(actualBuyAmount)
-                                    
-                                    if (totalValueAfterOrder.gt(task.maxPositionValue)) {
-                                        val currentPositionValueStr = currentPositionValue.stripTrailingZeros().toPlainString()
-                                        val totalValueStr = totalValueAfterOrder.stripTrailingZeros().toPlainString()
-                                        val maxValueStr = task.maxPositionValue.stripTrailingZeros().toPlainString()
-                                        logger.info("超过最大仓位金额限制: 市场=${leaderTrade.marketId}, 方向=${leaderTrade.outcomeIndex}, 当前仓位=${currentPositionValueStr} USDC, 买入金额=${actualBuyAmount} USDC, 总计=${totalValueStr} USDC > 最大限制=${maxValueStr} USDC")
-                                        continue
-                                    }
-                                }
-
                                 // 更新余额和持仓（同市场同 outcome 多次买入合并：数量相加、加权均价、leaderBuyQuantity 相加）
                                 currentBalance -= totalCost
-                                val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
                                 val price = leaderTrade.price.toSafeBigDecimal()
                                 val leaderSize = leaderTrade.size.toSafeBigDecimal()
                                 val existing = positions[positionKey]
@@ -359,6 +351,7 @@ class BacktestExecutionService(
 
                                 // 更新每日订单数缓存
                                 dailyOrderCountCache[tradeDate] = dailyOrderCount + 1
+                                dailyBuyVolumeCache[tradeDate] = currentDailyVolume.add(actualBuyAmount)
 
                             } else {
                                 // SELL 逻辑
@@ -369,37 +362,41 @@ class BacktestExecutionService(
                                 val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
                                 val position = positions[positionKey] ?: continue
 
-                                // 计算卖出数量
-                                val sellQuantity = if (task.copyMode == "RATIO") {
-                                    if (position.leaderBuyQuantity != null && position.leaderBuyQuantity > BigDecimal.ZERO) {
-                                        position.quantity.multiply(
-                                            leaderTrade.size.divide(position.leaderBuyQuantity, 8, java.math.RoundingMode.DOWN)
-                                        )
-                                    } else {
-                                        position.quantity
-                                    }
+                                // 计算卖出数量：优先使用实际持仓比例，而不是直接使用配置比例
+                                val leaderBuyQuantity = position.leaderBuyQuantity
+                                val sellQuantity = if (leaderBuyQuantity != null && leaderBuyQuantity > BigDecimal.ZERO) {
+                                    position.quantity.multiply(
+                                        leaderTrade.size.divide(leaderBuyQuantity, 8, java.math.RoundingMode.DOWN)
+                                    )
                                 } else {
                                     position.quantity
                                 }
 
-                                val actualSellQuantity = if (sellQuantity > position.quantity) {
+                                var actualSellQuantity = if (sellQuantity > position.quantity) {
                                     position.quantity
                                 } else {
                                     sellQuantity
                                 }
+                                if (actualSellQuantity <= BigDecimal.ZERO) {
+                                    continue
+                                }
 
                                 // 计算卖出金额
-                                val sellAmount = actualSellQuantity.multiply(leaderTrade.price.toSafeBigDecimal())
+                                val tradePrice = leaderTrade.price.toSafeBigDecimal()
+                                var finalSellAmount = actualSellQuantity.multiply(tradePrice)
 
-                                // 5.6.2 检查卖出金额限制
-                                val finalSellAmount = if (sellAmount > task.maxOrderSize) {
-                                    logger.info("卖出金额超过最大限制: $sellAmount > ${task.maxOrderSize}，调整为最大值")
-                                    task.maxOrderSize
-                                } else if (sellAmount < task.minOrderSize) {
-                                    logger.info("卖出金额低于最小限制: $sellAmount < ${task.minOrderSize}，调整为最小值")
-                                    task.minOrderSize
-                                } else {
-                                    sellAmount
+                                // 卖出也遵循单笔金额约束，但保持数量和金额一致。
+                                if (finalSellAmount > task.maxOrderSize) {
+                                    logger.info("卖出金额超过最大限制: $finalSellAmount > ${task.maxOrderSize}，按最大值裁剪")
+                                    actualSellQuantity = task.maxOrderSize.divide(tradePrice, 8, java.math.RoundingMode.DOWN)
+                                    finalSellAmount = actualSellQuantity.multiply(tradePrice)
+                                }
+                                if (finalSellAmount < task.minOrderSize) {
+                                    logger.info("卖出金额低于最小限制，跳过卖出: $finalSellAmount < ${task.minOrderSize}")
+                                    continue
+                                }
+                                if (actualSellQuantity <= BigDecimal.ZERO) {
+                                    continue
                                 }
 
                                 val netAmount = finalSellAmount
@@ -410,6 +407,20 @@ class BacktestExecutionService(
 
                                 // 更新余额和持仓
                                 currentBalance += netAmount
+                                position.quantity = position.quantity.subtract(actualSellQuantity)
+                                position.leaderBuyQuantity?.let { leaderQty ->
+                                    if (position.quantity <= BigDecimal.ZERO || leaderQty <= BigDecimal.ZERO) {
+                                        position.leaderBuyQuantity = BigDecimal.ZERO
+                                    } else {
+                                        val ratio = actualSellQuantity.divide(
+                                            position.quantity.add(actualSellQuantity),
+                                            8,
+                                            java.math.RoundingMode.HALF_UP
+                                        )
+                                        position.leaderBuyQuantity = leaderQty.subtract(leaderQty.multiply(ratio))
+                                            .max(BigDecimal.ZERO)
+                                    }
+                                }
                                 if (position.quantity <= BigDecimal.ZERO) {
                                     positions.remove(positionKey)
                                 }
@@ -749,19 +760,6 @@ class BacktestExecutionService(
             maxDrawdown = maxDrawdown.toPlainString(),
             avgHoldingTime = avgHoldingTime
         )
-    }
-
-    /**
-     * 计算跟单金额
-     */
-    private fun calculateFollowAmount(task: BacktestTask, leaderTrade: TradeData): BigDecimal {
-        return if (task.copyMode == "RATIO") {
-            // 比例模式：Leader 成交金额 × 跟单比例
-            leaderTrade.amount.toSafeBigDecimal().multiply(task.copyRatio)
-        } else {
-            // 固定金额模式：使用配置的固定金额
-            task.fixedAmount ?: leaderTrade.amount.toSafeBigDecimal()
-        }
     }
 
     /**

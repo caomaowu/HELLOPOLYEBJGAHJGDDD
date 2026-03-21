@@ -2,6 +2,12 @@
  * 回测相关类型定义
  */
 
+export interface MultiplierTier {
+  min: string
+  max?: string | null
+  multiplier: string
+}
+
 /**
  * 回测任务创建请求
  */
@@ -11,13 +17,20 @@ export interface BacktestCreateRequest {
   initialBalance: string
   backtestDays: number  // 1-30
   // 跟单配置
-  copyMode?: 'RATIO' | 'FIXED'
+  copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio?: string
   fixedAmount?: string
+  adaptiveMinRatio?: string
+  adaptiveMaxRatio?: string
+  adaptiveThreshold?: string
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string
+  tieredMultipliers?: MultiplierTier[]
   maxOrderSize?: string
   minOrderSize?: string
   maxDailyLoss?: string
   maxDailyOrders?: number
+  maxDailyVolume?: string
   priceTolerance?: string  // 百分比
   delaySeconds?: number
   supportSell?: boolean
@@ -160,13 +173,20 @@ export interface BacktestTaskDto {
  * 回测配置 DTO
  */
 export interface BacktestConfigDto {
-  copyMode: 'RATIO' | 'FIXED'
+  copyMode: 'RATIO' | 'FIXED' | 'ADAPTIVE'
   copyRatio: string
   fixedAmount: string | null
+  adaptiveMinRatio?: string | null
+  adaptiveMaxRatio?: string | null
+  adaptiveThreshold?: string | null
+  multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
+  tradeMultiplier?: string | null
+  tieredMultipliers?: MultiplierTier[] | null
   maxOrderSize: string
   minOrderSize: string
   maxDailyLoss: string
   maxDailyOrders: number
+  maxDailyVolume?: string | null
   priceTolerance: string  // 百分比
   delaySeconds: number
   supportSell: boolean

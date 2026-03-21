@@ -1,0 +1,187 @@
+package com.wrbug.polymarketbot.service.copytrading.configs
+
+import com.wrbug.polymarketbot.dto.MultiplierTierDto
+import com.wrbug.polymarketbot.util.fromJson
+import com.wrbug.polymarketbot.util.toJson
+import java.math.BigDecimal
+
+data class SizingMultiplierTier(
+    val min: BigDecimal,
+    val max: BigDecimal? = null,
+    val multiplier: BigDecimal
+)
+
+data class CopyTradingSizingConfig(
+    val copyMode: String,
+    val copyRatio: BigDecimal,
+    val fixedAmount: BigDecimal?,
+    val adaptiveMinRatio: BigDecimal?,
+    val adaptiveMaxRatio: BigDecimal?,
+    val adaptiveThreshold: BigDecimal?,
+    val multiplierMode: String,
+    val tradeMultiplier: BigDecimal?,
+    val tieredMultipliers: List<SizingMultiplierTier>,
+    val maxOrderSize: BigDecimal,
+    val minOrderSize: BigDecimal,
+    val maxPositionValue: BigDecimal?,
+    val maxDailyVolume: BigDecimal?
+)
+
+enum class SizingStatus {
+    EXECUTABLE,
+    REJECTED
+}
+
+data class CopyTradingSizingResult(
+    val baseAmount: BigDecimal,
+    val multipliedAmount: BigDecimal,
+    val finalAmount: BigDecimal,
+    val finalQuantity: BigDecimal,
+    val appliedAdaptiveRatio: BigDecimal?,
+    val appliedMultiplier: BigDecimal,
+    val status: SizingStatus,
+    val reason: String
+)
+
+object CopyTradingSizingSupport {
+    const val COPY_MODE_RATIO = "RATIO"
+    const val COPY_MODE_FIXED = "FIXED"
+    const val COPY_MODE_ADAPTIVE = "ADAPTIVE"
+
+    const val MULTIPLIER_MODE_NONE = "NONE"
+    const val MULTIPLIER_MODE_SINGLE = "SINGLE"
+    const val MULTIPLIER_MODE_TIERED = "TIERED"
+
+    fun validateConfig(config: CopyTradingSizingConfig): List<String> {
+        val errors = mutableListOf<String>()
+
+        if (config.copyMode !in setOf(COPY_MODE_RATIO, COPY_MODE_FIXED, COPY_MODE_ADAPTIVE)) {
+            errors += "copyMode 必须是 RATIO、FIXED 或 ADAPTIVE"
+        }
+
+        if (config.copyRatio <= BigDecimal.ZERO) {
+            errors += "copyRatio 必须大于 0"
+        }
+
+        if (config.copyMode == COPY_MODE_FIXED) {
+            if (config.fixedAmount == null || config.fixedAmount < BigDecimal.ONE) {
+                errors += "FIXED 模式下 fixedAmount 必须 >= 1"
+            }
+        }
+
+        if (config.copyMode == COPY_MODE_ADAPTIVE) {
+            val minRatio = config.adaptiveMinRatio
+            val maxRatio = config.adaptiveMaxRatio
+            val threshold = config.adaptiveThreshold
+            if (minRatio == null || minRatio <= BigDecimal.ZERO) {
+                errors += "ADAPTIVE 模式下 adaptiveMinRatio 必须大于 0"
+            }
+            if (maxRatio == null || maxRatio <= BigDecimal.ZERO) {
+                errors += "ADAPTIVE 模式下 adaptiveMaxRatio 必须大于 0"
+            }
+            if (threshold == null || threshold <= BigDecimal.ZERO) {
+                errors += "ADAPTIVE 模式下 adaptiveThreshold 必须大于 0"
+            }
+            if (minRatio != null && maxRatio != null && minRatio > maxRatio) {
+                errors += "adaptiveMinRatio 不能大于 adaptiveMaxRatio"
+            }
+        }
+
+        if (config.multiplierMode !in setOf(MULTIPLIER_MODE_NONE, MULTIPLIER_MODE_SINGLE, MULTIPLIER_MODE_TIERED)) {
+            errors += "multiplierMode 必须是 NONE、SINGLE 或 TIERED"
+        }
+
+        if (config.multiplierMode == MULTIPLIER_MODE_SINGLE) {
+            if (config.tradeMultiplier == null || config.tradeMultiplier < BigDecimal.ZERO) {
+                errors += "SINGLE multiplier 模式下 tradeMultiplier 必须 >= 0"
+            }
+        }
+
+        if (config.multiplierMode == MULTIPLIER_MODE_TIERED) {
+            if (config.tieredMultipliers.isEmpty()) {
+                errors += "TIERED multiplier 模式下 tieredMultipliers 不能为空"
+            } else {
+                errors += validateTieredMultipliers(config.tieredMultipliers)
+            }
+        }
+
+        if (config.minOrderSize <= BigDecimal.ZERO) {
+            errors += "minOrderSize 必须大于 0"
+        }
+
+        if (config.maxOrderSize <= BigDecimal.ZERO) {
+            errors += "maxOrderSize 必须大于 0"
+        }
+
+        if (config.minOrderSize > config.maxOrderSize) {
+            errors += "minOrderSize 不能大于 maxOrderSize"
+        }
+
+        if (config.maxDailyVolume != null && config.maxDailyVolume <= BigDecimal.ZERO) {
+            errors += "maxDailyVolume 必须大于 0"
+        }
+
+        return errors
+    }
+
+    fun validateTieredMultipliers(tiers: List<SizingMultiplierTier>): List<String> {
+        if (tiers.isEmpty()) {
+            return emptyList()
+        }
+
+        val errors = mutableListOf<String>()
+        val sorted = tiers.sortedBy { it.min }
+        sorted.forEachIndexed { index, tier ->
+            if (tier.min < BigDecimal.ZERO) {
+                errors += "第 ${index + 1} 档 multiplier 的 min 不能小于 0"
+            }
+            if (tier.multiplier < BigDecimal.ZERO) {
+                errors += "第 ${index + 1} 档 multiplier 必须 >= 0"
+            }
+            if (tier.max != null && tier.max <= tier.min) {
+                errors += "第 ${index + 1} 档 multiplier 的 max 必须大于 min"
+            }
+            if (tier.max == null && index != sorted.lastIndex) {
+                errors += "无上界的 tier 必须放在最后一档"
+            }
+        }
+
+        for (index in 0 until sorted.lastIndex) {
+            val current = sorted[index]
+            val next = sorted[index + 1]
+            if (current.max != null && current.max > next.min) {
+                errors += "tieredMultipliers 区间不能重叠"
+                break
+            }
+        }
+
+        return errors
+    }
+
+    fun parseTieredMultipliers(json: String?): List<SizingMultiplierTier> {
+        val list = json.fromJson<List<MultiplierTierDto>>() ?: emptyList()
+        return list.mapNotNull { dto ->
+            val min = dto.min.toBigDecimalOrNull()
+            val max = dto.max?.toBigDecimalOrNull()
+            val multiplier = dto.multiplier.toBigDecimalOrNull()
+            if (min == null || multiplier == null) {
+                null
+            } else {
+                SizingMultiplierTier(min = min, max = max, multiplier = multiplier)
+            }
+        }.sortedBy { it.min }
+    }
+
+    fun serializeTieredMultipliers(tiers: List<MultiplierTierDto>?): String? {
+        if (tiers.isNullOrEmpty()) {
+            return null
+        }
+        return tiers
+            .sortedBy { it.min.toBigDecimalOrNull() ?: BigDecimal.ZERO }
+            .toJson()
+    }
+
+    fun toTierDtoList(json: String?): List<MultiplierTierDto>? {
+        return json.fromJson<List<MultiplierTierDto>>()?.sortedBy { it.min.toBigDecimalOrNull() ?: BigDecimal.ZERO }
+    }
+}
