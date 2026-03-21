@@ -54,6 +54,35 @@ data class BacktestDetailRequest(
 )
 
 /**
+ * 回测任务比较请求
+ */
+data class BacktestCompareRequest(
+    val taskIds: List<Long>
+)
+
+/**
+ * 回测审计请求
+ */
+data class BacktestAuditRequest(
+    val taskIds: List<Long>,
+    val targetTaskId: Long? = null,
+    val includeEventTrail: Boolean? = true,
+    val eventPageSize: Int? = 50
+)
+
+/**
+ * 回测审计事件列表请求
+ */
+data class BacktestAuditEventListRequest(
+    val taskId: Long,
+    val page: Int = 1,
+    val size: Int = 100,
+    val stage: String? = null,
+    val decision: String? = null,
+    val eventType: String? = null
+)
+
+/**
  * 回测交易记录请求
  */
 data class BacktestTradeListRequest(
@@ -118,6 +147,71 @@ data class BacktestDetailResponse(
 )
 
 /**
+ * 回测任务比较响应
+ */
+data class BacktestCompareResponse(
+    val list: List<BacktestCompareItemDto>,
+    val configDifferences: List<BacktestConfigDifferenceDto>,
+    val summary: BacktestCompareSummaryDto
+)
+
+/**
+ * 回测审计响应
+ */
+data class BacktestAuditResponse(
+    val compare: BacktestCompareResponse,
+    val generatedAt: Long,
+    val summary: BacktestAuditSummaryDto? = null,
+    val recentEvents: List<BacktestAuditEventDto> = emptyList(),
+    val version: String = "v1"
+)
+
+/**
+ * 回测审计摘要
+ */
+data class BacktestAuditSummaryDto(
+    val taskId: Long,
+    val totalEvents: Long,
+    val passEvents: Long,
+    val skipEvents: Long,
+    val errorEvents: Long,
+    val stopEvents: Long,
+    val stageCounts: Map<String, Long>,
+    val latestEventAt: Long? = null
+)
+
+/**
+ * 回测审计事件 DTO
+ */
+data class BacktestAuditEventDto(
+    val id: Long,
+    val taskId: Long,
+    val eventTime: Long?,
+    val stage: String,
+    val eventType: String,
+    val decision: String,
+    val leaderTradeId: String? = null,
+    val marketId: String? = null,
+    val marketTitle: String? = null,
+    val side: String? = null,
+    val reasonCode: String? = null,
+    val reasonMessage: String? = null,
+    val detailJson: String? = null,
+    val createdAt: Long
+)
+
+/**
+ * 回测审计事件列表响应
+ */
+data class BacktestAuditEventListResponse(
+    val list: List<BacktestAuditEventDto>,
+    val total: Long,
+    val page: Int,
+    val size: Int,
+    val summary: BacktestAuditSummaryDto
+)
+
+/**
  * 回测交易记录列表响应
  */
 data class BacktestTradeListResponse(
@@ -158,7 +252,13 @@ data class BacktestTaskDto(
     val totalTrades: Int,
     val createdAt: Long,
     val executionStartedAt: Long?,
-    val executionFinishedAt: Long?
+    val executionFinishedAt: Long?,
+    val dataSource: String,
+    val errorMessage: String?,
+    val updatedAt: Long,
+    val lastProcessedTradeTime: Long?,
+    val lastProcessedTradeIndex: Int?,
+    val processedTradeCount: Int
 )
 
 /**
@@ -201,6 +301,57 @@ data class BacktestStatisticsDto(
     val maxLoss: String,  // 最大单笔亏损
     val maxDrawdown: String,  // 最大回撤
     val avgHoldingTime: Long?  // 平均持仓时间(毫秒)
+)
+
+/**
+ * 回测比较条目
+ */
+data class BacktestCompareItemDto(
+    val task: BacktestTaskDto,
+    val config: BacktestConfigDto,
+    val statistics: BacktestStatisticsDto,
+    val highlights: List<String>
+)
+
+/**
+ * 配置差异项
+ */
+data class BacktestConfigDifferenceDto(
+    val field: String,
+    val label: String,
+    val values: Map<Long, String?>
+)
+
+/**
+ * 回测比较摘要
+ */
+data class BacktestCompareSummaryDto(
+    val bestProfitTaskId: Long? = null,
+    val bestProfitRateTaskId: Long? = null,
+    val bestWinRateTaskId: Long? = null,
+    val lowestDrawdownTaskId: Long? = null,
+    val notes: List<String> = emptyList(),
+    val whyChain: BacktestCompareWhyChainDto? = null
+)
+
+/**
+ * 回测差异解释链（最小主干）
+ */
+data class BacktestCompareWhyChainDto(
+    val anchorTaskId: Long? = null,
+    val topReasons: List<BacktestCompareReasonItemDto> = emptyList(),
+    val perTaskReasons: Map<Long, List<BacktestCompareReasonItemDto>> = emptyMap()
+)
+
+/**
+ * 回测差异解释项
+ */
+data class BacktestCompareReasonItemDto(
+    val factor: String,
+    val title: String,
+    val detail: String,
+    val type: String = "NEUTRAL", // POSITIVE/NEGATIVE/NEUTRAL
+    val score: Double = 0.0
 )
 
 /**

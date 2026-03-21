@@ -106,6 +106,118 @@ class BacktestController(
     }
 
     /**
+     * 比较多个已完成回测任务
+     */
+    @PostMapping("/tasks/compare")
+    fun compareBacktestTasks(@RequestBody request: BacktestCompareRequest): ResponseEntity<ApiResponse<BacktestCompareResponse>> {
+        return try {
+            val result = backtestService.compareBacktestTasks(request)
+
+            result.fold(
+                onSuccess = { response ->
+                    logger.info("比较回测任务成功: taskCount={}", response.list.size)
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("比较回测任务失败", e)
+                    val errorCode = when (e) {
+                        is IllegalArgumentException -> ErrorCode.PARAM_ERROR
+                        else -> ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED
+                    }
+                    ResponseEntity.ok(ApiResponse.error(errorCode, e.message, messageSource))
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("比较回测任务异常", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 生成回测审计摘要
+     */
+    @PostMapping("/tasks/audit")
+    fun getBacktestAudit(@RequestBody request: BacktestAuditRequest): ResponseEntity<ApiResponse<BacktestAuditResponse>> {
+        return try {
+            val result = backtestService.getBacktestAudit(request)
+
+            result.fold(
+                onSuccess = { response ->
+                    logger.info("生成回测审计摘要成功: taskCount={}", response.compare.list.size)
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("生成回测审计摘要失败", e)
+                    val errorCode = when (e) {
+                        is IllegalArgumentException -> ErrorCode.PARAM_ERROR
+                        else -> ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED
+                    }
+                    ResponseEntity.ok(ApiResponse.error(errorCode, e.message, messageSource))
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("生成回测审计摘要异常", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询回测事件级审计链
+     */
+    @PostMapping("/tasks/audit/events")
+    fun getBacktestAuditEventsLegacy(@RequestBody request: BacktestAuditEventListRequest): ResponseEntity<ApiResponse<BacktestAuditEventListResponse>> {
+        return try {
+            val result = backtestService.getBacktestAuditEvents(request)
+
+            result.fold(
+                onSuccess = { response ->
+                    logger.info("查询回测审计事件成功: taskId={}, total={}", request.taskId, response.total)
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("查询回测审计事件失败", e)
+                    val errorCode = when (e) {
+                        is IllegalArgumentException -> ErrorCode.PARAM_ERROR
+                        else -> ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED
+                    }
+                    ResponseEntity.ok(ApiResponse.error(errorCode, e.message, messageSource))
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("查询回测审计事件异常", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询回测审计事件
+     */
+    @PostMapping("/tasks/audit-events")
+    fun getBacktestAuditEvents(@RequestBody request: BacktestAuditEventListRequest): ResponseEntity<ApiResponse<BacktestAuditEventListResponse>> {
+        return try {
+            val result = backtestService.getBacktestAuditEvents(request)
+
+            result.fold(
+                onSuccess = { response ->
+                    logger.info("查询回测审计事件成功: taskId={}, total={}", request.taskId, response.total)
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("查询回测审计事件失败", e)
+                    val errorCode = when (e) {
+                        is IllegalArgumentException -> ErrorCode.PARAM_ERROR
+                        else -> ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED
+                    }
+                    ResponseEntity.ok(ApiResponse.error(errorCode, e.message, messageSource))
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("查询回测审计事件异常", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_BACKTEST_DETAIL_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
      * 查询回测交易记录
      */
     @PostMapping("/tasks/trades")

@@ -131,7 +131,12 @@ class OnChainWsService(
                     source = "onchain-ws",
                     eventType = "ONCHAIN_RECEIPT_FETCH_FAILED",
                     status = "error",
-                    message = "链上交易 receipt 拉取失败: code=${receiptResponse.code()}"
+                    message = "链上交易 receipt 拉取失败: code=${receiptResponse.code()}",
+                    detailData = mapOf(
+                        "txHash" to txHash,
+                        "httpCode" to receiptResponse.code(),
+                        "leaderAddress" to leader.leaderAddress
+                    )
                 )
                 return
             }
@@ -145,7 +150,13 @@ class OnChainWsService(
                     source = "onchain-ws",
                     eventType = "ONCHAIN_RECEIPT_INVALID",
                     status = "error",
-                    message = "链上交易 receipt 异常或为空: ${receiptRpcResponse.error?.message ?: "result=null"}"
+                    message = "链上交易 receipt 异常或为空: ${receiptRpcResponse.error?.message ?: "result=null"}",
+                    detailData = mapOf(
+                        "txHash" to txHash,
+                        "rpcErrorCode" to receiptRpcResponse.error?.code,
+                        "rpcErrorMessage" to receiptRpcResponse.error?.message,
+                        "leaderAddress" to leader.leaderAddress
+                    )
                 )
                 return
             }
@@ -170,7 +181,13 @@ class OnChainWsService(
                     source = "onchain-ws",
                     eventType = "ONCHAIN_RECEIPT_LOGS_EMPTY",
                     status = "warning",
-                    message = "链上交易 receipt 不包含可解析日志"
+                    message = "链上交易 receipt 不包含可解析日志",
+                    detailData = mapOf(
+                        "txHash" to txHash,
+                        "blockNumber" to blockNumber,
+                        "blockTimestamp" to blockTimestamp,
+                        "leaderAddress" to leader.leaderAddress
+                    )
                 )
                 return
             }
@@ -207,7 +224,15 @@ class OnChainWsService(
                         source = "onchain-ws",
                         eventType = "ONCHAIN_TRADE_PROCESSING_FAILED",
                         status = "error",
-                        message = "链上交易处理失败: ${exception?.message ?: "未知错误"}"
+                        message = "链上交易处理失败: ${exception?.message ?: "未知错误"}",
+                        detailData = mapOf(
+                            "txHash" to txHash,
+                            "marketId" to trade.market,
+                            "tokenId" to trade.tokenId,
+                            "exceptionType" to exception?.javaClass?.simpleName,
+                            "erc20TransferCount" to erc20Transfers.size,
+                            "erc1155TransferCount" to erc1155Transfers.size
+                        )
                     )
                 }
             } else {
@@ -218,7 +243,15 @@ class OnChainWsService(
                     source = "onchain-ws",
                     eventType = "ONCHAIN_TRADE_PARSE_FAILED",
                     status = "warning",
-                    message = "链上日志命中 Leader，但未能解析成标准交易"
+                    message = "链上日志命中 Leader，但未能解析成标准交易",
+                    detailData = mapOf(
+                        "txHash" to txHash,
+                        "blockNumber" to blockNumber,
+                        "blockTimestamp" to blockTimestamp,
+                        "erc20TransferCount" to erc20Transfers.size,
+                        "erc1155TransferCount" to erc1155Transfers.size,
+                        "leaderAddress" to leader.leaderAddress
+                    )
                 )
             }
         } catch (e: Exception) {
@@ -229,7 +262,12 @@ class OnChainWsService(
                 source = "onchain-ws",
                 eventType = "ONCHAIN_TRADE_PROCESSING_FAILED",
                 status = "error",
-                message = "处理链上交易时发生异常: ${e.message ?: "未知错误"}"
+                message = "处理链上交易时发生异常: ${e.message ?: "未知错误"}",
+                detailData = mapOf(
+                    "txHash" to txHash,
+                    "exceptionType" to e.javaClass.simpleName,
+                    "leaderAddress" to leader.leaderAddress
+                )
             )
         }
     }

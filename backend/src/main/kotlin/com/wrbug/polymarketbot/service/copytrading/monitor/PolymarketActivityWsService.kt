@@ -335,7 +335,12 @@ class PolymarketActivityWsService(
                         source = "activity-ws",
                         eventType = "ACTIVITY_MESSAGE_PARSE_FAILED",
                         status = "error",
-                        message = "Activity WS 消息命中监听地址，但 JSON 解析失败"
+                        message = "Activity WS 消息命中监听地址，但 JSON 解析失败",
+                        detailData = mapOf(
+                            "matchedLeaderIds" to matchedLeaderIds,
+                            "messageLength" to message.length,
+                            "messageSample" to message.take(400)
+                        )
                     )
                 }
                 return
@@ -382,7 +387,19 @@ class PolymarketActivityWsService(
                     source = "activity-ws",
                     eventType = "ACTIVITY_TRADER_ADDRESS_MISSING",
                     status = "warning",
-                    message = "Activity WS 消息缺少 trader/proxyWallet 地址，无法识别 Leader"
+                    message = "Activity WS 消息缺少 trader/proxyWallet 地址，无法识别 Leader",
+                    detailData = mapOf(
+                        "topic" to tradeMessage.topic,
+                        "messageType" to tradeMessage.type,
+                        "transactionHash" to payload.transactionHash,
+                        "conditionId" to payload.conditionId,
+                        "asset" to payload.asset,
+                        "price" to payload.price,
+                        "size" to payload.size,
+                        "proxyWallet" to payload.proxyWallet,
+                        "trader" to payload.trader,
+                        "matchedLeaderIds" to matchedLeaderIds
+                    )
                 )
                 return
             }
@@ -417,13 +434,21 @@ class PolymarketActivityWsService(
                                 side = trade.side.uppercase(),
                                 outcomeIndex = trade.outcomeIndex,
                                 outcome = trade.outcome,
-                                source = "activity-ws",
-                                eventType = "ACTIVITY_TRADE_PROCESSING_FAILED",
-                                status = "error",
-                                message = "Activity WS 交易处理失败: ${exception?.message ?: "未知错误"}"
+                            source = "activity-ws",
+                            eventType = "ACTIVITY_TRADE_PROCESSING_FAILED",
+                            status = "error",
+                            message = "Activity WS 交易处理失败: ${exception?.message ?: "未知错误"}",
+                            detailData = mapOf(
+                                "exceptionType" to exception?.javaClass?.simpleName,
+                                "transactionHash" to payload.transactionHash,
+                                "traderAddress" to traderAddress,
+                                "asset" to payload.asset,
+                                "price" to payload.price,
+                                "size" to payload.size
                             )
-                        }
-                    } catch (e: Exception) {
+                        )
+                    }
+                } catch (e: Exception) {
                         logger.error("处理 Activity WS 交易失败: leaderId=$leaderId, tradeId=${trade.id}", e)
                         monitorExecutionEventService.recordForLeader(
                             leaderId = leaderId,
@@ -435,7 +460,15 @@ class PolymarketActivityWsService(
                             source = "activity-ws",
                             eventType = "ACTIVITY_TRADE_PROCESSING_FAILED",
                             status = "error",
-                            message = "Activity WS 交易处理异常: ${e.message ?: "未知错误"}"
+                            message = "Activity WS 交易处理异常: ${e.message ?: "未知错误"}",
+                            detailData = mapOf(
+                                "exceptionType" to e.javaClass.simpleName,
+                                "transactionHash" to payload.transactionHash,
+                                "traderAddress" to traderAddress,
+                                "asset" to payload.asset,
+                                "price" to payload.price,
+                                "size" to payload.size
+                            )
                         )
                     }
                 }
@@ -451,7 +484,19 @@ class PolymarketActivityWsService(
                     source = "activity-ws",
                     eventType = "ACTIVITY_TRADE_PARSE_FAILED",
                     status = "error",
-                    message = parseResult.failureMessage ?: "Activity WS 交易解析失败"
+                    message = parseResult.failureMessage ?: "Activity WS 交易解析失败",
+                    detailData = mapOf(
+                        "transactionHash" to payload.transactionHash,
+                        "conditionId" to payload.conditionId,
+                        "asset" to payload.asset,
+                        "side" to payload.side,
+                        "outcome" to payload.outcome,
+                        "outcomeIndex" to payload.outcomeIndex,
+                        "price" to payload.price,
+                        "size" to payload.size,
+                        "traderAddress" to traderAddress,
+                        "failureReason" to parseResult.failureMessage
+                    )
                 )
             }
         } catch (e: Exception) {
@@ -462,7 +507,12 @@ class PolymarketActivityWsService(
                     source = "activity-ws",
                     eventType = "ACTIVITY_MESSAGE_HANDLE_FAILED",
                     status = "error",
-                    message = "处理 Activity WS 消息时发生异常: ${e.message ?: "未知错误"}"
+                    message = "处理 Activity WS 消息时发生异常: ${e.message ?: "未知错误"}",
+                    detailData = mapOf(
+                        "matchedLeaderIds" to matchedLeaderIds,
+                        "exceptionType" to e.javaClass.simpleName,
+                        "messageSample" to message.take(400)
+                    )
                 )
             }
         }

@@ -7,6 +7,7 @@ data class CopyTradingExecutionEventListRequest(
     val copyTradingId: Long,
     val eventType: String? = null,
     val stage: String? = null,
+    val source: String? = null,
     val status: String? = null,
     val page: Int? = 1,
     val limit: Int? = 20,

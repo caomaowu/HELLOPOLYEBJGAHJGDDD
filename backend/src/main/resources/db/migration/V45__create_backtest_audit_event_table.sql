@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS backtest_audit_event (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '审计事件ID',
+    backtest_task_id BIGINT NOT NULL COMMENT '回测任务ID',
+    event_time BIGINT NULL COMMENT '事件对应的业务时间',
+    stage VARCHAR(50) NOT NULL COMMENT '执行阶段',
+    event_type VARCHAR(80) NOT NULL COMMENT '事件类型',
+    decision VARCHAR(20) NOT NULL DEFAULT 'INFO' COMMENT '决策结果: INFO/PASS/SKIP/ERROR/STOP',
+    leader_trade_id VARCHAR(120) NULL COMMENT 'Leader原始交易ID',
+    market_id VARCHAR(100) NULL COMMENT '市场ID',
+    market_title VARCHAR(500) NULL COMMENT '市场标题',
+    side VARCHAR(20) NULL COMMENT '交易方向',
+    reason_code VARCHAR(80) NULL COMMENT '原因编码',
+    reason_message TEXT NULL COMMENT '原因描述',
+    detail_json TEXT NULL COMMENT '结构化明细',
+    created_at BIGINT NOT NULL COMMENT '创建时间',
+    INDEX idx_backtest_audit_event_task_created (backtest_task_id, created_at),
+    INDEX idx_backtest_audit_event_task_stage (backtest_task_id, stage),
+    INDEX idx_backtest_audit_event_task_decision (backtest_task_id, decision),
+    INDEX idx_backtest_audit_event_task_trade (backtest_task_id, leader_trade_id),
+    CONSTRAINT fk_backtest_audit_event_task FOREIGN KEY (backtest_task_id) REFERENCES backtest_task(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='回测执行审计事件表';

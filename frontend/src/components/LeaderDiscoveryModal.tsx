@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { Key } from 'react'
 import {
   Alert,
   Button,
@@ -17,6 +18,9 @@ import {
 } from 'antd'
 import type {
   Leader,
+  LeaderActivityHistoryItem,
+  LeaderActivityHistoryResponse,
+  LeaderCandidatePoolBatchLabelUpdateRequest,
   LeaderCandidatePoolItem,
   LeaderCandidatePoolListResponse,
   LeaderCandidateRecommendation,
@@ -88,6 +92,10 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   const [maxSeedMarkets, setMaxSeedMarkets] = useState(20)
   const [marketTradeLimit, setMarketTradeLimit] = useState(120)
   const [excludeExistingLeaders, setExcludeExistingLeaders] = useState(true)
+  const [excludeBlacklistedDiscovery, setExcludeBlacklistedDiscovery] = useState(true)
+  const [discoveryFavoriteOnly, setDiscoveryFavoriteOnly] = useState(false)
+  const [discoveryIncludeTagsInput, setDiscoveryIncludeTagsInput] = useState('')
+  const [discoveryExcludeTagsInput, setDiscoveryExcludeTagsInput] = useState('')
 
   const [scanLoading, setScanLoading] = useState(false)
   const [scanResult, setScanResult] = useState<LeaderTraderScanResponse | null>(null)
@@ -116,6 +124,9 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   const [poolFavoriteOnly, setPoolFavoriteOnly] = useState(false)
   const [poolIncludeBlacklisted, setPoolIncludeBlacklisted] = useState(false)
   const [labelUpdatingAddress, setLabelUpdatingAddress] = useState<string | null>(null)
+  const [selectedPoolAddresses, setSelectedPoolAddresses] = useState<string[]>([])
+  const [batchTagModalOpen, setBatchTagModalOpen] = useState(false)
+  const [batchTagDraft, setBatchTagDraft] = useState('')
 
   const [noteModalOpen, setNoteModalOpen] = useState(false)
   const [editingCandidate, setEditingCandidate] = useState<LeaderCandidatePoolItem | null>(null)
@@ -126,6 +137,14 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   const [historyCandidate, setHistoryCandidate] = useState<LeaderCandidatePoolItem | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyResult, setHistoryResult] = useState<LeaderCandidateScoreHistoryResponse | null>(null)
+  const [activityHistoryLoading, setActivityHistoryLoading] = useState(false)
+  const [activityHistoryResult, setActivityHistoryResult] = useState<LeaderActivityHistoryResponse | null>(null)
+  const [activityHistoryAddressInput, setActivityHistoryAddressInput] = useState('')
+  const [activityHistoryMarketInput, setActivityHistoryMarketInput] = useState('')
+  const [activityHistoryStartTime, setActivityHistoryStartTime] = useState<number | undefined>(undefined)
+  const [activityHistoryEndTime, setActivityHistoryEndTime] = useState<number | undefined>(undefined)
+  const [activityHistoryIncludeRaw, setActivityHistoryIncludeRaw] = useState(false)
+  const [activityHistoryPage, setActivityHistoryPage] = useState(1)
 
   useEffect(() => {
     if (open && selectedLeaderIds.length === 0 && !seedAddressInput && leaders.length > 0) {
@@ -147,6 +166,36 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     marketTradeLimit,
     excludeExistingLeaders
   })
+
+  const buildDiscoveryLabelFilters = () => ({
+    excludeBlacklistedTraders: excludeBlacklistedDiscovery,
+    favoriteOnly: discoveryFavoriteOnly,
+    includeTags: parseMultilineValues(discoveryIncludeTagsInput),
+    excludeTags: parseMultilineValues(discoveryExcludeTagsInput)
+  })
+
+  const renderManualLabels = (
+    record: {
+      address: string
+      favorite?: boolean
+      blacklisted?: boolean
+      manualNote?: string | null
+      manualTags?: string[]
+    }
+  ) => (
+    <>
+      <Space wrap size={[4, 4]}>
+        {record.favorite && <Tag color="gold">{t('leaderDiscovery.favorite')}</Tag>}
+        {record.blacklisted && <Tag color="red">{t('leaderDiscovery.blacklisted')}</Tag>}
+        {(record.manualTags || []).map(tag => <Tag key={`${record.address}-${tag}`}>{tag}</Tag>)}
+      </Space>
+      {record.manualNote && (
+        <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ marginBottom: 0, maxWidth: 260 }}>
+          {record.manualNote}
+        </Paragraph>
+      )}
+    </>
+  )
 
   const markAddedLeader = (address: string, leaderId: number, leaderName?: string | null) => {
     setScanResult(prev => prev ? {
@@ -191,6 +240,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     try {
       const response = await apiService.leaders.discoveryScan({
         ...buildBasePayload(),
+        ...buildDiscoveryLabelFilters(),
         traderLimit: 30
       })
       if (response.data.code === 0 && response.data.data) {
@@ -213,6 +263,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     try {
       const response = await apiService.leaders.discoveryRecommend({
         ...buildBasePayload(),
+        ...buildDiscoveryLabelFilters(),
         candidateAddresses: parseMultilineValues(candidateAddressInput),
         traderLimit: recommendTraderLimit,
         minTrades,
@@ -241,7 +292,8 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
         marketIds: parseMultilineValues(marketLookupInput),
         limitPerMarket,
         minTradesPerTrader,
-        excludeExistingLeaders
+        excludeExistingLeaders,
+        ...buildDiscoveryLabelFilters()
       })
       if (response.data.code === 0 && response.data.data) {
         setMarketLookupResult(response.data.data.list)
@@ -314,6 +366,31 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     }
   }
 
+  const handleBatchUpdateLabels = async (payload: Omit<LeaderCandidatePoolBatchLabelUpdateRequest, 'addresses'>) => {
+    if (!selectedPoolAddresses.length) {
+      message.warning(t('leaderDiscovery.selectCandidatesFirst'))
+      return
+    }
+    setLabelUpdatingAddress('__batch__')
+    try {
+      const response = await apiService.leaders.discoveryPoolBatchUpdateLabels({
+        addresses: selectedPoolAddresses,
+        ...payload
+      })
+      if (response.data.code === 0) {
+        message.success(t('leaderDiscovery.batchLabelsUpdated', { count: selectedPoolAddresses.length }))
+        setSelectedPoolAddresses([])
+        await handleLoadPool(poolPage, poolLowRiskOnly, poolFavoriteOnly, poolIncludeBlacklisted)
+      } else {
+        message.error(response.data.msg || t('leaderDiscovery.batchLabelsUpdateFailed'))
+      }
+    } catch (error: any) {
+      message.error(error.message || t('leaderDiscovery.batchLabelsUpdateFailed'))
+    } finally {
+      setLabelUpdatingAddress(null)
+    }
+  }
+
   const openNoteEditor = (record: LeaderCandidatePoolItem) => {
     setEditingCandidate(record)
     setNoteDraft(record.manualNote || '')
@@ -356,6 +433,74 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     await loadHistory(record.address, 1)
   }
 
+  const handleBatchSaveTags = async () => {
+    await handleBatchUpdateLabels({
+      manualTags: parseMultilineValues(batchTagDraft)
+    })
+    setBatchTagModalOpen(false)
+    setBatchTagDraft('')
+  }
+
+  const loadActivityHistoryByAddress = async (page = 1) => {
+    const address = activityHistoryAddressInput.trim()
+    if (!address) {
+      message.warning(t('leaderDiscovery.activityHistoryAddressRequired'))
+      return
+    }
+    setActivityHistoryLoading(true)
+    try {
+      const response = await apiService.leaders.discoveryHistoryByAddress({
+        address,
+        page,
+        limit: 20,
+        startTime: activityHistoryStartTime,
+        endTime: activityHistoryEndTime,
+        includeRaw: activityHistoryIncludeRaw
+      })
+      if (response.data.code === 0 && response.data.data) {
+        setActivityHistoryResult(response.data.data)
+        setActivityHistoryPage(page)
+      } else {
+        message.error(response.data.msg || t('leaderDiscovery.activityHistoryFetchFailed'))
+      }
+    } catch (error: any) {
+      message.error(error.message || t('leaderDiscovery.activityHistoryFetchFailed'))
+    } finally {
+      setActivityHistoryLoading(false)
+    }
+  }
+
+  const loadActivityHistoryByMarket = async (page = 1) => {
+    const marketId = activityHistoryMarketInput.trim()
+    if (!marketId) {
+      message.warning(t('leaderDiscovery.activityHistoryMarketRequired'))
+      return
+    }
+    setActivityHistoryLoading(true)
+    try {
+      const traderAddress = activityHistoryAddressInput.trim()
+      const response = await apiService.leaders.discoveryHistoryByMarket({
+        marketId,
+        traderAddress: traderAddress || undefined,
+        page,
+        limit: 20,
+        startTime: activityHistoryStartTime,
+        endTime: activityHistoryEndTime,
+        includeRaw: activityHistoryIncludeRaw
+      })
+      if (response.data.code === 0 && response.data.data) {
+        setActivityHistoryResult(response.data.data)
+        setActivityHistoryPage(page)
+      } else {
+        message.error(response.data.msg || t('leaderDiscovery.activityHistoryFetchFailed'))
+      }
+    } catch (error: any) {
+      message.error(error.message || t('leaderDiscovery.activityHistoryFetchFailed'))
+    } finally {
+      setActivityHistoryLoading(false)
+    }
+  }
+
   const scanColumns = [
     {
       title: t('leaderDiscovery.address'),
@@ -365,6 +510,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
         <Space direction="vertical" size={0}>
           <Text strong>{record.displayName || record.address}</Text>
           <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.address}</Text>
+          {renderManualLabels(record)}
         </Space>
       )
     },
@@ -419,6 +565,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
         <Space direction="vertical" size={0}>
           <Text strong>{record.displayName || record.address}</Text>
           <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.address}</Text>
+          {renderManualLabels(record)}
         </Space>
       )
     },
@@ -481,16 +628,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
             <Text strong>{record.displayName || record.address}</Text>
             <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.address}</Text>
           </Space>
-          <Space wrap size={[4, 4]}>
-            {record.favorite && <Tag color="gold">{t('leaderDiscovery.favorite')}</Tag>}
-            {record.blacklisted && <Tag color="red">{t('leaderDiscovery.blacklisted')}</Tag>}
-            {record.manualTags.map(tag => <Tag key={`${record.address}-${tag}`}>{tag}</Tag>)}
-          </Space>
-          {record.manualNote && (
-            <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ marginBottom: 0, maxWidth: 260 }}>
-              {record.manualNote}
-            </Paragraph>
-          )}
+          {renderManualLabels(record)}
         </Space>
       )
     },
@@ -592,6 +730,7 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
               <Space direction="vertical" size={0}>
                 <Text strong>{record.displayName || record.address}</Text>
                 <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.address}</Text>
+                {renderManualLabels(record)}
               </Space>
             )
           },
@@ -679,6 +818,70 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     }
   ]
 
+  const activityHistoryColumns = [
+    {
+      title: t('leaderDiscovery.activityHistoryEventTime'),
+      dataIndex: 'eventTimestamp',
+      key: 'eventTimestamp',
+      render: (value: number) => formatTime(value, i18n.language)
+    },
+    {
+      title: t('leaderDiscovery.activityHistoryTrader'),
+      key: 'trader',
+      render: (_: unknown, record: LeaderActivityHistoryItem) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.displayName || record.traderAddress}</Text>
+          <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.traderAddress}</Text>
+          <Space wrap size={[4, 4]}>
+            {record.favorite && <Tag color="gold">{t('leaderDiscovery.favorite')}</Tag>}
+            {record.blacklisted && <Tag color="red">{t('leaderDiscovery.blacklisted')}</Tag>}
+          </Space>
+        </Space>
+      )
+    },
+    {
+      title: t('leaderDiscovery.activityHistoryMarket'),
+      key: 'market',
+      render: (_: unknown, record: LeaderActivityHistoryItem) => (
+        <Space direction="vertical" size={0}>
+          <Text>{record.marketTitle || record.marketId}</Text>
+          <Text type="secondary">{record.marketSlug || '-'}</Text>
+        </Space>
+      )
+    },
+    {
+      title: t('leaderDiscovery.activityHistorySide'),
+      dataIndex: 'side',
+      key: 'side',
+      render: (value?: string | null) => value ? (
+        <Tag color={value === 'BUY' ? 'green' : value === 'SELL' ? 'orange' : 'default'}>{value}</Tag>
+      ) : '-'
+    },
+    {
+      title: t('leaderDiscovery.activityHistoryTrade'),
+      key: 'trade',
+      render: (_: unknown, record: LeaderActivityHistoryItem) => (
+        <Space direction="vertical" size={0}>
+          <Text type="secondary">price: {record.price || '-'}</Text>
+          <Text type="secondary">size: {record.size || '-'}</Text>
+          <Text type="secondary">vol: {record.volume || '-'}</Text>
+        </Space>
+      )
+    },
+    {
+      title: t('leaderDiscovery.activityHistoryTxHash'),
+      dataIndex: 'transactionHash',
+      key: 'transactionHash',
+      ellipsis: true,
+      render: (value?: string | null) => value || '-'
+    }
+  ]
+
+  const poolRowSelection = {
+    selectedRowKeys: selectedPoolAddresses,
+    onChange: (keys: readonly Key[]) => setSelectedPoolAddresses(keys.map(String))
+  }
+
   return (
     <>
       <Modal
@@ -741,12 +944,43 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                         <Switch checked={poolIncludeBlacklisted} onChange={checked => handleLoadPool(1, poolLowRiskOnly, poolFavoriteOnly, checked)} />
                       </Space>
                     </Space>
+                    <Space wrap>
+                      <Text type="secondary">
+                        {selectedPoolAddresses.length
+                          ? t('leaderDiscovery.selectedCandidates', { count: selectedPoolAddresses.length })
+                          : t('leaderDiscovery.batchSelectionHint')}
+                      </Text>
+                      <Button
+                        size="small"
+                        disabled={!selectedPoolAddresses.length}
+                        loading={labelUpdatingAddress === '__batch__'}
+                        onClick={() => handleBatchUpdateLabels({ favorite: true })}
+                      >
+                        {t('leaderDiscovery.batchFavorite')}
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={!selectedPoolAddresses.length}
+                        loading={labelUpdatingAddress === '__batch__'}
+                        onClick={() => handleBatchUpdateLabels({ blacklisted: true })}
+                      >
+                        {t('leaderDiscovery.batchBlacklist')}
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={!selectedPoolAddresses.length}
+                        onClick={() => setBatchTagModalOpen(true)}
+                      >
+                        {t('leaderDiscovery.batchTag')}
+                      </Button>
+                    </Space>
                     <Table
                       rowKey="address"
                       size="small"
                       loading={poolLoading}
                       dataSource={poolResult?.list || []}
                       columns={poolColumns}
+                      rowSelection={poolRowSelection}
                       pagination={{
                         current: poolResult?.page || poolPage,
                         pageSize: poolResult?.limit || 10,
@@ -762,6 +996,26 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                 label: t('leaderDiscovery.scanTab'),
                 children: (
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Space>
+                      <Text>{t('leaderDiscovery.excludeBlacklisted')}</Text>
+                      <Switch checked={excludeBlacklistedDiscovery} onChange={setExcludeBlacklistedDiscovery} />
+                    </Space>
+                    <Space>
+                      <Text>{t('leaderDiscovery.favoriteOnly')}</Text>
+                      <Switch checked={discoveryFavoriteOnly} onChange={setDiscoveryFavoriteOnly} />
+                    </Space>
+                    <Input
+                      value={discoveryIncludeTagsInput}
+                      onChange={event => setDiscoveryIncludeTagsInput(event.target.value)}
+                      style={{ width: 220 }}
+                      placeholder={t('leaderDiscovery.includeTags')}
+                    />
+                    <Input
+                      value={discoveryExcludeTagsInput}
+                      onChange={event => setDiscoveryExcludeTagsInput(event.target.value)}
+                      style={{ width: 220 }}
+                      placeholder={t('leaderDiscovery.excludeTags')}
+                    />
                     <Button type="primary" loading={scanLoading} onClick={handleScan}>
                       {t('leaderDiscovery.scanAction')}
                     </Button>
@@ -791,6 +1045,26 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                         <Text>{t('leaderDiscovery.lowRiskOnly')}</Text>
                         <Switch checked={lowRiskOnly} onChange={setLowRiskOnly} />
                       </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.excludeBlacklisted')}</Text>
+                        <Switch checked={excludeBlacklistedDiscovery} onChange={setExcludeBlacklistedDiscovery} />
+                      </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.favoriteOnly')}</Text>
+                        <Switch checked={discoveryFavoriteOnly} onChange={setDiscoveryFavoriteOnly} />
+                      </Space>
+                      <Input
+                        value={discoveryIncludeTagsInput}
+                        onChange={event => setDiscoveryIncludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.includeTags')}
+                      />
+                      <Input
+                        value={discoveryExcludeTagsInput}
+                        onChange={event => setDiscoveryExcludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.excludeTags')}
+                      />
                     </Space>
                     <Button type="primary" loading={recommendLoading} onClick={handleRecommend}>
                       {t('leaderDiscovery.recommendAction')}
@@ -813,11 +1087,96 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                     <Space wrap>
                       <InputNumber min={1} max={100} value={limitPerMarket} onChange={value => setLimitPerMarket(value || 20)} addonBefore={t('leaderDiscovery.limitPerMarket')} />
                       <InputNumber min={1} max={50} value={minTradesPerTrader} onChange={value => setMinTradesPerTrader(value || 1)} addonBefore={t('leaderDiscovery.minTradesPerTrader')} />
+                      <Space>
+                        <Text>{t('leaderDiscovery.excludeBlacklisted')}</Text>
+                        <Switch checked={excludeBlacklistedDiscovery} onChange={setExcludeBlacklistedDiscovery} />
+                      </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.favoriteOnly')}</Text>
+                        <Switch checked={discoveryFavoriteOnly} onChange={setDiscoveryFavoriteOnly} />
+                      </Space>
+                      <Input
+                        value={discoveryIncludeTagsInput}
+                        onChange={event => setDiscoveryIncludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.includeTags')}
+                      />
+                      <Input
+                        value={discoveryExcludeTagsInput}
+                        onChange={event => setDiscoveryExcludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.excludeTags')}
+                      />
                     </Space>
                     <Button type="primary" loading={marketLookupLoading} onClick={handleMarketLookup}>
                       {t('leaderDiscovery.marketLookupAction')}
                     </Button>
                     <Collapse items={marketLookupPanels} />
+                  </Space>
+                )
+              },
+              {
+                key: 'activity-history',
+                label: t('leaderDiscovery.activityHistoryTab'),
+                children: (
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Input
+                        style={{ width: 320 }}
+                        placeholder={t('leaderDiscovery.activityHistoryAddressPlaceholder')}
+                        value={activityHistoryAddressInput}
+                        onChange={event => setActivityHistoryAddressInput(event.target.value)}
+                      />
+                      <Input
+                        style={{ width: 260 }}
+                        placeholder={t('leaderDiscovery.activityHistoryMarketPlaceholder')}
+                        value={activityHistoryMarketInput}
+                        onChange={event => setActivityHistoryMarketInput(event.target.value)}
+                      />
+                      <InputNumber
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.activityHistoryStartPlaceholder')}
+                        value={activityHistoryStartTime}
+                        onChange={value => setActivityHistoryStartTime(value ?? undefined)}
+                      />
+                      <InputNumber
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.activityHistoryEndPlaceholder')}
+                        value={activityHistoryEndTime}
+                        onChange={value => setActivityHistoryEndTime(value ?? undefined)}
+                      />
+                      <Space>
+                        <Text>{t('leaderDiscovery.activityHistoryIncludeRaw')}</Text>
+                        <Switch checked={activityHistoryIncludeRaw} onChange={setActivityHistoryIncludeRaw} />
+                      </Space>
+                    </Space>
+                    <Space wrap>
+                      <Button loading={activityHistoryLoading} onClick={() => loadActivityHistoryByAddress(1)}>
+                        {t('leaderDiscovery.activityHistoryQueryByAddress')}
+                      </Button>
+                      <Button loading={activityHistoryLoading} onClick={() => loadActivityHistoryByMarket(1)}>
+                        {t('leaderDiscovery.activityHistoryQueryByMarket')}
+                      </Button>
+                    </Space>
+                    <Table
+                      rowKey={(record: LeaderActivityHistoryItem) => record.eventKey}
+                      size="small"
+                      loading={activityHistoryLoading}
+                      dataSource={activityHistoryResult?.list || []}
+                      columns={activityHistoryColumns}
+                      pagination={{
+                        current: activityHistoryResult?.page || activityHistoryPage,
+                        pageSize: activityHistoryResult?.limit || 20,
+                        total: activityHistoryResult?.total || 0,
+                        onChange: page => {
+                          if (activityHistoryMarketInput.trim()) {
+                            loadActivityHistoryByMarket(page)
+                          } else {
+                            loadActivityHistoryByAddress(page)
+                          }
+                        }
+                      }}
+                    />
                   </Space>
                 )
               }
@@ -871,6 +1230,24 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
             onChange: page => historyCandidate && loadHistory(historyCandidate.address, page)
           }}
         />
+      </Modal>
+
+      <Modal
+        open={batchTagModalOpen}
+        title={t('leaderDiscovery.batchTag')}
+        onCancel={() => setBatchTagModalOpen(false)}
+        onOk={handleBatchSaveTags}
+        confirmLoading={labelUpdatingAddress === '__batch__'}
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Text type="secondary">{t('leaderDiscovery.selectedCandidates', { count: selectedPoolAddresses.length })}</Text>
+          <Input.TextArea
+            rows={4}
+            value={batchTagDraft}
+            onChange={event => setBatchTagDraft(event.target.value)}
+            placeholder={t('leaderDiscovery.manualTagsPlaceholder')}
+          />
+        </Space>
       </Modal>
     </>
   )

@@ -152,6 +152,26 @@ const CopyTradingList: React.FC = () => {
     if (isNaN(num)) return '-'
     return `${num >= 0 ? '+' : ''}${num.toFixed(2)}%`
   }
+
+  const renderAggregationSummary = (record: CopyTrading) => {
+    const enabled = Boolean(record.smallOrderAggregationEnabled)
+    const windowSeconds = record.smallOrderAggregationWindowSeconds || 300
+
+    return (
+      <Space wrap size={[4, 4]} style={{ marginTop: 4 }}>
+        <Tag color={enabled ? 'purple' : 'default'}>
+          {enabled
+            ? (t('copyTradingList.smallOrderAggregationEnabled') || '小额单聚合已开启')
+            : (t('copyTradingList.smallOrderAggregationDisabled') || '小额单聚合未开启')}
+        </Tag>
+        {enabled && (
+          <span style={{ fontSize: 12, color: '#666' }}>
+            {t('copyTradingList.smallOrderAggregationWindow', { window: windowSeconds }) || `窗口 ${windowSeconds}s`}
+          </span>
+        )}
+      </Space>
+    )
+  }
   
   const handleToggleStatus = async (copyTrading: CopyTrading) => {
     try {
@@ -227,6 +247,7 @@ const CopyTradingList: React.FC = () => {
               {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
             </div>
           )}
+          {renderAggregationSummary(record)}
         </div>
       )
     },
@@ -507,11 +528,9 @@ const CopyTradingList: React.FC = () => {
                         <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
                           {t('copyTradingList.dailyVolumeLimit') || '每日成交额'}: {record.maxDailyVolume ? `${formatUSDC(record.maxDailyVolume)} USDC` : (t('copyTradingList.notSet') || '未设置')}
                         </div>
-                        {record.smallOrderAggregationEnabled && (
-                          <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
-                            {(t('copyTradingList.smallOrderAggregationSummary') || '小额单聚合')}: {record.smallOrderAggregationWindowSeconds || 300}s
-                          </div>
-                        )}
+                        <div style={{ marginBottom: '8px' }}>
+                          {renderAggregationSummary(record)}
+                        </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Tag color={record.enabled ? 'green' : 'red'}>
                             {record.enabled ? '启用' : '禁用'}

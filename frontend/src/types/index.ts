@@ -175,6 +175,10 @@ export interface LeaderTraderScanRequest {
   marketTradeLimit?: number
   traderLimit?: number
   excludeExistingLeaders?: boolean
+  excludeBlacklistedTraders?: boolean
+  favoriteOnly?: boolean
+  includeTags?: string[]
+  excludeTags?: string[]
 }
 
 export interface LeaderDiscoveredTrader {
@@ -192,6 +196,10 @@ export interface LeaderDiscoveredTrader {
   sampleMarkets: LeaderDiscoveryMarket[]
   firstSeenAt?: number | null
   lastSeenAt?: number | null
+  favorite?: boolean
+  blacklisted?: boolean
+  manualNote?: string | null
+  manualTags?: string[]
 }
 
 export interface LeaderTraderScanResponse {
@@ -210,6 +218,10 @@ export interface LeaderCandidateRecommendRequest {
   marketTradeLimit?: number
   traderLimit?: number
   excludeExistingLeaders?: boolean
+  excludeBlacklistedTraders?: boolean
+  favoriteOnly?: boolean
+  includeTags?: string[]
+  excludeTags?: string[]
   minTrades?: number
   maxOpenPositions?: number
   maxMarketConcentrationRate?: number
@@ -244,6 +256,10 @@ export interface LeaderCandidateRecommendation {
   reasons: string[]
   sampleMarkets: LeaderDiscoveryMarket[]
   lastSeenAt?: number | null
+  favorite?: boolean
+  blacklisted?: boolean
+  manualNote?: string | null
+  manualTags?: string[]
 }
 
 export interface LeaderCandidateRecommendResponse {
@@ -258,6 +274,10 @@ export interface LeaderMarketTraderLookupRequest {
   limitPerMarket?: number
   minTradesPerTrader?: number
   excludeExistingLeaders?: boolean
+  excludeBlacklistedTraders?: boolean
+  favoriteOnly?: boolean
+  includeTags?: string[]
+  excludeTags?: string[]
 }
 
 export interface LeaderMarketTrader {
@@ -271,6 +291,10 @@ export interface LeaderMarketTrader {
   totalVolume: string
   firstSeenAt?: number | null
   lastSeenAt?: number | null
+  favorite?: boolean
+  blacklisted?: boolean
+  manualNote?: string | null
+  manualTags?: string[]
 }
 
 export interface LeaderMarketTraderLookupItem {
@@ -339,6 +363,19 @@ export interface LeaderCandidatePoolLabelUpdateRequest {
   manualTags?: string[]
 }
 
+export interface LeaderCandidatePoolBatchLabelUpdateRequest {
+  addresses: string[]
+  favorite?: boolean
+  blacklisted?: boolean
+  manualNote?: string | null
+  manualTags?: string[]
+}
+
+export interface LeaderCandidatePoolBatchLabelUpdateResponse {
+  updatedCount: number
+  list: LeaderCandidatePoolItem[]
+}
+
 export interface LeaderCandidateScoreHistoryRequest {
   address: string
   page?: number
@@ -367,6 +404,58 @@ export interface LeaderCandidateScoreHistoryItem {
 
 export interface LeaderCandidateScoreHistoryResponse {
   list: LeaderCandidateScoreHistoryItem[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface LeaderActivityHistoryByAddressRequest {
+  address: string
+  page?: number
+  limit?: number
+  startTime?: number
+  endTime?: number
+  includeRaw?: boolean
+}
+
+export interface LeaderActivityHistoryByMarketRequest {
+  marketId: string
+  traderAddress?: string
+  page?: number
+  limit?: number
+  startTime?: number
+  endTime?: number
+  includeRaw?: boolean
+}
+
+export interface LeaderActivityHistoryItem {
+  eventKey: string
+  source: string
+  traderAddress: string
+  displayName?: string | null
+  marketId: string
+  marketTitle?: string | null
+  marketSlug?: string | null
+  asset?: string | null
+  transactionHash?: string | null
+  side?: string | null
+  outcome?: string | null
+  outcomeIndex?: number | null
+  price?: string | null
+  size?: string | null
+  volume?: string | null
+  eventTimestamp: number
+  receivedAt: number
+  favorite: boolean
+  blacklisted: boolean
+  manualNote?: string | null
+  manualTags: string[]
+  normalizedJson?: string | null
+  rawPayloadJson?: string | null
+}
+
+export interface LeaderActivityHistoryResponse {
+  list: LeaderActivityHistoryItem[]
   total: number
   page: number
   limit: number
@@ -1217,6 +1306,7 @@ export interface CopyTradingExecutionEventListRequest {
   copyTradingId: number
   eventType?: string
   stage?: string
+  source?: string
   status?: string
   page?: number
   limit?: number
@@ -1229,6 +1319,36 @@ export interface CopyTradingExecutionEventListResponse {
   total: number
   page: number
   limit: number
+}
+
+export interface CopyTradingAggregationSnapshotRequest {
+  copyTradingId?: number
+}
+
+export interface CopyTradingAggregationGroupSnapshot {
+  key: string
+  copyTradingId: number
+  accountId: number
+  leaderId: number
+  side: string
+  tokenId: string
+  marketId: string
+  outcomeIndex?: number | null
+  tradeCount: number
+  totalLeaderQuantity: string
+  totalLeaderOrderAmount: string
+  averageTradePrice: string
+  firstBufferedAt: number
+  lastBufferedAt: number
+  duplicateIgnoredCount: number
+  sampleLeaderTradeIds: string[]
+}
+
+export interface CopyTradingAggregationSnapshot {
+  totalGroupCount: number
+  totalTradeCount: number
+  totalDuplicateIgnoredCount: number
+  groups: CopyTradingAggregationGroupSnapshot[]
 }
 
 /**
@@ -1373,6 +1493,12 @@ export interface BacktestTaskDto {
   createdAt: number
   executionStartedAt?: number
   executionFinishedAt?: number
+  dataSource: string
+  errorMessage?: string | null
+  updatedAt: number
+  lastProcessedTradeTime?: number | null
+  lastProcessedTradeIndex?: number | null
+  processedTradeCount: number
 }
 
 /**

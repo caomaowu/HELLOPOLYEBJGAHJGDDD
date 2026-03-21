@@ -31,17 +31,12 @@ export interface BacktestCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
-  priceTolerance?: string  // 百分比
-  delaySeconds?: number
   supportSell?: boolean
-  minOrderDepth?: string
-  maxSpread?: string
   minPrice?: string
   maxPrice?: string
   maxPositionValue?: string
   keywordFilterMode?: 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
   keywords?: string[]
-  maxMarketEndDate?: number | null
   pageForResume?: number  // 用于恢复中断任务，从指定页码开始获取历史数据（从1开始）
 }
 
@@ -88,6 +83,26 @@ export interface BacktestStopRequest {
   id: number
 }
 
+export interface BacktestCompareRequest {
+  taskIds: number[]
+}
+
+export interface BacktestAuditRequest {
+  taskIds: number[]
+  targetTaskId?: number
+  includeEventTrail?: boolean
+  eventPageSize?: number
+}
+
+export interface BacktestAuditEventListRequest {
+  taskId: number
+  page?: number
+  size?: number
+  stage?: string
+  decision?: string
+  eventType?: string
+}
+
 /**
  * 回测任务删除请求
  */
@@ -102,6 +117,11 @@ export interface BacktestRetryRequest {
   id: number
 }
 
+export interface BacktestRerunRequest {
+  id: number
+  taskName?: string
+}
+
 /**
  * 回测任务列表响应
  */
@@ -110,7 +130,6 @@ export interface BacktestListResponse {
   total: number
   page: number
   size: number
-  processedTradeCount?: number  // 已处理的交易数量（用于显示真实进度）
 }
 
 /**
@@ -120,9 +139,6 @@ export interface BacktestDetailResponse {
   task: BacktestTaskDto
   config: BacktestConfigDto
   statistics: BacktestStatisticsDto
-  lastProcessedTradeTime?: number  // 最后处理的交易时间（用于中断恢复）
-  lastProcessedTradeIndex?: number  // 最后处理的交易索引（用于中断恢复）
-  processedTradeCount?: number  // 已处理的交易数量（用于显示真实进度）
 }
 
 /**
@@ -133,6 +149,56 @@ export interface BacktestTradeListResponse {
   total: number
   page: number
   size: number
+}
+
+export interface BacktestCompareResponse {
+  list: BacktestCompareItemDto[]
+  configDifferences: BacktestConfigDifferenceDto[]
+  summary: BacktestCompareSummaryDto
+}
+
+export interface BacktestAuditResponse {
+  compare: BacktestCompareResponse
+  generatedAt: number
+  summary?: BacktestAuditSummaryDto | null
+  recentEvents?: BacktestAuditEventDto[]
+  version: string
+}
+
+export interface BacktestAuditSummaryDto {
+  taskId: number
+  totalEvents: number
+  passEvents: number
+  skipEvents: number
+  errorEvents: number
+  stopEvents: number
+  stageCounts: Record<string, number>
+  latestEventAt?: number | null
+}
+
+export interface BacktestAuditEventDto {
+  id: number
+  taskId: number
+  eventTime?: number | null
+  stage: string
+  eventType: string
+  decision: string
+  leaderTradeId?: string | null
+  marketId?: string | null
+  marketTitle?: string | null
+  side?: string | null
+  reasonCode?: string | null
+  reasonMessage?: string | null
+  detailJson?: string | null
+  createdAt: number
+}
+
+export interface BacktestAuditEventListResponse {
+  list: BacktestAuditEventDto[]
+  total: number
+  page: number
+  size: number
+  summary: BacktestAuditSummaryDto
 }
 
 /**
@@ -167,6 +233,12 @@ export interface BacktestTaskDto {
   createdAt: number
   executionStartedAt: number | null
   executionFinishedAt: number | null
+  dataSource: string
+  errorMessage: string | null
+  updatedAt: number
+  lastProcessedTradeTime: number | null
+  lastProcessedTradeIndex: number | null
+  processedTradeCount: number
 }
 
 /**
@@ -187,17 +259,12 @@ export interface BacktestConfigDto {
   maxDailyLoss: string
   maxDailyOrders: number
   maxDailyVolume?: string | null
-  priceTolerance: string  // 百分比
-  delaySeconds: number
   supportSell: boolean
-  minOrderDepth: string | null
-  maxSpread: string | null
   minPrice: string | null
   maxPrice: string | null
   maxPositionValue: string | null
   keywordFilterMode: 'DISABLED' | 'WHITELIST' | 'BLACKLIST' | null
   keywords: string[] | null
-  maxMarketEndDate: number | null
 }
 
 /**
@@ -214,6 +281,42 @@ export interface BacktestStatisticsDto {
   maxLoss: string  // 最大单笔亏损
   maxDrawdown: string  // 最大回撤
   avgHoldingTime: number | null  // 平均持仓时间 (毫秒)
+}
+
+export interface BacktestCompareItemDto {
+  task: BacktestTaskDto
+  config: BacktestConfigDto
+  statistics: BacktestStatisticsDto
+  highlights: string[]
+}
+
+export interface BacktestConfigDifferenceDto {
+  field: string
+  label: string
+  values: Record<number, string | null>
+}
+
+export interface BacktestCompareSummaryDto {
+  bestProfitTaskId?: number | null
+  bestProfitRateTaskId?: number | null
+  bestWinRateTaskId?: number | null
+  lowestDrawdownTaskId?: number | null
+  notes: string[]
+  whyChain?: BacktestCompareWhyChainDto | null
+}
+
+export interface BacktestCompareWhyChainDto {
+  anchorTaskId?: number | null
+  topReasons: BacktestCompareReasonItemDto[]
+  perTaskReasons: Record<number, BacktestCompareReasonItemDto[]>
+}
+
+export interface BacktestCompareReasonItemDto {
+  factor: string
+  title: string
+  detail: string
+  type: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'
+  score: number
 }
 
 /**

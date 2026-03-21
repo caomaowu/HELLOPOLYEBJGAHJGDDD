@@ -1,17 +1,40 @@
 import { useState, useEffect } from 'react'
+import type { Key } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Table, Card, Button, Select, Tag, Space, Modal, message, Row, Col, Form, Input, InputNumber, Switch, Statistic, Descriptions } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, EyeOutlined, RedoOutlined, CopyOutlined, SyncOutlined } from '@ant-design/icons'
 import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
 import { backtestService, apiService } from '../services/api'
-import type { BacktestTaskDto, BacktestListRequest, BacktestCreateRequest, BacktestTradeDto } from '../types/backtest'
+import type {
+  BacktestAuditEventDto,
+  BacktestAuditSummaryDto,
+  BacktestCompareItemDto,
+  BacktestCompareReasonItemDto,
+  BacktestCompareResponse,
+  BacktestCreateRequest,
+  BacktestListRequest,
+  BacktestTaskDto,
+  BacktestTradeDto
+} from '../types/backtest'
 import type { Leader } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import AddCopyTradingModal from './CopyTradingOrders/AddModal'
 import BacktestChart from './BacktestChart'
 import LeaderSelect from '../components/LeaderSelect'
 import MultiplierTierEditor from '../components/MultiplierTierEditor'
+
+interface CompareEventDiffRow {
+  key: string
+  stage: string
+  eventType: string
+  decision: string
+  reasonCode?: string | null
+  reasonMessage?: string | null
+  marketId?: string | null
+  marketTitle?: string | null
+  byTask: Record<number, { count: number; latestAt?: number }>
+}
 
 const BacktestList: React.FC = () => {
   const { t } = useTranslation()
@@ -63,6 +86,25 @@ const BacktestList: React.FC = () => {
   const [detailTradesTotal, setDetailTradesTotal] = useState(0)
   const [detailTradesPage, setDetailTradesPage] = useState(1)
   const [detailTradesSize] = useState(20)
+  const [detailAuditEvents, setDetailAuditEvents] = useState<BacktestAuditEventDto[]>([])
+  const [detailAuditSummary, setDetailAuditSummary] = useState<BacktestAuditSummaryDto | null>(null)
+  const [detailAuditLoading, setDetailAuditLoading] = useState(false)
+  const [detailAuditTotal, setDetailAuditTotal] = useState(0)
+  const [detailAuditPage, setDetailAuditPage] = useState(1)
+  const [detailAuditSize] = useState(20)
+  const [detailAuditStage, setDetailAuditStage] = useState<string | undefined>()
+  const [detailAuditDecision, setDetailAuditDecision] = useState<string | undefined>()
+  const [detailAuditEventType, setDetailAuditEventType] = useState('')
+  const [selectedCompareTaskIds, setSelectedCompareTaskIds] = useState<number[]>([])
+  const [compareModalVisible, setCompareModalVisible] = useState(false)
+  const [compareLoading, setCompareLoading] = useState(false)
+  const [compareResult, setCompareResult] = useState<BacktestCompareResponse | null>(null)
+  const [compareEventDiffLoading, setCompareEventDiffLoading] = useState(false)
+  const [compareEventRows, setCompareEventRows] = useState<CompareEventDiffRow[]>([])
+  const [compareEventStage, setCompareEventStage] = useState<string | undefined>()
+  const [compareEventDecision, setCompareEventDecision] = useState<string | undefined>()
+  const [compareEventType, setCompareEventType] = useState('')
+  const [compareEventOnlyDiff, setCompareEventOnlyDiff] = useState(true)
 
   // 获取回测任务列表（silent 为 true 时不显示 loading，用于轮询刷新）
   const fetchTasks = async (silent = false) => {
@@ -114,9 +156,131 @@ const BacktestList: React.FC = () => {
     return () => clearInterval(timer)
   }, [hasNonTerminalTask, page, statusFilter, leaderIdFilter, sortBy, sortOrder])
 
+  useEffect(() => {
+    if (!compareModalVisible || !compareResult || compareResult.list.length < 2) {
+      return
+    }
+    fetchCompareEventDiffs(compareResult.list.map(item => item.task.id))
+  }, [compareModalVisible, compareResult])
+
   // 刷新
   const handleRefresh = () => {
     fetchTasks()
+  }
+
+  const handleCompareTasks = async () => {
+    if (selectedCompareTaskIds.length < 2) {
+      message.warning(t('backtest.compareSelectHint'))
+      return
+    }
+    setCompareLoading(true)
+    try {
+      const response = await backtestService.audit({ taskIds: selectedCompareTaskIds })
+      if (response.data.code === 0 && response.data.data) {
+        setCompareEventRows([])
+        setCompareEventStage(undefined)
+        setCompareEventDecision(undefined)
+        setCompareEventType('')
+        setCompareEventOnlyDiff(true)
+        setCompareResult(response.data.data.compare)
+        setCompareModalVisible(true)
+      } else {
+        message.error(response.data.msg || t('backtest.compareFailed'))
+      }
+    } catch (error) {
+      console.error('Failed to compare backtest tasks:', error)
+      message.error(t('backtest.compareFailed'))
+    } finally {
+      setCompareLoading(false)
+    }
+  }
+
+  const buildCompareEventRows = (
+    taskIds: number[],
+    eventMap: Record<number, BacktestAuditEventDto[]>
+  ): CompareEventDiffRow[] => {
+    const grouped = new Map<string, CompareEventDiffRow>()
+
+    taskIds.forEach(taskId => {
+      const events = eventMap[taskId] || []
+      events.forEach(event => {
+        const key = [
+          event.stage,
+          event.eventType,
+          event.decision,
+          event.reasonCode || '',
+          event.marketId || ''
+        ].join('|')
+        const existing = grouped.get(key) || {
+          key,
+          stage: event.stage,
+          eventType: event.eventType,
+          decision: event.decision,
+          reasonCode: event.reasonCode,
+          reasonMessage: event.reasonMessage,
+          marketId: event.marketId,
+          marketTitle: event.marketTitle,
+          byTask: {}
+        }
+        const latestAt = event.eventTime ?? event.createdAt
+        const current = existing.byTask[taskId]
+        existing.byTask[taskId] = {
+          count: (current?.count || 0) + 1,
+          latestAt: current?.latestAt ? Math.max(current.latestAt, latestAt) : latestAt
+        }
+        grouped.set(key, existing)
+      })
+    })
+
+    return Array.from(grouped.values()).sort((left, right) => {
+      const leftMax = Math.max(...taskIds.map(taskId => left.byTask[taskId]?.latestAt || 0))
+      const rightMax = Math.max(...taskIds.map(taskId => right.byTask[taskId]?.latestAt || 0))
+      return rightMax - leftMax
+    })
+  }
+
+  const fetchCompareEventDiffs = async (
+    taskIds: number[],
+    filters?: {
+      stage?: string
+      decision?: string
+      eventType?: string
+    }
+  ) => {
+    if (taskIds.length < 2) {
+      setCompareEventRows([])
+      return
+    }
+
+    setCompareEventDiffLoading(true)
+    try {
+      const responses = await Promise.all(
+        taskIds.map(async taskId => {
+          const response = await backtestService.auditEvents({
+            taskId,
+            page: 1,
+            size: 200,
+            stage: filters?.stage ?? compareEventStage,
+            decision: filters?.decision ?? compareEventDecision,
+            eventType: filters?.eventType ?? (compareEventType.trim() || undefined)
+          })
+          if (response.data.code !== 0 || !response.data.data) {
+            throw new Error(response.data.msg || `加载任务 ${taskId} 审计事件失败`)
+          }
+          return [taskId, response.data.data.list || []] as const
+        })
+      )
+
+      setCompareEventRows(
+        buildCompareEventRows(taskIds, Object.fromEntries(responses))
+      )
+    } catch (error) {
+      console.error('Failed to fetch compare audit events:', error)
+      message.error(t('backtest.compareFailed'))
+      setCompareEventRows([])
+    } finally {
+      setCompareEventDiffLoading(false)
+    }
   }
 
   // 删除任务
@@ -437,6 +601,42 @@ const BacktestList: React.FC = () => {
     }
   }
 
+  // 获取审计事件
+  const fetchDetailAuditEvents = async (
+    taskId: number,
+    page: number,
+    filters?: {
+      stage?: string
+      decision?: string
+      eventType?: string
+    }
+  ) => {
+    setDetailAuditLoading(true)
+    try {
+      const response = await backtestService.auditEvents({
+        taskId,
+        page,
+        size: detailAuditSize,
+        stage: filters?.stage ?? detailAuditStage,
+        decision: filters?.decision ?? detailAuditDecision,
+        eventType: filters?.eventType ?? (detailAuditEventType.trim() || undefined)
+      })
+      if (response.data.code === 0 && response.data.data) {
+        setDetailAuditEvents(response.data.data.list || [])
+        setDetailAuditSummary(response.data.data.summary || null)
+        setDetailAuditPage(page)
+        setDetailAuditTotal(response.data.data.total || 0)
+      } else {
+        message.error(response.data.msg || t('backtest.auditFetchFailed'))
+      }
+    } catch (error) {
+      console.error('Failed to fetch audit events:', error)
+      message.error(t('backtest.auditFetchFailed'))
+    } finally {
+      setDetailAuditLoading(false)
+    }
+  }
+
   // 查看详情 - 打开 Modal 而不是跳转页面
   const handleViewDetail = async (id: number) => {
     try {
@@ -451,6 +651,7 @@ const BacktestList: React.FC = () => {
         // 获取交易记录
         fetchDetailTrades(id, 1)
         fetchDetailAllTrades(id)
+        fetchDetailAuditEvents(id, 1)
       } else {
         message.error(response.data.msg || t('backtest.fetchTaskDetailFailed'))
       }
@@ -527,6 +728,63 @@ const BacktestList: React.FC = () => {
       key: 'leaderTradeId',
       width: 150,
       ellipsis: true
+    }
+  ]
+
+  const auditColumns = [
+    {
+      title: t('backtest.auditCreatedAt'),
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      width: 180,
+      render: (timestamp: number) => new Date(timestamp).toLocaleString()
+    },
+    {
+      title: t('backtest.auditStage'),
+      dataIndex: 'stage',
+      key: 'stage',
+      width: 120
+    },
+    {
+      title: t('backtest.auditEventType'),
+      dataIndex: 'eventType',
+      key: 'eventType',
+      width: 180
+    },
+    {
+      title: t('backtest.auditDecision'),
+      dataIndex: 'decision',
+      key: 'decision',
+      width: 100,
+      render: (decision: string) => (
+        <Tag
+          color={
+            decision === 'PASS'
+              ? 'success'
+              : decision === 'SKIP'
+                ? 'warning'
+                : decision === 'ERROR'
+                  ? 'error'
+                  : decision === 'STOP'
+                    ? 'magenta'
+                    : 'default'
+          }
+        >
+          {decision}
+        </Tag>
+      )
+    },
+    {
+      title: t('backtest.auditMarket'),
+      key: 'market',
+      width: 240,
+      render: (_: unknown, record: BacktestAuditEventDto) => record.marketTitle || record.marketId || '-'
+    },
+    {
+      title: t('backtest.auditReason'),
+      key: 'reason',
+      ellipsis: true,
+      render: (_: unknown, record: BacktestAuditEventDto) => record.reasonMessage || record.reasonCode || '-'
     }
   ]
 
@@ -703,6 +961,91 @@ const BacktestList: React.FC = () => {
     }
   ]
 
+  const compareRowSelection = {
+    selectedRowKeys: selectedCompareTaskIds,
+    onChange: (keys: readonly Key[]) => setSelectedCompareTaskIds(keys.map(key => Number(key))),
+    getCheckboxProps: (record: BacktestTaskDto) => ({
+      disabled: record.status !== 'COMPLETED'
+    })
+  }
+
+  const compareTaskNameMap = new Map(
+    (compareResult?.list || []).map(item => [item.task.id, item.task.taskName])
+  )
+
+  const getReasonTagColor = (reasonType: BacktestCompareReasonItemDto['type']) => {
+    switch (reasonType) {
+      case 'POSITIVE':
+        return 'success'
+      case 'NEGATIVE':
+        return 'error'
+      default:
+        return 'default'
+    }
+  }
+
+  const compareTaskIds = compareResult?.list.map(item => item.task.id) || []
+  const compareEventRowsToDisplay = compareEventRows.filter(row => {
+    if (!compareEventOnlyDiff) {
+      return true
+    }
+    const counts = compareTaskIds.map(taskId => row.byTask[taskId]?.count || 0)
+    return counts.some(count => count !== counts[0])
+  })
+
+  const compareEventColumns = [
+    {
+      title: t('backtest.auditStage'),
+      dataIndex: 'stage',
+      key: 'stage',
+      width: 120
+    },
+    {
+      title: t('backtest.auditEventType'),
+      dataIndex: 'eventType',
+      key: 'eventType',
+      width: 180
+    },
+    {
+      title: t('backtest.auditDecision'),
+      dataIndex: 'decision',
+      key: 'decision',
+      width: 120,
+      render: (value: string) => <Tag>{value}</Tag>
+    },
+    {
+      title: t('backtest.auditReason'),
+      key: 'reason',
+      width: 220,
+      render: (_: unknown, record: CompareEventDiffRow) => record.reasonMessage || record.reasonCode || '-'
+    },
+    {
+      title: t('backtest.market'),
+      key: 'market',
+      width: 220,
+      render: (_: unknown, record: CompareEventDiffRow) => record.marketTitle || record.marketId || '-'
+    },
+    ...compareTaskIds.map(taskId => ({
+      title: compareTaskNameMap.get(taskId) || `#${taskId}`,
+      key: `task-${taskId}`,
+      width: 180,
+      render: (_: unknown, record: CompareEventDiffRow) => {
+        const taskSummary = record.byTask[taskId]
+        if (!taskSummary) {
+          return <Tag>0</Tag>
+        }
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={taskSummary.count > 0 ? 'blue' : 'default'}>{taskSummary.count}</Tag>
+            <span style={{ fontSize: 12, color: '#666' }}>
+              {taskSummary.latestAt ? new Date(taskSummary.latestAt).toLocaleString() : '-'}
+            </span>
+          </Space>
+        )
+      }
+    }))
+  ]
+
   return (
     <div style={{ padding: 24 }}>
       <Card>
@@ -756,6 +1099,15 @@ const BacktestList: React.FC = () => {
             <Col xs={24} sm={24} md={12} lg={8} style={{ textAlign: isMobile ? 'left' : 'right' }}>
               <Space style={{ width: isMobile ? '100%' : 'auto' }}>
                 <Button
+                  icon={<CopyOutlined />}
+                  onClick={handleCompareTasks}
+                  loading={compareLoading}
+                  disabled={selectedCompareTaskIds.length < 2}
+                  style={{ flex: isMobile ? 1 : undefined }}
+                >
+                  {t('backtest.compare')}
+                </Button>
+                <Button
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={handleCreate}
@@ -780,6 +1132,7 @@ const BacktestList: React.FC = () => {
             columns={columns}
             dataSource={tasks}
             rowKey="id"
+            rowSelection={compareRowSelection}
             loading={loading}
             pagination={{
               current: page,
@@ -794,6 +1147,264 @@ const BacktestList: React.FC = () => {
           />
         </Space>
       </Card>
+
+      <Modal
+        title={t('backtest.compare')}
+        open={compareModalVisible}
+        onCancel={() => {
+          setCompareModalVisible(false)
+          setCompareResult(null)
+          setCompareEventRows([])
+          setCompareEventStage(undefined)
+          setCompareEventDecision(undefined)
+          setCompareEventType('')
+          setCompareEventOnlyDiff(true)
+        }}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => {
+              setCompareModalVisible(false)
+              setCompareResult(null)
+              setCompareEventRows([])
+              setCompareEventStage(undefined)
+              setCompareEventDecision(undefined)
+              setCompareEventType('')
+              setCompareEventOnlyDiff(true)
+            }}
+          >
+            {t('common.close')}
+          </Button>
+        ]}
+        width={isMobile ? '95%' : 1000}
+      >
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <Descriptions bordered size="small" column={1}>
+            <Descriptions.Item label={t('backtest.compareSelection')}>
+              {selectedCompareTaskIds.length
+                ? t('backtest.compareSelectedCount', { count: selectedCompareTaskIds.length })
+                : t('backtest.compareSelectHint')}
+            </Descriptions.Item>
+          </Descriptions>
+
+          {compareResult?.summary.notes && compareResult.summary.notes.length > 0 && (
+            <Card size="small" title={t('backtest.compareHighlights')}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {compareResult.summary.notes.map((item, index) => (
+                  <div key={`${item}-${index}`}>{item}</div>
+                ))}
+              </Space>
+            </Card>
+          )}
+
+          {compareResult?.summary.whyChain?.topReasons && compareResult.summary.whyChain.topReasons.length > 0 && (
+            <Card size="small" title={t('backtest.compareWhyChain') || '差异解释链'}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {compareResult.summary.whyChain.topReasons.map((reason, index) => (
+                  <div key={`${reason.factor}-${index}`}>
+                    <Space wrap size={[8, 4]}>
+                      <Tag color={getReasonTagColor(reason.type)}>{reason.title}</Tag>
+                      <Tag>{`score ${reason.score.toFixed(1)}`}</Tag>
+                    </Space>
+                    <div style={{ marginTop: 4 }}>{reason.detail}</div>
+                  </div>
+                ))}
+              </Space>
+            </Card>
+          )}
+
+          {compareResult?.summary.whyChain?.perTaskReasons && (
+            <Card size="small" title={t('backtest.compareWhyByTask') || '分任务解释'}>
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {Object.entries(compareResult.summary.whyChain.perTaskReasons).map(([taskId, reasons]) => (
+                  <Descriptions key={`why-${taskId}`} bordered size="small" column={1}>
+                    <Descriptions.Item label={compareTaskNameMap.get(Number(taskId)) || `#${taskId}`}>
+                      <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                        {reasons && reasons.length > 0 ? reasons.map((reason, index) => (
+                          <div key={`${taskId}-${reason.factor}-${index}`}>
+                            <Space wrap size={[8, 4]}>
+                              <Tag color={getReasonTagColor(reason.type)}>{reason.title}</Tag>
+                              <Tag>{`score ${reason.score.toFixed(1)}`}</Tag>
+                            </Space>
+                            <div style={{ marginTop: 4 }}>{reason.detail}</div>
+                          </div>
+                        )) : '-'}
+                      </Space>
+                    </Descriptions.Item>
+                  </Descriptions>
+                ))}
+              </Space>
+            </Card>
+          )}
+
+          {compareResult?.configDifferences && compareResult.configDifferences.length > 0 && (
+            <Card size="small" title={t('backtest.compareConfigDiffs')}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {compareResult.configDifferences.map((item) => (
+                  <Descriptions key={item.field} bordered size="small" column={1}>
+                    <Descriptions.Item label={item.label}>
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        {Object.entries(item.values).map(([taskId, value]) => (
+                          <span key={`${item.field}-${taskId}`}>
+                            {(compareTaskNameMap.get(Number(taskId)) || `#${taskId}`)}: {value || '-'}
+                          </span>
+                        ))}
+                      </Space>
+                    </Descriptions.Item>
+                  </Descriptions>
+                ))}
+              </Space>
+            </Card>
+          )}
+
+          {compareResult && compareResult.list.length > 1 && (
+            <Card size="small" title={t('backtest.compareEventDiff') || '审计事件差异'}>
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <Space wrap size={[8, 8]}>
+                  <Select
+                    allowClear
+                    style={{ width: 180 }}
+                    placeholder={t('backtest.auditStage')}
+                    value={compareEventStage}
+                    onChange={value => setCompareEventStage(value)}
+                    options={[
+                      { label: 'FETCH', value: 'FETCH' },
+                      { label: 'FILTER', value: 'FILTER' },
+                      { label: 'RISK', value: 'RISK' },
+                      { label: 'POSITION', value: 'POSITION' },
+                      { label: 'EXECUTION', value: 'EXECUTION' },
+                      { label: 'LIFECYCLE', value: 'LIFECYCLE' }
+                    ]}
+                  />
+                  <Select
+                    allowClear
+                    style={{ width: 180 }}
+                    placeholder={t('backtest.auditDecision')}
+                    value={compareEventDecision}
+                    onChange={value => setCompareEventDecision(value)}
+                    options={[
+                      { label: 'INFO', value: 'INFO' },
+                      { label: 'PASS', value: 'PASS' },
+                      { label: 'SKIP', value: 'SKIP' },
+                      { label: 'ERROR', value: 'ERROR' },
+                      { label: 'STOP', value: 'STOP' }
+                    ]}
+                  />
+                  <Input
+                    style={{ width: 220 }}
+                    placeholder={t('backtest.auditEventType')}
+                    value={compareEventType}
+                    onChange={event => setCompareEventType(event.target.value)}
+                  />
+                  <Button
+                    loading={compareEventDiffLoading}
+                    onClick={() => fetchCompareEventDiffs(compareTaskIds)}
+                  >
+                    {t('common.search')}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setCompareEventStage(undefined)
+                      setCompareEventDecision(undefined)
+                      setCompareEventType('')
+                      fetchCompareEventDiffs(compareTaskIds, {
+                        stage: undefined,
+                        decision: undefined,
+                        eventType: undefined
+                      })
+                    }}
+                  >
+                    {t('common.reset')}
+                  </Button>
+                  <Space size={4}>
+                    <Switch checked={compareEventOnlyDiff} onChange={setCompareEventOnlyDiff} />
+                    <span>{t('backtest.compareOnlyDiff') || '只看差异项'}</span>
+                  </Space>
+                </Space>
+
+                <Table
+                  rowKey="key"
+                  size="small"
+                  pagination={false}
+                  loading={compareEventDiffLoading}
+                  dataSource={compareEventRowsToDisplay}
+                  columns={compareEventColumns}
+                  locale={{
+                    emptyText: t('backtest.compareNoEventDiff') || '当前筛选下没有事件差异'
+                  }}
+                  scroll={isMobile ? { x: 1200 } : { x: 1600 }}
+                />
+              </Space>
+            </Card>
+          )}
+
+          <Table
+            rowKey={(record: BacktestCompareItemDto) => record.task.id}
+            size="small"
+            pagination={false}
+            dataSource={compareResult?.list || []}
+            columns={[
+              {
+                title: t('backtest.taskName'),
+                key: 'taskName',
+                render: (_: unknown, record: BacktestCompareItemDto) => record.task.taskName
+              },
+              {
+                title: t('backtest.leader'),
+                key: 'leaderName',
+                render: (_: unknown, record: BacktestCompareItemDto) => record.task.leaderName || '-'
+              },
+              {
+                title: t('backtest.status'),
+                key: 'status',
+                render: (_: unknown, record: BacktestCompareItemDto) => (
+                  <Tag color={getStatusColor(record.task.status)}>{getStatusText(record.task.status)}</Tag>
+                )
+              },
+              {
+                title: t('backtest.profitAmount'),
+                key: 'profitAmount',
+                render: (_: unknown, record: BacktestCompareItemDto) =>
+                  record.task.profitAmount ? formatUSDC(record.task.profitAmount) : '-'
+              },
+              {
+                title: t('backtest.profitRate'),
+                key: 'profitRate',
+                render: (_: unknown, record: BacktestCompareItemDto) =>
+                  record.task.profitRate ? `${record.task.profitRate}%` : '-'
+              },
+              {
+                title: t('backtest.totalTrades'),
+                key: 'totalTrades',
+                render: (_: unknown, record: BacktestCompareItemDto) => record.statistics.totalTrades ?? '-'
+              },
+              {
+                title: t('backtest.winRate'),
+                key: 'winRate',
+                render: (_: unknown, record: BacktestCompareItemDto) =>
+                  record.statistics.winRate ? `${record.statistics.winRate}%` : '-'
+              },
+              {
+                title: t('backtest.maxDrawdown'),
+                key: 'maxDrawdown',
+                render: (_: unknown, record: BacktestCompareItemDto) =>
+                  record.statistics.maxDrawdown ? formatUSDC(record.statistics.maxDrawdown) : '-'
+              },
+              {
+                title: t('backtest.compareConfigSummary'),
+                key: 'configSummary',
+                render: (_: unknown, record: BacktestCompareItemDto) => (
+                  <Space wrap size={[4, 4]}>
+                    {record.highlights.length
+                      ? record.highlights.map(item => <Tag key={`${record.task.id}-${item}`}>{item}</Tag>)
+                      : '-'}
+                  </Space>
+                )
+              }
+            ]}
+          />
+        </Space>
+      </Modal>
 
       {/* 重新测试 Modal */}
       <Modal
@@ -1210,6 +1821,13 @@ const BacktestList: React.FC = () => {
           setDetailAllTrades([])
           setDetailTradesPage(1)
           setDetailTradesTotal(0)
+          setDetailAuditEvents([])
+          setDetailAuditSummary(null)
+          setDetailAuditPage(1)
+          setDetailAuditTotal(0)
+          setDetailAuditStage(undefined)
+          setDetailAuditDecision(undefined)
+          setDetailAuditEventType('')
         }}
         footer={
           detailTask && detailTask.status === 'COMPLETED' && detailConfig ? (
@@ -1466,6 +2084,101 @@ const BacktestList: React.FC = () => {
                 <BacktestChart trades={detailAllTrades} />
               </Card>
             )}
+
+            <Card title={t('backtest.auditTrail')} size="small">
+              {detailAuditSummary && (
+                <Space wrap size={[8, 8]} style={{ marginBottom: 16 }}>
+                  <Tag>{t('backtest.auditTotalEvents')}: {detailAuditSummary.totalEvents}</Tag>
+                  <Tag color="success">{t('backtest.auditPassEvents')}: {detailAuditSummary.passEvents}</Tag>
+                  <Tag color="warning">{t('backtest.auditSkipEvents')}: {detailAuditSummary.skipEvents}</Tag>
+                  <Tag color="error">{t('backtest.auditErrorEvents')}: {detailAuditSummary.errorEvents}</Tag>
+                  <Tag color="magenta">{t('backtest.auditStopEvents')}: {detailAuditSummary.stopEvents}</Tag>
+                  <Tag>{t('backtest.auditLatestEventAt')}: {detailAuditSummary.latestEventAt ? new Date(detailAuditSummary.latestEventAt).toLocaleString() : '-'}</Tag>
+                </Space>
+              )}
+              <Space wrap size={[8, 8]} style={{ marginBottom: 16 }}>
+                <Select
+                  allowClear
+                  style={{ width: 180 }}
+                  placeholder={t('backtest.auditStage')}
+                  value={detailAuditStage}
+                  onChange={value => setDetailAuditStage(value)}
+                  options={[
+                    { label: 'FETCH', value: 'FETCH' },
+                    { label: 'FILTER', value: 'FILTER' },
+                    { label: 'RISK', value: 'RISK' },
+                    { label: 'POSITION', value: 'POSITION' },
+                    { label: 'EXECUTION', value: 'EXECUTION' },
+                    { label: 'LIFECYCLE', value: 'LIFECYCLE' }
+                  ]}
+                />
+                <Select
+                  allowClear
+                  style={{ width: 180 }}
+                  placeholder={t('backtest.auditDecision')}
+                  value={detailAuditDecision}
+                  onChange={value => setDetailAuditDecision(value)}
+                  options={[
+                    { label: 'INFO', value: 'INFO' },
+                    { label: 'PASS', value: 'PASS' },
+                    { label: 'SKIP', value: 'SKIP' },
+                    { label: 'ERROR', value: 'ERROR' },
+                    { label: 'STOP', value: 'STOP' }
+                  ]}
+                />
+                <Input
+                  style={{ width: 220 }}
+                  placeholder={t('backtest.auditEventType')}
+                  value={detailAuditEventType}
+                  onChange={event => setDetailAuditEventType(event.target.value)}
+                />
+                <Button
+                  onClick={() => {
+                    if (detailTask) {
+                      fetchDetailAuditEvents(detailTask.id, 1)
+                    }
+                  }}
+                >
+                  {t('common.search')}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setDetailAuditStage(undefined)
+                    setDetailAuditDecision(undefined)
+                    setDetailAuditEventType('')
+                    if (detailTask) {
+                      fetchDetailAuditEvents(detailTask.id, 1, {
+                        stage: undefined,
+                        decision: undefined,
+                        eventType: undefined
+                      })
+                    }
+                  }}
+                >
+                  {t('common.reset')}
+                </Button>
+              </Space>
+              <Table
+                columns={auditColumns}
+                dataSource={detailAuditEvents}
+                rowKey="id"
+                loading={detailAuditLoading}
+                pagination={{
+                  current: detailAuditPage,
+                  pageSize: detailAuditSize,
+                  total: detailAuditTotal,
+                  showSizeChanger: false,
+                  showTotal: (total) => `${t('common.total')} ${total} ${t('common.items')}`,
+                  onChange: (newPage) => {
+                    if (detailTask) {
+                      fetchDetailAuditEvents(detailTask.id, newPage)
+                    }
+                  }
+                }}
+                scroll={isMobile ? { x: 1000 } : { x: 1200 }}
+                size="small"
+              />
+            </Card>
 
             {/* 交易记录 */}
             <Card title={t('backtest.tradeRecords')} size="small">

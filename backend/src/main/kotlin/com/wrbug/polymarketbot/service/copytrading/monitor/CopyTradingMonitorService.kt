@@ -72,6 +72,8 @@ class CopyTradingMonitorService(
         
         if (enabledCopyTradings.isEmpty()) {
             activityWsService.start(emptyList())
+            onChainWsService.stop()
+            accountOnChainMonitorService.stop()
             return
         }
         
@@ -187,6 +189,7 @@ class CopyTradingMonitorService(
         // 停止所有监听
         activityWsService.stop()
         onChainWsService.stop()
+        accountOnChainMonitorService.stop()
         delay(1000)  // 等待1秒
         startMonitoring()
     }

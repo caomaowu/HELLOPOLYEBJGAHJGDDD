@@ -126,6 +126,10 @@ data class CopyTradingDeleteRequest(
     val copyTradingId: Long
 )
 
+data class CopyTradingAggregationSnapshotRequest(
+    val copyTradingId: Long? = null
+)
+
 /**
  * 查询钱包绑定的模板请求
  */

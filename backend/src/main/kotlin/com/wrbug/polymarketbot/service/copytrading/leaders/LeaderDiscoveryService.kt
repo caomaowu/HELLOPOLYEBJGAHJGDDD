@@ -7,8 +7,15 @@ import com.wrbug.polymarketbot.api.PositionResponse
 import com.wrbug.polymarketbot.api.UserActivityResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendResponse
+import com.wrbug.polymarketbot.dto.LeaderCandidatePoolBatchLabelUpdateRequest
+import com.wrbug.polymarketbot.dto.LeaderCandidatePoolBatchLabelUpdateResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolLabelUpdateRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolItemDto
+import com.wrbug.polymarketbot.dto.LeaderActivityHistoryByAddressRequest
+import com.wrbug.polymarketbot.dto.LeaderActivityHistoryBackfillRequest
+import com.wrbug.polymarketbot.dto.LeaderActivityHistoryBackfillResponse
+import com.wrbug.polymarketbot.dto.LeaderActivityHistoryByMarketRequest
+import com.wrbug.polymarketbot.dto.LeaderActivityHistoryResponse
 import com.wrbug.polymarketbot.dto.LeaderDiscoveredTraderDto
 import com.wrbug.polymarketbot.dto.LeaderDiscoveryMarketDto
 import com.wrbug.polymarketbot.dto.LeaderMarketTraderDto
@@ -80,7 +87,7 @@ class LeaderDiscoveryService(
             LeaderTraderScanResponse(
                 seedAddresses = seedAddresses,
                 seedMarketCount = seedMarkets.size,
-                list = traders
+                list = applyScanFilters(traders, normalizedRequest)
             )
         }
     }
@@ -106,6 +113,13 @@ class LeaderDiscoveryService(
                     excludeAddresses = seedAddresses,
                     excludeExistingLeaders = normalizedRequest.excludeExistingLeaders ?: true
                 ).map { it.address }
+            }.let { addresses ->
+                if (normalizedRequest.excludeBlacklistedTraders != false) {
+                    val blacklisted = traderCandidatePoolService.findBlacklistedAddresses(addresses)
+                    addresses.filterNot { it in blacklisted }
+                } else {
+                    addresses
+                }
             }
 
             val leaderMap = leaderRepository.findAll().associateBy { normalizeAddress(it.leaderAddress) }
@@ -137,9 +151,9 @@ class LeaderDiscoveryService(
             LeaderCandidateRecommendResponse(
                 seedAddresses = seedAddresses,
                 list = if (normalizedRequest.lowRiskOnly == true) {
-                    recommendations.filter { it.lowRisk }
+                    applyRecommendationFilters(recommendations.filter { it.lowRisk }, normalizedRequest)
                 } else {
-                    recommendations
+                    applyRecommendationFilters(recommendations, normalizedRequest)
                 }
             )
         }
@@ -148,9 +162,12 @@ class LeaderDiscoveryService(
     fun lookupMarketTraders(request: LeaderMarketTraderLookupRequest): Result<LeaderMarketTraderLookupResponse> = runBlocking {
         runCatching {
             val normalizedRequest = normalizeMarketLookupRequest(request)
-            traderCandidatePoolService.getMarketLookupFromPool(normalizedRequest)?.let { return@runCatching it }
+            traderCandidatePoolService.getMarketLookupFromPool(normalizedRequest)?.let {
+                return@runCatching applyMarketLookupFilters(it, normalizedRequest)
+            }
             val marketMap = marketService.getMarkets(normalizedRequest.marketIds)
             val existingLeaderMap = leaderRepository.findAll().associateBy { normalizeAddress(it.leaderAddress) }
+            val cutoffTime = System.currentTimeMillis() - (normalizedRequest.days ?: 7) * 24L * 60 * 60 * 1000
 
             val items = coroutineScope {
                 normalizedRequest.marketIds.map { marketId ->
@@ -164,8 +181,14 @@ class LeaderDiscoveryService(
                             }
                             grouped.getOrPut(address) { mutableListOf() }.add(trade)
                         }
+                        val blacklistedAddresses = if (normalizedRequest.excludeBlacklistedTraders != false) {
+                            traderCandidatePoolService.findBlacklistedAddresses(grouped.keys)
+                        } else {
+                            emptySet()
+                        }
 
                         val traders = grouped.entries
+                            .filter { (address, _) -> address !in blacklistedAddresses }
                             .map { (address, trades) ->
                                 val leader = existingLeaderMap[address]
                                 LeaderMarketTraderDto(
@@ -184,7 +207,9 @@ class LeaderDiscoveryService(
                                 )
                             }
                             .filter { it.tradeCount >= (normalizedRequest.minTradesPerTrader ?: 1) }
+                            .filter { (it.lastSeenAt ?: 0L) >= cutoffTime }
                             .sortedWith(compareByDescending<LeaderMarketTraderDto> { it.tradeCount }.thenByDescending { it.totalVolume.toSafeBigDecimal() })
+                            .take(normalizedRequest.limitPerMarket ?: 20)
 
                         LeaderMarketTraderLookupItemDto(
                             marketId = marketId,
@@ -197,7 +222,7 @@ class LeaderDiscoveryService(
                 }.awaitAll()
             }
 
-            LeaderMarketTraderLookupResponse(source = "data-api", list = items)
+            applyMarketLookupFilters(LeaderMarketTraderLookupResponse(source = "data-api", list = items), normalizedRequest)
         }
     }
 
@@ -213,9 +238,65 @@ class LeaderDiscoveryService(
         }
     }
 
+    fun updateCandidatePoolLabelsBatch(request: LeaderCandidatePoolBatchLabelUpdateRequest): Result<LeaderCandidatePoolBatchLabelUpdateResponse> {
+        return runCatching {
+            traderCandidatePoolService.updateCandidateLabelsBatch(request)
+        }
+    }
+
     fun getCandidateScoreHistory(request: LeaderCandidateScoreHistoryRequest): Result<LeaderCandidateScoreHistoryResponse> {
         return runCatching {
             traderCandidatePoolService.getCandidateScoreHistory(request)
+        }
+    }
+
+    fun getActivityHistoryByAddress(request: LeaderActivityHistoryByAddressRequest): Result<LeaderActivityHistoryResponse> {
+        return runCatching {
+            traderCandidatePoolService.getActivityHistoryByAddress(request)
+        }
+    }
+
+    fun getActivityHistoryByMarket(request: LeaderActivityHistoryByMarketRequest): Result<LeaderActivityHistoryResponse> {
+        return runCatching {
+            traderCandidatePoolService.getActivityHistoryByMarket(request)
+        }
+    }
+
+    fun backfillActivityHistory(request: LeaderActivityHistoryBackfillRequest): Result<LeaderActivityHistoryBackfillResponse> = runBlocking {
+        runCatching {
+            val leaderIds = request.leaderIds.orEmpty().distinct()
+            val seedLeaders = if (leaderIds.isEmpty()) emptyList() else resolveSeedLeaders(leaderIds)
+            val addresses = resolveOptionalSeedAddresses(seedLeaders, request.addresses)
+            require(addresses.isNotEmpty()) { "请至少提供一个 Leader 或地址" }
+
+            val days = (request.days ?: 7).coerceIn(1, 90)
+            val maxRecordsPerAddress = (request.maxRecordsPerAddress ?: 500).coerceIn(1, 2000)
+            val startSeconds = (System.currentTimeMillis() - days * 24L * 60 * 60 * 1000) / 1000
+
+            val items = addresses.map { address ->
+                val activities = fetchUserActivitiesInternal(
+                    address = address,
+                    startSeconds = startSeconds,
+                    endSeconds = null,
+                    maxRecords = maxRecordsPerAddress,
+                    useCache = false
+                )
+                traderCandidatePoolService.backfillActivityHistory(
+                    address = address,
+                    activities = activities,
+                    source = "data-api-backfill"
+                )
+            }
+
+            LeaderActivityHistoryBackfillResponse(
+                days = days,
+                maxRecordsPerAddress = maxRecordsPerAddress,
+                totalAddresses = items.size,
+                totalFetchedTrades = items.sumOf { it.fetchedTrades },
+                totalInsertedEvents = items.sumOf { it.insertedEvents },
+                totalSkippedEvents = items.sumOf { it.skippedEvents },
+                list = items
+            )
         }
     }
 
@@ -339,11 +420,29 @@ class LeaderDiscoveryService(
     }
 
     private suspend fun fetchUserActivities(address: String, days: Int, maxRecords: Int): List<UserActivityResponse> {
-        val normalizedAddress = normalizeAddress(address)
-        val cacheKey = "$normalizedAddress:$days:$maxRecords"
-        activityCache.getIfPresent(cacheKey)?.let { return it }
-
         val start = (System.currentTimeMillis() - days * 24L * 60 * 60 * 1000) / 1000
+        return fetchUserActivitiesInternal(
+            address = address,
+            startSeconds = start,
+            endSeconds = null,
+            maxRecords = maxRecords,
+            useCache = true
+        )
+    }
+
+    private suspend fun fetchUserActivitiesInternal(
+        address: String,
+        startSeconds: Long,
+        endSeconds: Long?,
+        maxRecords: Int,
+        useCache: Boolean
+    ): List<UserActivityResponse> {
+        val normalizedAddress = normalizeAddress(address)
+        val cacheKey = "$normalizedAddress:$startSeconds:${endSeconds ?: "open"}:$maxRecords"
+        if (useCache) {
+            activityCache.getIfPresent(cacheKey)?.let { return it }
+        }
+
         val dataApi = retrofitFactory.createDataApi()
         val results = mutableListOf<UserActivityResponse>()
         var offset = 0
@@ -355,7 +454,8 @@ class LeaderDiscoveryService(
                 limit = pageSize,
                 offset = offset,
                 type = listOf("TRADE"),
-                start = start,
+                start = startSeconds,
+                end = endSeconds,
                 sortBy = "TIMESTAMP",
                 sortDirection = "DESC"
             )
@@ -372,7 +472,9 @@ class LeaderDiscoveryService(
         val deduplicated = results.distinctBy {
             "${it.transactionHash ?: ""}_${it.timestamp}_${it.conditionId}_${it.side ?: ""}_${it.usdcSize ?: 0.0}"
         }
-        activityCache.put(cacheKey, deduplicated)
+        if (useCache) {
+            activityCache.put(cacheKey, deduplicated)
+        }
         return deduplicated
     }
 
@@ -442,7 +544,10 @@ class LeaderDiscoveryService(
             days = (request.days ?: 7).coerceIn(1, 30),
             maxSeedMarkets = (request.maxSeedMarkets ?: 20).coerceIn(1, 50),
             marketTradeLimit = (request.marketTradeLimit ?: 120).coerceIn(20, 200),
-            traderLimit = (request.traderLimit ?: 30).coerceIn(1, 100)
+            traderLimit = (request.traderLimit ?: 30).coerceIn(1, 100),
+            includeTags = normalizeTags(request.includeTags),
+            excludeTags = normalizeTags(request.excludeTags),
+            excludeBlacklistedTraders = request.excludeBlacklistedTraders ?: true
         )
     }
 
@@ -456,7 +561,10 @@ class LeaderDiscoveryService(
             maxOpenPositions = (request.maxOpenPositions ?: 8).coerceIn(1, 50),
             maxMarketConcentrationRate = (request.maxMarketConcentrationRate ?: 0.45).coerceIn(0.05, 1.0),
             maxEstimatedDrawdownRate = (request.maxEstimatedDrawdownRate ?: 0.18).coerceIn(0.01, 1.0),
-            maxRiskScore = (request.maxRiskScore ?: 45).coerceIn(0, 100)
+            maxRiskScore = (request.maxRiskScore ?: 45).coerceIn(0, 100),
+            includeTags = normalizeTags(request.includeTags),
+            excludeTags = normalizeTags(request.excludeTags),
+            excludeBlacklistedTraders = request.excludeBlacklistedTraders ?: true
         )
     }
 
@@ -467,8 +575,105 @@ class LeaderDiscoveryService(
             marketIds = marketIds,
             days = (request.days ?: 7).coerceIn(1, 30),
             limitPerMarket = (request.limitPerMarket ?: 20).coerceIn(1, 100),
-            minTradesPerTrader = (request.minTradesPerTrader ?: 1).coerceIn(1, 50)
+            minTradesPerTrader = (request.minTradesPerTrader ?: 1).coerceIn(1, 50),
+            includeTags = normalizeTags(request.includeTags),
+            excludeTags = normalizeTags(request.excludeTags),
+            excludeBlacklistedTraders = request.excludeBlacklistedTraders ?: true
         )
+    }
+
+    private fun applyScanFilters(
+        traders: List<LeaderDiscoveredTraderDto>,
+        request: LeaderTraderScanRequest
+    ): List<LeaderDiscoveredTraderDto> {
+        val labelMap = traderCandidatePoolService.getCandidateLabelSnapshots(traders.map { it.address })
+        return traders
+            .map { item ->
+                val snapshot = labelMap[item.address]
+                item.copy(
+                    displayName = snapshot?.displayName ?: item.displayName,
+                    profileImage = snapshot?.profileImage ?: item.profileImage,
+                    favorite = snapshot?.favorite ?: false,
+                    blacklisted = snapshot?.blacklisted ?: false,
+                    manualNote = snapshot?.manualNote,
+                    manualTags = snapshot?.manualTags ?: emptyList()
+                )
+            }
+            .filter { matchesDiscoveryFilters(it.favorite, it.blacklisted, it.manualTags, request.favoriteOnly, request.excludeBlacklistedTraders, request.includeTags, request.excludeTags) }
+    }
+
+    private fun applyRecommendationFilters(
+        recommendations: List<com.wrbug.polymarketbot.dto.LeaderCandidateRecommendationDto>,
+        request: LeaderCandidateRecommendRequest
+    ): List<com.wrbug.polymarketbot.dto.LeaderCandidateRecommendationDto> {
+        val labelMap = traderCandidatePoolService.getCandidateLabelSnapshots(recommendations.map { it.address })
+        return recommendations
+            .map { item ->
+                val snapshot = labelMap[item.address]
+                item.copy(
+                    displayName = snapshot?.displayName ?: item.displayName,
+                    profileImage = snapshot?.profileImage ?: item.profileImage,
+                    favorite = snapshot?.favorite ?: false,
+                    blacklisted = snapshot?.blacklisted ?: false,
+                    manualNote = snapshot?.manualNote,
+                    manualTags = snapshot?.manualTags ?: emptyList()
+                )
+            }
+            .filter { matchesDiscoveryFilters(it.favorite, it.blacklisted, it.manualTags, request.favoriteOnly, request.excludeBlacklistedTraders, request.includeTags, request.excludeTags) }
+    }
+
+    private fun applyMarketLookupFilters(
+        response: LeaderMarketTraderLookupResponse,
+        request: LeaderMarketTraderLookupRequest
+    ): LeaderMarketTraderLookupResponse {
+        val addresses = response.list.flatMap { it.list }.map { it.address }
+        val labelMap = traderCandidatePoolService.getCandidateLabelSnapshots(addresses)
+        return response.copy(
+            list = response.list.map { item ->
+                val traders = item.list
+                    .map { trader ->
+                        val snapshot = labelMap[trader.address]
+                        trader.copy(
+                            displayName = snapshot?.displayName ?: trader.displayName,
+                            favorite = snapshot?.favorite ?: false,
+                            blacklisted = snapshot?.blacklisted ?: false,
+                            manualNote = snapshot?.manualNote,
+                            manualTags = snapshot?.manualTags ?: emptyList()
+                        )
+                    }
+                    .filter { matchesDiscoveryFilters(it.favorite, it.blacklisted, it.manualTags, request.favoriteOnly, request.excludeBlacklistedTraders, request.includeTags, request.excludeTags) }
+                item.copy(
+                    traderCount = traders.size,
+                    list = traders
+                )
+            }
+        )
+    }
+
+    private fun matchesDiscoveryFilters(
+        favorite: Boolean,
+        blacklisted: Boolean,
+        manualTags: List<String>,
+        favoriteOnly: Boolean?,
+        excludeBlacklistedTraders: Boolean?,
+        includeTags: List<String>?,
+        excludeTags: List<String>?
+    ): Boolean {
+        if (excludeBlacklistedTraders != false && blacklisted) return false
+        if (favoriteOnly == true && !favorite) return false
+        val tagSet = manualTags.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+        val includeTagSet = includeTags.orEmpty().map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+        val excludeTagSet = excludeTags.orEmpty().map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+        if (includeTagSet.isNotEmpty() && includeTagSet.none { it in tagSet }) return false
+        if (excludeTagSet.isNotEmpty() && excludeTagSet.any { it in tagSet }) return false
+        return true
+    }
+
+    private fun normalizeTags(tags: List<String>?): List<String>? {
+        val normalized = tags.orEmpty()
+            .mapNotNull { it.trim().takeIf(String::isNotBlank) }
+            .distinct()
+        return normalized.ifEmpty { null }
     }
 
     private fun resolveDisplayName(activities: List<UserActivityResponse>, leader: Leader?): String? {

@@ -54,8 +54,8 @@ class AccountOnChainMonitorService(
             return
         }
         
-        // 更新账户列表
-        monitoredAccounts.clear()
+        // 全量重建监听，确保旧账户订阅被正确移除
+        stop()
         accounts.forEach { account ->
             addAccount(account)
         }

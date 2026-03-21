@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.controller.copytrading.configs
 
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
+import com.wrbug.polymarketbot.service.copytrading.statistics.CopyOrderTrackingService
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingService
 import com.wrbug.polymarketbot.service.copytrading.configs.FilteredOrderService
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventService
@@ -19,6 +20,7 @@ class CopyTradingController(
     private val copyTradingService: CopyTradingService,
     private val filteredOrderService: FilteredOrderService,
     private val executionEventService: CopyTradingExecutionEventService,
+    private val copyOrderTrackingService: CopyOrderTrackingService,
     private val messageSource: MessageSource
 ) {
     
@@ -235,6 +237,26 @@ class CopyTradingController(
             ResponseEntity.ok(ApiResponse.success(response))
         } catch (e: Exception) {
             logger.error("查询执行事件列表异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询小额聚合缓冲快照
+     */
+    @PostMapping("/aggregation-snapshot")
+    fun getAggregationSnapshot(@RequestBody request: CopyTradingAggregationSnapshotRequest): ResponseEntity<ApiResponse<Any>> {
+        return try {
+            if (request.copyTradingId != null && request.copyTradingId <= 0) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_COPY_TRADING_ID_INVALID, messageSource = messageSource))
+            }
+            ResponseEntity.ok(
+                ApiResponse.success(
+                    copyOrderTrackingService.getSmallOrderAggregationDiagnostics(request.copyTradingId)
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("查询小额聚合缓冲快照异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
         }
     }

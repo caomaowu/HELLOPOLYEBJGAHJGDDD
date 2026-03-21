@@ -72,33 +72,47 @@ git clone https://github.com/WrBug/PolyHermes.git
 cd PolyHermes
 ```
 
-2. **配置数据库**
+2. **配置环境变量**
 
-创建 MySQL 数据库：
+使用初始化脚本自动配置（推荐）：
 
-```sql
-CREATE DATABASE polyhermes CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+**Windows:**
+```powershell
+cp .env.example .env
+# 编辑 .env，填入数据库密码
+.\init-dev-env.ps1
 ```
 
-3. **配置环境变量**
-
-编辑 `backend/src/main/resources/application.properties` 或使用环境变量：
-
-```properties
-# 数据库配置
-spring.datasource.url=jdbc:mysql://localhost:3306/polyhermes?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4
-spring.datasource.username=${DB_USERNAME:root}
-spring.datasource.password=${DB_PASSWORD:password}
-
-# 服务器端口
-server.port=${SERVER_PORT:8000}
-
-# JWT 密钥
-jwt.secret=${JWT_SECRET:change-me-in-production}
-
-# 加密密钥（用于加密存储私钥和 API Key）
-crypto.secret.key=${CRYPTO_SECRET_KEY:change-me-in-production}
+**Linux:**
+```bash
+cp .env.example .env
+# 编辑 .env，填入数据库密码
+chmod +x init-dev-env.sh
+./init-dev-env.sh
 ```
+
+脚本会自动：
+- 检查 MySQL、JDK、Node.js 环境
+- 创建数据库（如果不存在）
+- 更新后端配置文件
+- 创建前端环境变量文件
+
+> 手动配置方式：编辑 `backend/src/main/resources/application.properties` 或使用环境变量：
+> ```properties
+> # 数据库配置
+> spring.datasource.url=jdbc:mysql://localhost:3306/polyhermes?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4
+> spring.datasource.username=${DB_USERNAME:root}
+> spring.datasource.password=${DB_PASSWORD:password}
+>
+> # 服务器端口
+> server.port=${SERVER_PORT:8000}
+>
+> # JWT 密钥
+> jwt.secret=${JWT_SECRET:change-me-in-production}
+>
+> # 加密密钥（用于加密存储私钥和 API Key）
+> crypto.secret.key=${CRYPTO_SECRET_KEY:change-me-in-production}
+> ```
 
 4. **启动后端服务**
 
@@ -118,16 +132,13 @@ cd frontend
 npm install
 ```
 
-2. **配置环境变量（可选）**
+2. **启动开发服务器**
 
-创建 `.env` 文件：
-
-```env
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
-```
-
-3. **启动开发服务器**
+> 注意：前端环境变量文件（.env）已由初始化脚本自动创建。如需修改：
+> ```env
+> VITE_API_URL=http://localhost:8000
+> VITE_WS_URL=ws://localhost:8000
+> ```
 
 ```bash
 npm run dev

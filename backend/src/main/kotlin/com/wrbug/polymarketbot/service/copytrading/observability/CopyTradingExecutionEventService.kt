@@ -92,6 +92,7 @@ class CopyTradingExecutionEventService(
             copyTradingId = request.copyTradingId,
             eventType = request.eventType,
             stage = request.stage,
+            source = request.source,
             status = request.status,
             startTime = request.startTime,
             endTime = request.endTime,

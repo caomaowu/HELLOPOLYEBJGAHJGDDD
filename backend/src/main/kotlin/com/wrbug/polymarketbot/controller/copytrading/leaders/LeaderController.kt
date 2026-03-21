@@ -318,6 +318,31 @@ class LeaderController(
     }
 
     /**
+     * 批量更新候选池人工标注
+     */
+    @PostMapping("/discovery/pool/update-labels-batch")
+    fun updateCandidatePoolLabelsBatch(@RequestBody request: LeaderCandidatePoolBatchLabelUpdateRequest): ResponseEntity<ApiResponse<LeaderCandidatePoolBatchLabelUpdateResponse>> {
+        return try {
+            val result = leaderDiscoveryService.updateCandidatePoolLabelsBatch(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("批量更新候选池人工标注失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("批量更新候选池人工标注异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
      * 查询候选评分历史
      */
     @PostMapping("/discovery/pool/history")
@@ -338,6 +363,81 @@ class LeaderController(
             )
         } catch (e: Exception) {
             logger.error("查询候选评分历史异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 按地址查询 discovery activity 历史事件
+     */
+    @PostMapping("/discovery/history/address")
+    fun getActivityHistoryByAddress(@RequestBody request: LeaderActivityHistoryByAddressRequest): ResponseEntity<ApiResponse<LeaderActivityHistoryResponse>> {
+        return try {
+            val result = leaderDiscoveryService.getActivityHistoryByAddress(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("按地址查询 activity 历史事件失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("按地址查询 activity 历史事件异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 按市场查询 discovery activity 历史事件
+     */
+    @PostMapping("/discovery/history/market")
+    fun getActivityHistoryByMarket(@RequestBody request: LeaderActivityHistoryByMarketRequest): ResponseEntity<ApiResponse<LeaderActivityHistoryResponse>> {
+        return try {
+            val result = leaderDiscoveryService.getActivityHistoryByMarket(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("按市场查询 activity 历史事件失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("按市场查询 activity 历史事件异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 手动回填 discovery activity 历史事件
+     */
+    @PostMapping("/discovery/history/backfill")
+    fun backfillActivityHistory(@RequestBody request: LeaderActivityHistoryBackfillRequest): ResponseEntity<ApiResponse<LeaderActivityHistoryBackfillResponse>> {
+        return try {
+            val result = leaderDiscoveryService.backfillActivityHistory(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("回填 activity 历史事件失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("回填 activity 历史事件异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
         }
     }

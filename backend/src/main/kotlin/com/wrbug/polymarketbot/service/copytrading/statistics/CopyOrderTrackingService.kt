@@ -36,7 +36,10 @@ import java.math.RoundingMode
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationBatch
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationBufferStatus
 import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationRequest
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationReleaseReason
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationSnapshot
 import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationService
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingRejectionType
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventRecordRequest
@@ -121,7 +124,8 @@ open class CopyOrderTrackingService(
         val source: String,
         val representativeTradeId: String,
         val trades: List<BuyTradeSegment>,
-        val allowAggregation: Boolean
+        val allowAggregation: Boolean,
+        val aggregationReleaseReason: SmallOrderAggregationReleaseReason? = null
     )
 
     /**
@@ -181,16 +185,22 @@ open class CopyOrderTrackingService(
         try {
             runBlocking {
                 releaseBufferedBuyAggregations()
+                releaseBufferedSellAggregations()
             }
         } finally {
             aggregationFlushRunning.set(false)
         }
     }
 
+    fun getSmallOrderAggregationDiagnostics(copyTradingId: Long? = null): SmallOrderAggregationSnapshot {
+        return smallOrderAggregationService.getSnapshot(copyTradingId)
+    }
+
     /**
      * 处理交易事件（WebSocket 或轮询）
      * 根据交易方向调用相应的处理方法
-     * 使用 Mutex 保证线程安全（单实例部署）
+     * 使用 Mutex 保证线程安全（单实例部署）。
+     * 小额聚合缓冲为进程内内存态，重启会丢失待释放批次；多实例下不保证严格聚合一致性。
      */
     @Transactional
     suspend fun processTrade(leaderId: Long, trade: TradeResponse, source: String): Result<Unit> {
@@ -372,7 +382,10 @@ open class CopyOrderTrackingService(
         )
     }
 
-    private fun buildAggregatedBuyPayload(batch: SmallOrderAggregationBatch): BuyExecutionPayload {
+    private fun buildAggregatedBuyPayload(
+        batch: SmallOrderAggregationBatch,
+        releaseReason: SmallOrderAggregationReleaseReason
+    ): BuyExecutionPayload {
         return BuyExecutionPayload(
             tokenId = batch.tokenId,
             marketId = batch.marketId,
@@ -393,26 +406,41 @@ open class CopyOrderTrackingService(
                     source = trade.source
                 )
             },
-            allowAggregation = false
+            allowAggregation = false,
+            aggregationReleaseReason = releaseReason
         )
     }
 
     private suspend fun releaseBufferedBuyAggregations() {
-        val enabledCopyTradings = copyTradingRepository.findAll()
-            .filter { it.id != null && it.smallOrderAggregationEnabled }
+        val allCopyTradings = copyTradingRepository.findAll()
+            .filter { it.id != null }
+        val activeAggregationIds = allCopyTradings
+            .asSequence()
+            .filter { it.enabled && it.smallOrderAggregationEnabled }
+            .map { it.id!! }
+            .toSet()
+        val clearedGroups = smallOrderAggregationService.clearInactive(activeAggregationIds)
+        if (clearedGroups > 0) {
+            logger.info("已清理 {} 个失活的小额 BUY 聚合缓冲组", clearedGroups)
+        }
+
+        val enabledCopyTradings = allCopyTradings
+            .filter { it.enabled && it.smallOrderAggregationEnabled }
         if (enabledCopyTradings.isEmpty()) {
             return
         }
 
         val readyBatches = smallOrderAggregationService.releaseExpired(
-            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds }
+            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
+            side = "BUY"
         )
         if (readyBatches.isEmpty()) {
             return
         }
 
         logger.info("检测到 {} 个到期的小额 BUY 聚合组，开始释放执行", readyBatches.size)
-        for (batch in readyBatches) {
+        for (release in readyBatches) {
+            val batch = release.batch
             try {
                 val copyTrading = copyTradingRepository.findById(batch.copyTradingId).orElse(null)
                 if (copyTrading == null) {
@@ -425,15 +453,15 @@ open class CopyOrderTrackingService(
                     continue
                 }
 
-                val payload = buildAggregatedBuyPayload(batch)
+                val payload = buildAggregatedBuyPayload(batch, release.reason)
                 recordExecutionEvent(
                     copyTrading = copyTrading,
                     account = account,
                     payload = payload,
                     stage = "AGGREGATION",
-                    eventType = "AGGREGATION_RELEASED",
+                    eventType = aggregationReleaseEventType(release.reason),
                     status = "info",
-                    message = "聚合窗口到期，开始释放执行",
+                    message = aggregationReleaseMessage(release.reason),
                     aggregationKey = batch.key,
                     aggregationTradeCount = batch.trades.size
                 )
@@ -464,6 +492,202 @@ open class CopyOrderTrackingService(
             } catch (e: Exception) {
                 logger.error("释放小额 BUY 聚合组失败: key=${batch.key}, copyTradingId=${batch.copyTradingId}", e)
             }
+        }
+    }
+
+    private suspend fun tryReleaseBufferedBuyAggregation(
+        copyTrading: CopyTrading,
+        account: Account,
+        batch: SmallOrderAggregationBatch
+    ): Result<Unit>? {
+        if (batch.trades.size <= 1) {
+            return null
+        }
+        val sizingResult = sizingService.calculateRealTimeBuySizing(
+            copyTrading = copyTrading,
+            leaderOrderAmount = batch.totalLeaderOrderAmount,
+            tradePrice = batch.averageTradePrice,
+            marketId = batch.marketId,
+            outcomeIndex = batch.outcomeIndex
+        )
+        if (sizingResult.status != SizingStatus.EXECUTABLE) {
+            return null
+        }
+
+        val release = smallOrderAggregationService.release(
+            key = batch.key,
+            reason = SmallOrderAggregationReleaseReason.THRESHOLD_REACHED
+        ) ?: return null
+        val payload = buildAggregatedBuyPayload(release.batch, release.reason)
+        recordExecutionEvent(
+            copyTrading = copyTrading,
+            account = account,
+            payload = payload,
+            stage = "AGGREGATION",
+            eventType = aggregationReleaseEventType(release.reason),
+            status = "info",
+            message = aggregationReleaseMessage(release.reason),
+            aggregationKey = release.batch.key,
+            aggregationTradeCount = release.batch.trades.size,
+            calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
+        )
+        return executeBuyForCopyTrading(copyTrading, account, payload)
+    }
+
+    private suspend fun releaseBufferedSellAggregations() {
+        val enabledCopyTradings = copyTradingRepository.findAll()
+            .filter { it.id != null && it.enabled && it.smallOrderAggregationEnabled }
+        if (enabledCopyTradings.isEmpty()) {
+            return
+        }
+
+        val readyBatches = smallOrderAggregationService.releaseExpired(
+            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
+            side = "SELL"
+        )
+        if (readyBatches.isEmpty()) {
+            return
+        }
+
+        logger.info("检测到 {} 个到期的小额 SELL 聚合组，开始释放执行", readyBatches.size)
+        for (release in readyBatches) {
+            val batch = release.batch
+            try {
+                val copyTrading = copyTradingRepository.findById(batch.copyTradingId).orElse(null)
+                if (copyTrading == null) {
+                    logger.warn("SELL 聚合组对应的跟单配置不存在，直接丢弃: key={}, copyTradingId={}", batch.key, batch.copyTradingId)
+                    continue
+                }
+                val account = accountRepository.findById(copyTrading.accountId).orElse(null)
+                if (account == null) {
+                    logger.warn("SELL 聚合组对应的账户不存在，直接丢弃: key={}, accountId={}", batch.key, copyTrading.accountId)
+                    continue
+                }
+
+                val aggregatedTrade = buildAggregatedSellTrade(batch)
+                recordTradeExecutionEvent(
+                    copyTrading = copyTrading,
+                    accountId = account.id ?: copyTrading.accountId,
+                    trade = aggregatedTrade,
+                    stage = "AGGREGATION",
+                    eventType = aggregationReleaseEventType(release.reason),
+                    status = "info",
+                    message = aggregationReleaseMessage(release.reason, "SELL"),
+                    aggregationKey = batch.key,
+                    aggregationTradeCount = batch.trades.size,
+                    calculatedQuantity = batch.totalLeaderQuantity
+                )
+                if (!copyTrading.enabled || !copyTrading.smallOrderAggregationEnabled) {
+                    recordTradeExecutionEvent(
+                        copyTrading = copyTrading,
+                        accountId = account.id ?: copyTrading.accountId,
+                        trade = aggregatedTrade,
+                        stage = "AGGREGATION",
+                        eventType = "AGGREGATION_DISCARDED",
+                        status = "warning",
+                        message = "聚合窗口到期前配置已禁用，放弃执行",
+                        aggregationKey = batch.key,
+                        aggregationTradeCount = batch.trades.size,
+                        calculatedQuantity = batch.totalLeaderQuantity
+                    )
+                    continue
+                }
+
+                matchSellOrder(
+                    copyTrading = copyTrading,
+                    leaderSellTrade = aggregatedTrade,
+                    allowAggregation = false,
+                    aggregationReleaseReason = release.reason,
+                    aggregationKey = batch.key,
+                    aggregationTradeCount = batch.trades.size
+                )
+            } catch (e: Exception) {
+                logger.error("释放小额 SELL 聚合组失败: key=${batch.key}, copyTradingId=${batch.copyTradingId}", e)
+            }
+        }
+    }
+
+    private suspend fun tryReleaseBufferedSellAggregation(
+        copyTrading: CopyTrading,
+        account: Account,
+        batch: SmallOrderAggregationBatch
+    ) {
+        if (batch.trades.size <= 1 || batch.outcomeIndex == null) {
+            return
+        }
+
+        val unmatchedOrders = copyOrderTrackingRepository.findUnmatchedBuyOrdersByOutcomeIndex(
+            copyTrading.id!!,
+            batch.marketId,
+            batch.outcomeIndex
+        )
+        if (unmatchedOrders.isEmpty()) {
+            return
+        }
+        val previewNeedMatch = calculateSellQuantityByActualRatio(
+            unmatchedOrders = unmatchedOrders,
+            leaderSellQuantity = batch.totalLeaderQuantity,
+            copyTrading = copyTrading
+        )
+        if (previewNeedMatch.lt(BigDecimal.ONE)) {
+            return
+        }
+
+        val release = smallOrderAggregationService.release(
+            key = batch.key,
+            reason = SmallOrderAggregationReleaseReason.THRESHOLD_REACHED
+        ) ?: return
+
+        val aggregatedTrade = buildAggregatedSellTrade(release.batch)
+        recordTradeExecutionEvent(
+            copyTrading = copyTrading,
+            accountId = account.id ?: copyTrading.accountId,
+            trade = aggregatedTrade,
+            stage = "AGGREGATION",
+            eventType = aggregationReleaseEventType(release.reason),
+            status = "info",
+            message = aggregationReleaseMessage(release.reason, "SELL"),
+            aggregationKey = release.batch.key,
+            aggregationTradeCount = release.batch.trades.size,
+            calculatedQuantity = release.batch.totalLeaderQuantity
+        )
+
+        matchSellOrder(
+            copyTrading = copyTrading,
+            leaderSellTrade = aggregatedTrade,
+            allowAggregation = false,
+            aggregationReleaseReason = release.reason,
+            aggregationKey = release.batch.key,
+            aggregationTradeCount = release.batch.trades.size
+        )
+    }
+
+    private fun buildAggregatedSellTrade(batch: SmallOrderAggregationBatch): TradeResponse {
+        return TradeResponse(
+            id = batch.representativeTradeId,
+            market = batch.marketId,
+            side = "SELL",
+            price = batch.averageTradePrice.stripTrailingZeros().toPlainString(),
+            size = batch.totalLeaderQuantity.stripTrailingZeros().toPlainString(),
+            timestamp = System.currentTimeMillis().toString(),
+            user = null,
+            outcomeIndex = batch.outcomeIndex,
+            outcome = batch.representativeOutcome,
+            tokenId = batch.tokenId
+        )
+    }
+
+    private fun aggregationReleaseEventType(reason: SmallOrderAggregationReleaseReason): String {
+        return when (reason) {
+            SmallOrderAggregationReleaseReason.THRESHOLD_REACHED -> "AGGREGATION_THRESHOLD_REACHED"
+            SmallOrderAggregationReleaseReason.WINDOW_EXPIRED -> "AGGREGATION_WINDOW_EXPIRED"
+        }
+    }
+
+    private fun aggregationReleaseMessage(reason: SmallOrderAggregationReleaseReason, side: String = "BUY"): String {
+        return when (reason) {
+            SmallOrderAggregationReleaseReason.THRESHOLD_REACHED -> "聚合累计达到最小执行阈值，立即释放 ${side.uppercase()} 执行"
+            SmallOrderAggregationReleaseReason.WINDOW_EXPIRED -> "聚合窗口到期，开始释放 ${side.uppercase()} 执行"
         }
     }
 
@@ -582,11 +806,12 @@ open class CopyOrderTrackingService(
                 copyTrading.smallOrderAggregationEnabled &&
                 sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
             ) {
-                val batch = smallOrderAggregationService.bufferTrade(
+                val bufferResult = smallOrderAggregationService.bufferTrade(
                     SmallOrderAggregationRequest(
                         copyTradingId = copyTrading.id!!,
                         accountId = copyTrading.accountId,
                         leaderId = copyTrading.leaderId,
+                        side = "BUY",
                         tokenId = payload.tokenId,
                         marketId = payload.marketId,
                         outcomeIndex = payload.outcomeIndex,
@@ -598,21 +823,38 @@ open class CopyOrderTrackingService(
                         source = payload.source
                     )
                 )
+                val batch = bufferResult.batch
                 recordExecutionEvent(
                     copyTrading = copyTrading,
                     account = account,
                     payload = payload,
                     stage = "AGGREGATION",
-                    eventType = "AGGREGATION_BUFFERED",
+                    eventType = if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                        "AGGREGATION_DUPLICATE_IGNORED"
+                    } else {
+                        "AGGREGATION_BUFFERED"
+                    },
                     status = "info",
-                    message = "订单金额低于最小下单限制，已进入聚合等待",
+                    message = if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                        "重复 leaderTradeId 已忽略，保留现有聚合缓冲"
+                    } else {
+                        "订单金额低于最小下单限制，已进入聚合等待"
+                    },
                     aggregationKey = batch.key,
                     aggregationTradeCount = batch.trades.size
                 )
+                if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                    return Result.success(Unit)
+                }
+                tryReleaseBufferedBuyAggregation(copyTrading, account, batch)?.let { return it }
                 return Result.success(Unit)
             }
 
-            val filterType = if (payload.trades.size > 1 && sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE) {
+            val filterType = if (
+                payload.trades.size > 1 &&
+                payload.aggregationReleaseReason == SmallOrderAggregationReleaseReason.WINDOW_EXPIRED &&
+                sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
+            ) {
                 "AGGREGATION_TIMEOUT"
             } else {
                 "SIZING"
@@ -631,7 +873,11 @@ open class CopyOrderTrackingService(
                 account = account,
                 payload = payload,
                 stage = "FILTER",
-                eventType = if (filterType == "AGGREGATION_TIMEOUT") "AGGREGATION_TIMEOUT" else "SIZING_REJECTED",
+                eventType = when {
+                    filterType == "AGGREGATION_TIMEOUT" -> "AGGREGATION_TIMEOUT_TOO_SMALL"
+                    payload.trades.size > 1 -> "AGGREGATION_RELEASE_REJECTED"
+                    else -> "SIZING_REJECTED"
+                },
                 status = "warning",
                 message = sizingResult.reason,
                 calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
@@ -1198,6 +1444,8 @@ open class CopyOrderTrackingService(
         orderPrice: BigDecimal? = null,
         orderQuantity: BigDecimal? = null,
         orderId: String? = null,
+        aggregationKey: String? = null,
+        aggregationTradeCount: Int? = null,
         detailJson: String? = null
     ) {
         val leaderPrice = trade.price.toSafeBigDecimal()
@@ -1222,10 +1470,57 @@ open class CopyOrderTrackingService(
                 orderPrice = orderPrice,
                 orderQuantity = orderQuantity,
                 orderId = orderId,
+                aggregationKey = aggregationKey,
+                aggregationTradeCount = aggregationTradeCount,
                 message = message,
                 detailJson = detailJson
             )
         )
+    }
+
+    private suspend fun resolveSellTokenId(
+        copyTrading: CopyTrading,
+        accountId: Long,
+        leaderSellTrade: TradeResponse,
+        aggregationKey: String? = null,
+        aggregationTradeCount: Int? = null
+    ): String? {
+        if (!leaderSellTrade.tokenId.isNullOrBlank()) {
+            return leaderSellTrade.tokenId
+        }
+        val outcomeIndex = leaderSellTrade.outcomeIndex
+        if (outcomeIndex == null) {
+            logger.error("卖出交易缺少outcomeIndex且无tokenId: market=${leaderSellTrade.market}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = accountId,
+                trade = leaderSellTrade,
+                stage = "MONITOR",
+                eventType = "SELL_TOKEN_ID_MISSING",
+                status = "error",
+                message = "卖出交易缺少 tokenId 和 outcomeIndex，无法执行",
+                aggregationKey = aggregationKey,
+                aggregationTradeCount = aggregationTradeCount
+            )
+            return null
+        }
+        val tokenIdResult = blockchainService.getTokenId(leaderSellTrade.market, outcomeIndex)
+        if (tokenIdResult.isFailure) {
+            logger.error("获取tokenId失败: market=${leaderSellTrade.market}, outcomeIndex=$outcomeIndex, error=${tokenIdResult.exceptionOrNull()?.message}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = accountId,
+                trade = leaderSellTrade,
+                stage = "MONITOR",
+                eventType = "SELL_TOKEN_ID_RESOLVE_FAILED",
+                status = "error",
+                message = "获取卖出 tokenId 失败: ${tokenIdResult.exceptionOrNull()?.message ?: "未知错误"}",
+                aggregationKey = aggregationKey,
+                aggregationTradeCount = aggregationTradeCount
+            )
+            return null
+        }
+        return tokenIdResult.getOrNull()
     }
 
     private fun buildDiagnosticsFailureReason(diagnostics: com.wrbug.polymarketbot.dto.AccountSetupStatusDto): String {
@@ -1351,60 +1646,68 @@ open class CopyOrderTrackingService(
      */
     private suspend fun matchSellOrder(
         copyTrading: CopyTrading,
-        leaderSellTrade: TradeResponse
+        leaderSellTrade: TradeResponse,
+        allowAggregation: Boolean = true,
+        aggregationReleaseReason: SmallOrderAggregationReleaseReason? = null,
+        aggregationKey: String? = null,
+        aggregationTradeCount: Int? = null
     ) {
-        recordTradeExecutionEvent(
-            copyTrading = copyTrading,
-            accountId = copyTrading.accountId,
-            trade = leaderSellTrade,
-            stage = "DISCOVERY",
-            eventType = "SELL_SIGNAL_DETECTED",
+        fun recordSellEvent(
+            stage: String,
+            eventType: String,
+            status: String,
+            message: String,
+            calculatedQuantity: BigDecimal? = null,
+            orderPrice: BigDecimal? = null,
+            orderQuantity: BigDecimal? = null,
+            orderId: String? = null,
+            detailJson: String? = null,
+            eventAggregationKey: String? = aggregationKey,
+            eventAggregationTradeCount: Int? = aggregationTradeCount
+        ) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = stage,
+                eventType = eventType,
+                status = status,
+                message = message,
+                calculatedQuantity = calculatedQuantity,
+                orderPrice = orderPrice,
+                orderQuantity = orderQuantity,
+                orderId = orderId,
+                aggregationKey = eventAggregationKey,
+                aggregationTradeCount = eventAggregationTradeCount,
+                detailJson = detailJson
+            )
+        }
+
+        recordSellEvent(
+            stage = aggregationReleaseReason?.let { "AGGREGATION" } ?: "DISCOVERY",
+            eventType = aggregationReleaseReason?.let(::aggregationReleaseEventType) ?: "SELL_SIGNAL_DETECTED",
             status = "info",
-            message = "检测到新的 SELL 跟单信号"
+            message = aggregationReleaseReason?.let { aggregationReleaseMessage(it, "SELL") } ?: "检测到新的 SELL 跟单信号"
         )
 
         // 1. 获取账户
         val account = accountRepository.findById(copyTrading.accountId).orElse(null)
             ?: run {
                 logger.warn("账户不存在，跳过卖出匹配: accountId=${copyTrading.accountId}, copyTradingId=${copyTrading.id}")
-                recordTradeExecutionEvent(
-                    copyTrading = copyTrading,
-                    accountId = copyTrading.accountId,
-                    trade = leaderSellTrade,
-                    stage = "PRECHECK",
-                    eventType = "ACCOUNT_NOT_FOUND",
-                    status = "error",
-                    message = "账户不存在，无法执行卖出跟单"
-                )
+                recordSellEvent("PRECHECK", "ACCOUNT_NOT_FOUND", "error", "账户不存在，无法执行卖出跟单")
                 return
             }
 
         // 验证账户API凭证
         if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
             logger.warn("账户未配置API凭证，跳过创建卖出订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "PRECHECK",
-                eventType = "ACCOUNT_CREDENTIALS_MISSING",
-                status = "error",
-                message = "账户未配置完整 API 凭证，无法执行卖出跟单"
-            )
+            recordSellEvent("PRECHECK", "ACCOUNT_CREDENTIALS_MISSING", "error", "账户未配置完整 API 凭证，无法执行卖出跟单")
             return
         }
 
         // 验证账户是否启用
         if (!account.isEnabled) {
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "PRECHECK",
-                eventType = "ACCOUNT_DISABLED",
-                status = "error",
-                message = "账户已禁用，无法执行卖出跟单"
-            )
+            recordSellEvent("PRECHECK", "ACCOUNT_DISABLED", "error", "账户已禁用，无法执行卖出跟单")
             return
         }
 
@@ -1412,15 +1715,7 @@ open class CopyOrderTrackingService(
         // 直接使用outcomeIndex匹配，而不是转换为YES/NO
         if (leaderSellTrade.outcomeIndex == null) {
             logger.warn("卖出交易缺少outcomeIndex，无法匹配: tradeId=${leaderSellTrade.id}, market=${leaderSellTrade.market}")
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "MONITOR",
-                eventType = "SELL_OUTCOME_INDEX_MISSING",
-                status = "warning",
-                message = "卖出交易缺少 outcomeIndex，无法匹配仓位"
-            )
+            recordSellEvent("MONITOR", "SELL_OUTCOME_INDEX_MISSING", "warning", "卖出交易缺少 outcomeIndex，无法匹配仓位")
             return
         }
 
@@ -1432,15 +1727,7 @@ open class CopyOrderTrackingService(
         )
 
         if (unmatchedOrders.isEmpty()) {
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "FILTER",
-                eventType = "SELL_NO_MATCHED_POSITION",
-                status = "info",
-                message = "未找到可匹配的买入仓位，忽略卖出信号"
-            )
+            recordSellEvent("FILTER", "SELL_NO_MATCHED_POSITION", "info", "未找到可匹配的买入仓位，忽略卖出信号")
             return
         }
 
@@ -1451,59 +1738,91 @@ open class CopyOrderTrackingService(
             copyTrading = copyTrading
         )
 
-        // 如果需要卖出的数量小于1（但大于0），自动调整为1（Polymarket 最小下单数量）
-        // 注意：如果实际持有数量不足1，后续的 totalMatched 检查会拦截
         var finalNeedMatch = needMatch
         if (finalNeedMatch.gt(BigDecimal.ZERO) && finalNeedMatch.lt(BigDecimal.ONE)) {
+            if (allowAggregation && copyTrading.smallOrderAggregationEnabled) {
+                val tokenIdForAggregation = resolveSellTokenId(
+                    copyTrading = copyTrading,
+                    accountId = account.id ?: copyTrading.accountId,
+                    leaderSellTrade = leaderSellTrade,
+                    aggregationKey = aggregationKey,
+                    aggregationTradeCount = aggregationTradeCount
+                ) ?: return
+                val bufferResult = smallOrderAggregationService.bufferTrade(
+                    SmallOrderAggregationRequest(
+                        copyTradingId = copyTrading.id!!,
+                        accountId = account.id ?: copyTrading.accountId,
+                        leaderId = copyTrading.leaderId,
+                        side = "SELL",
+                        tokenId = tokenIdForAggregation,
+                        marketId = leaderSellTrade.market,
+                        outcomeIndex = leaderSellTrade.outcomeIndex,
+                        leaderTradeId = leaderSellTrade.id,
+                        leaderQuantity = leaderSellTrade.size.toSafeBigDecimal(),
+                        leaderOrderAmount = leaderSellTrade.size.toSafeBigDecimal().multi(leaderSellTrade.price.toSafeBigDecimal()),
+                        tradePrice = leaderSellTrade.price.toSafeBigDecimal(),
+                        outcome = leaderSellTrade.outcome,
+                        source = "single"
+                    )
+                )
+                val batch = bufferResult.batch
+                recordSellEvent(
+                    stage = "AGGREGATION",
+                    eventType = if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                        "AGGREGATION_DUPLICATE_IGNORED"
+                    } else {
+                        "AGGREGATION_BUFFERED"
+                    },
+                    status = "info",
+                    message = if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                        "重复 leaderTradeId 已忽略，保留现有 SELL 聚合缓冲"
+                    } else {
+                        "卖出数量低于最小下单限制，已进入 SELL 聚合等待"
+                    },
+                    calculatedQuantity = finalNeedMatch,
+                    eventAggregationKey = batch.key,
+                    eventAggregationTradeCount = batch.trades.size
+                )
+                if (bufferResult.status == SmallOrderAggregationBufferStatus.DUPLICATE_IGNORED) {
+                    return
+                }
+                tryReleaseBufferedSellAggregation(copyTrading, account, batch)
+                return
+            }
+            if (aggregationReleaseReason != null) {
+                recordSellEvent(
+                    stage = "FILTER",
+                    eventType = if (aggregationReleaseReason == SmallOrderAggregationReleaseReason.WINDOW_EXPIRED) {
+                        "AGGREGATION_TIMEOUT_TOO_SMALL"
+                    } else {
+                        "AGGREGATION_RELEASE_REJECTED"
+                    },
+                    status = "warning",
+                    message = if (aggregationReleaseReason == SmallOrderAggregationReleaseReason.WINDOW_EXPIRED) {
+                        "SELL 聚合窗口到期后仍低于最小下单数量，放弃执行"
+                    } else {
+                        "SELL 聚合释放后仍低于最小下单数量，放弃执行"
+                    },
+                    calculatedQuantity = finalNeedMatch
+                )
+                return
+            }
             logger.warn("计算得到的卖出数量小于1，自动调整为1: copyTradingId=${copyTrading.id}, original=$needMatch")
             finalNeedMatch = BigDecimal.ONE
         }
         if (finalNeedMatch.lte(BigDecimal.ZERO)) {
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "FILTER",
-                eventType = "SELL_QUANTITY_ZERO",
-                status = "info",
-                message = "根据仓位比例计算后的卖出数量为 0，忽略卖出信号"
-            )
+            recordSellEvent("FILTER", "SELL_QUANTITY_ZERO", "info", "根据仓位比例计算后的卖出数量为 0，忽略卖出信号")
             return
         }
 
         // 4. 获取 tokenId：优先使用链上解析得到的 tokenId，否则用 conditionId+outcomeIndex 链上重算
-        val tokenId = if (!leaderSellTrade.tokenId.isNullOrBlank()) {
-            leaderSellTrade.tokenId
-        } else {
-            if (leaderSellTrade.outcomeIndex == null) {
-                logger.error("卖出交易缺少outcomeIndex且无tokenId: market=${leaderSellTrade.market}")
-                recordTradeExecutionEvent(
-                    copyTrading = copyTrading,
-                    accountId = account.id ?: copyTrading.accountId,
-                    trade = leaderSellTrade,
-                    stage = "MONITOR",
-                    eventType = "SELL_TOKEN_ID_MISSING",
-                    status = "error",
-                    message = "卖出交易缺少 tokenId 和 outcomeIndex，无法执行"
-                )
-                return
-            }
-            val tokenIdResult = blockchainService.getTokenId(leaderSellTrade.market, leaderSellTrade.outcomeIndex)
-            if (tokenIdResult.isFailure) {
-                logger.error("获取tokenId失败: market=${leaderSellTrade.market}, outcomeIndex=${leaderSellTrade.outcomeIndex}, error=${tokenIdResult.exceptionOrNull()?.message}")
-                recordTradeExecutionEvent(
-                    copyTrading = copyTrading,
-                    accountId = account.id ?: copyTrading.accountId,
-                    trade = leaderSellTrade,
-                    stage = "MONITOR",
-                    eventType = "SELL_TOKEN_ID_RESOLVE_FAILED",
-                    status = "error",
-                    message = "获取卖出 tokenId 失败: ${tokenIdResult.exceptionOrNull()?.message ?: "未知错误"}"
-                )
-                return
-            }
-            tokenIdResult.getOrNull() ?: return
-        }
+        val tokenId = resolveSellTokenId(
+            copyTrading = copyTrading,
+            accountId = account.id ?: copyTrading.accountId,
+            leaderSellTrade = leaderSellTrade,
+            aggregationKey = aggregationKey,
+            aggregationTradeCount = aggregationTradeCount
+        ) ?: return
 
         // 5. 计算卖出价格（优先使用订单簿 bestBid，失败则使用 Leader 价格，固定按90%计算）
         // 注意：需要先计算卖出价格，因为后续创建 matchDetails 需要使用实际卖出价格
@@ -1554,28 +1873,17 @@ open class CopyOrderTrackingService(
         }
 
         if (totalMatched.lte(BigDecimal.ZERO)) {
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "FILTER",
-                eventType = "SELL_MATCH_ZERO",
-                status = "info",
-                message = "没有可卖出的匹配数量，忽略卖出信号"
-            )
+            recordSellEvent("FILTER", "SELL_MATCH_ZERO", "info", "没有可卖出的匹配数量，忽略卖出信号")
             return
         }
 
         if (totalMatched.lt(BigDecimal.ONE)) {
             logger.warn("卖出数量小于1，跳过卖出 (Polymarket 最小下单数量为 1): copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, quantity=$totalMatched")
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "FILTER",
-                eventType = "SELL_BELOW_MIN_ORDER_SIZE",
-                status = "warning",
-                message = "卖出数量小于 1，低于 Polymarket 最小下单数量",
+            recordSellEvent(
+                "FILTER",
+                "SELL_BELOW_MIN_ORDER_SIZE",
+                "warning",
+                "卖出数量小于 1，低于 Polymarket 最小下单数量",
                 calculatedQuantity = totalMatched
             )
             return

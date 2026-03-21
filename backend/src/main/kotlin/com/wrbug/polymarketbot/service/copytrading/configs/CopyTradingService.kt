@@ -9,6 +9,7 @@ import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.CopyTradingTemplateRepository
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.copytrading.monitor.CopyTradingMonitorService
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationService
 import com.wrbug.polymarketbot.service.accounts.AccountExecutionDiagnosticsService
 import com.google.gson.Gson
 import com.wrbug.polymarketbot.util.IllegalBigDecimal
@@ -35,6 +36,7 @@ class CopyTradingService(
     private val leaderRepository: LeaderRepository,
     private val monitorService: CopyTradingMonitorService,
     private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService,
+    private val smallOrderAggregationService: SmallOrderAggregationService,
     private val jsonUtils: JsonUtils,
     private val gson: Gson
 ) : ApplicationContextAware {
@@ -419,6 +421,9 @@ class CopyTradingService(
             }
             
             val saved = copyTradingRepository.save(updated)
+            if (!saved.enabled || !saved.smallOrderAggregationEnabled) {
+                smallOrderAggregationService.clear(saved.id)
+            }
             
             // 更新 Leader 监听和账户监听（增量更新，根据 enabled 状态决定添加或移除）
             kotlinx.coroutines.runBlocking {
@@ -525,6 +530,7 @@ class CopyTradingService(
             
             val leaderId = copyTrading.leaderId
             val accountId = copyTrading.accountId
+            smallOrderAggregationService.clear(copyTradingId)
             copyTradingRepository.delete(copyTrading)
             
             // 更新 Leader 监听和账户监听（检查是否还有其他启用的跟单配置）

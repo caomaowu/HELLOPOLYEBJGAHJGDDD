@@ -7,6 +7,7 @@ data class SmallOrderAggregationRequest(
     val copyTradingId: Long,
     val accountId: Long,
     val leaderId: Long,
+    val side: String = "BUY",
     val tokenId: String,
     val marketId: String,
     val outcomeIndex: Int?,
@@ -19,6 +20,16 @@ data class SmallOrderAggregationRequest(
     val bufferedAt: Long = System.currentTimeMillis()
 )
 
+enum class SmallOrderAggregationBufferStatus {
+    BUFFERED,
+    DUPLICATE_IGNORED
+}
+
+enum class SmallOrderAggregationReleaseReason {
+    THRESHOLD_REACHED,
+    WINDOW_EXPIRED
+}
+
 data class AggregatedTradeItem(
     val leaderTradeId: String,
     val leaderQuantity: BigDecimal,
@@ -28,17 +39,30 @@ data class AggregatedTradeItem(
     val source: String
 )
 
+data class SmallOrderAggregationBufferResult(
+    val batch: SmallOrderAggregationBatch,
+    val status: SmallOrderAggregationBufferStatus
+)
+
+data class SmallOrderAggregationReleaseResult(
+    val batch: SmallOrderAggregationBatch,
+    val reason: SmallOrderAggregationReleaseReason,
+    val releasedAt: Long = System.currentTimeMillis()
+)
+
 data class SmallOrderAggregationBatch(
     val key: String,
     val copyTradingId: Long,
     val accountId: Long,
     val leaderId: Long,
+    val side: String = "BUY",
     val tokenId: String,
     val marketId: String,
     val outcomeIndex: Int?,
     val trades: List<AggregatedTradeItem>,
     val firstBufferedAt: Long,
-    val lastBufferedAt: Long
+    val lastBufferedAt: Long,
+    val duplicateIgnoredCount: Int = 0
 ) {
     val totalLeaderQuantity: BigDecimal = trades.fold(BigDecimal.ZERO) { sum, trade ->
         sum.add(trade.leaderQuantity)
@@ -57,6 +81,32 @@ data class SmallOrderAggregationBatch(
     val representativeTradeId: String = trades.first().leaderTradeId
     val representativeOutcome: String? = trades.firstOrNull()?.outcome
 }
+
+data class SmallOrderAggregationGroupSnapshot(
+    val key: String,
+    val copyTradingId: Long,
+    val accountId: Long,
+    val leaderId: Long,
+    val side: String,
+    val tokenId: String,
+    val marketId: String,
+    val outcomeIndex: Int?,
+    val tradeCount: Int,
+    val totalLeaderQuantity: BigDecimal,
+    val totalLeaderOrderAmount: BigDecimal,
+    val averageTradePrice: BigDecimal,
+    val firstBufferedAt: Long,
+    val lastBufferedAt: Long,
+    val duplicateIgnoredCount: Int,
+    val sampleLeaderTradeIds: List<String>
+)
+
+data class SmallOrderAggregationSnapshot(
+    val totalGroupCount: Int,
+    val totalTradeCount: Int,
+    val totalDuplicateIgnoredCount: Int,
+    val groups: List<SmallOrderAggregationGroupSnapshot>
+)
 
 object SmallOrderAggregationSupport {
     const val DEFAULT_WINDOW_SECONDS = 300

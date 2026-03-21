@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.service.backtest
 
 import com.wrbug.polymarketbot.dto.TradeData
 import com.wrbug.polymarketbot.dto.BacktestStatisticsDto
+import com.wrbug.polymarketbot.entity.BacktestAuditEvent
 import com.wrbug.polymarketbot.entity.BacktestTask
 import com.wrbug.polymarketbot.entity.BacktestTrade
 import com.wrbug.polymarketbot.entity.CopyTrading
@@ -13,6 +14,7 @@ import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterServ
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
 import com.wrbug.polymarketbot.util.gt
+import com.wrbug.polymarketbot.util.toJson
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -31,7 +33,8 @@ class BacktestExecutionService(
     private val marketPriceService: MarketPriceService,
     private val marketService: MarketService,
     private val copyTradingFilterService: CopyTradingFilterService,
-    private val copyTradingSizingService: CopyTradingSizingService
+    private val copyTradingSizingService: CopyTradingSizingService,
+    private val backtestAuditTrailService: BacktestAuditTrailService
 ) {
     private val logger = LoggerFactory.getLogger(BacktestExecutionService::class.java)
 
@@ -101,11 +104,15 @@ class BacktestExecutionService(
      */
     /** 每批请求 API 的条数（基于 start 游标分页，避免 offset 过大） */
     private val backtestBatchLimit = 500
+    private val maxAuditEventsPerFlush = 400
 
     @Transactional
     suspend fun executeBacktest(task: BacktestTask, page: Int = 1, size: Int = 100) {
+        val auditEvents = mutableListOf<BacktestAuditEvent>()
+        val taskId = task.id ?: 0L
         try {
             logger.info("开始执行回测任务: taskId=${task.id}, taskName=${task.taskName}, batchLimit=$backtestBatchLimit")
+            require(taskId > 0) { "回测任务ID为空，无法执行" }
 
             // 1. 更新任务状态为 RUNNING
             task.status = "RUNNING"
@@ -133,6 +140,22 @@ class BacktestExecutionService(
 
             logger.info("回测时间范围: ${formatTimestamp(startTime)} - ${formatTimestamp(endTime)} (${task.backtestDays} 天), " +
                 "初始余额: ${task.initialBalance.toPlainString()}")
+            addAuditEvent(
+                buffer = auditEvents,
+                taskId = taskId,
+                stage = "LIFECYCLE",
+                eventType = "TASK_STARTED",
+                decision = "INFO",
+                reasonMessage = "回测任务开始执行",
+                detail = mapOf(
+                    "taskName" to task.taskName,
+                    "leaderId" to task.leaderId,
+                    "startTime" to startTime,
+                    "endTime" to endTime,
+                    "initialBalance" to task.initialBalance.toPlainString(),
+                    "backtestDays" to task.backtestDays
+                )
+            )
 
             // 4. 游标分页：恢复时也从 lastProcessedTradeTime 所在秒开始拉（不加 1），与分页规则一致；已处理的通过 timestamp 跳过，不依赖内存 seenTradeIds
             var cursorSeconds = if (task.lastProcessedTradeTime != null) {
@@ -144,16 +167,50 @@ class BacktestExecutionService(
             val resumeThresholdMs = task.lastProcessedTradeTime ?: 0L
 
             logger.info("开始游标分页：cursorStart=$cursorSeconds（恢复则跳过 timestamp<=${resumeThresholdMs}ms）")
+            addAuditEvent(
+                buffer = auditEvents,
+                taskId = taskId,
+                stage = "FETCH",
+                eventType = "CURSOR_INITIALIZED",
+                decision = "INFO",
+                reasonMessage = "初始化回测游标",
+                detail = mapOf(
+                    "cursorSeconds" to cursorSeconds,
+                    "resumeThresholdMs" to resumeThresholdMs,
+                    "endSeconds" to endSeconds
+                )
+            )
+            flushAuditEvents(auditEvents)
 
             var terminateBacktest = false
             while (true) {
                 if (terminateBacktest) {
                     logger.info("余额已为负或不足，终止回测循环")
+                    addAuditEvent(
+                        buffer = auditEvents,
+                        taskId = taskId,
+                        stage = "LIFECYCLE",
+                        eventType = "TASK_TERMINATED",
+                        decision = "STOP",
+                        reasonCode = "BALANCE_INSUFFICIENT",
+                        reasonMessage = "余额不足导致回测提前终止",
+                        detail = mapOf("currentBalance" to currentBalance.toPlainString())
+                    )
                     break
                 }
                 val currentTaskStatus = backtestTaskRepository.findById(task.id!!).orElse(null)
                 if (currentTaskStatus == null || currentTaskStatus.status != "RUNNING") {
                     logger.info("回测任务状态已变更: ${currentTaskStatus?.status}，停止执行")
+                    addAuditEvent(
+                        buffer = auditEvents,
+                        taskId = taskId,
+                        stage = "LIFECYCLE",
+                        eventType = "TASK_STOPPED_EXTERNALLY",
+                        decision = "STOP",
+                        reasonCode = "TASK_STATUS_CHANGED",
+                        reasonMessage = "任务状态变更导致执行停止",
+                        detail = mapOf("status" to (currentTaskStatus?.status ?: "UNKNOWN"))
+                    )
                     break
                 }
 
@@ -173,10 +230,33 @@ class BacktestExecutionService(
 
                     if (pageTrades.isEmpty()) {
                         logger.info("本批无数据，所有数据处理完成")
+                        addAuditEvent(
+                            buffer = auditEvents,
+                            taskId = taskId,
+                            stage = "FETCH",
+                            eventType = "BATCH_EMPTY",
+                            decision = "INFO",
+                            reasonMessage = "当前游标无更多交易数据",
+                            detail = mapOf("cursorSeconds" to cursorSeconds)
+                        )
                         break
                     }
 
                     logger.info("本批获取 ${pageTrades.size} 条交易，是否有下一页: ${batch.nextCursorSeconds != null}")
+                    addAuditEvent(
+                        buffer = auditEvents,
+                        taskId = taskId,
+                        stage = "FETCH",
+                        eventType = "BATCH_FETCHED",
+                        decision = "PASS",
+                        reasonMessage = "批次数据获取成功",
+                        detail = mapOf(
+                            "cursorSeconds" to cursorSeconds,
+                            "tradeCount" to pageTrades.size,
+                            "hasNext" to (batch.nextCursorSeconds != null),
+                            "nextCursorSeconds" to batch.nextCursorSeconds
+                        )
+                    )
 
                     val countAtBatchStart = task.processedTradeCount
                     var lastProcessedIndexInPage: Int? = null
@@ -185,10 +265,30 @@ class BacktestExecutionService(
                         val leaderTrade = pageTrades[localIndex]
                         if (leaderTrade.tradeId in seenTradeIds) {
                             logger.debug("跳过重复交易: ${leaderTrade.tradeId}")
+                            addAuditEvent(
+                                buffer = auditEvents,
+                                taskId = taskId,
+                                stage = "DEDUPE",
+                                eventType = "TRADE_SKIPPED",
+                                decision = "SKIP",
+                                leaderTrade = leaderTrade,
+                                reasonCode = "DUPLICATE_TRADE_ID",
+                                reasonMessage = "同批次内重复 tradeId，跳过处理"
+                            )
                             continue
                         }
                         if (resumeThresholdMs > 0 && leaderTrade.timestamp <= resumeThresholdMs) {
                             logger.debug("恢复时跳过已处理时间戳: tradeId=${leaderTrade.tradeId}, timestamp=${leaderTrade.timestamp}")
+                            addAuditEvent(
+                                buffer = auditEvents,
+                                taskId = taskId,
+                                stage = "RESUME",
+                                eventType = "TRADE_SKIPPED",
+                                decision = "SKIP",
+                                leaderTrade = leaderTrade,
+                                reasonCode = "RESUME_ALREADY_PROCESSED",
+                                reasonMessage = "恢复执行时命中已处理时间范围"
+                            )
                             continue
                         }
                         seenTradeIds.add(leaderTrade.tradeId)
@@ -213,13 +313,38 @@ class BacktestExecutionService(
 
                         try {
                             // 5.1 实时检查并结算已到期的市场
+                            val tradesBeforeSettlement = currentPageTrades.size
                             currentBalance = settleExpiredPositions(task, positions, currentBalance, trades, leaderTrade.timestamp, currentPageTrades)
+                            val settledCount = currentPageTrades.size - tradesBeforeSettlement
+                            if (settledCount > 0) {
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "SETTLEMENT",
+                                    eventType = "EXPIRED_POSITIONS_SETTLED",
+                                    decision = "PASS",
+                                    leaderTrade = leaderTrade,
+                                    reasonMessage = "执行过程中结算到期持仓",
+                                    detail = mapOf("settledCount" to settledCount)
+                                )
+                            }
 
                             // 5.2 检查余额和持仓状态
                             if (currentBalance <= BigDecimal.ONE) {
                                 logger.info(
                                     if (currentBalance < BigDecimal.ZERO) "余额已为负，直接终止回测: $currentBalance"
                                     else "余额<=1，停止回测: $currentBalance"
+                                )
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "RISK",
+                                    eventType = "TRADE_SKIPPED",
+                                    decision = "STOP",
+                                    leaderTrade = leaderTrade,
+                                    reasonCode = "BALANCE_BELOW_THRESHOLD",
+                                    reasonMessage = "余额低于执行阈值，终止回测",
+                                    detail = mapOf("currentBalance" to currentBalance.toPlainString())
                                 )
                                 terminateBacktest = true
                                 break
@@ -236,6 +361,16 @@ class BacktestExecutionService(
 
                             if (!filterResult.isPassed) {
                                 logger.debug("交易被过滤: ${leaderTrade.tradeId}")
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "FILTER",
+                                    eventType = "TRADE_SKIPPED",
+                                    decision = "SKIP",
+                                    leaderTrade = leaderTrade,
+                                    reasonCode = filterResult.status.name,
+                                    reasonMessage = filterResult.reason
+                                )
                                 continue
                             }
 
@@ -245,6 +380,20 @@ class BacktestExecutionService(
 
                             if (dailyOrderCount >= task.maxDailyOrders) {
                                 logger.info("已达到每日最大 BUY 订单数限制: $dailyOrderCount / ${task.maxDailyOrders}")
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "RISK",
+                                    eventType = "TRADE_SKIPPED",
+                                    decision = "SKIP",
+                                    leaderTrade = leaderTrade,
+                                    reasonCode = "MAX_DAILY_ORDERS",
+                                    reasonMessage = "达到每日最大 BUY 订单数限制",
+                                    detail = mapOf(
+                                        "dailyOrderCount" to dailyOrderCount,
+                                        "maxDailyOrders" to task.maxDailyOrders
+                                    )
+                                )
                                 continue
                             }
 
@@ -252,6 +401,20 @@ class BacktestExecutionService(
                             val dailyLoss = dailyLossCache.getOrDefault(tradeDate, BigDecimal.ZERO)
                             if (dailyLoss > task.maxDailyLoss) {
                                 logger.info("已达到每日最大亏损限制: $dailyLoss / ${task.maxDailyLoss}，跳过买入订单")
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "RISK",
+                                    eventType = "TRADE_SKIPPED",
+                                    decision = "SKIP",
+                                    leaderTrade = leaderTrade,
+                                    reasonCode = "MAX_DAILY_LOSS",
+                                    reasonMessage = "达到每日最大亏损限制，跳过买单",
+                                    detail = mapOf(
+                                        "dailyLoss" to dailyLoss.toPlainString(),
+                                        "maxDailyLoss" to task.maxDailyLoss.toPlainString()
+                                    )
+                                )
                                 continue
                             }
 
@@ -274,6 +437,16 @@ class BacktestExecutionService(
                                 )
                                 if (sizingResult.status != SizingStatus.EXECUTABLE) {
                                     logger.info("回测 sizing 拒绝买单: tradeId=${leaderTrade.tradeId}, reason=${sizingResult.reason}")
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "SIZING",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SIZING_${sizingResult.status.name}",
+                                        reasonMessage = sizingResult.reason
+                                    )
                                     continue
                                 }
 
@@ -286,11 +459,35 @@ class BacktestExecutionService(
                                 }
                                 if (actualBuyAmount < task.minOrderSize) {
                                     logger.debug("可用金额低于最小订单限制跳过: actual=$actualBuyAmount, minOrderSize=${task.minOrderSize}")
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "SIZING",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "BUY_BELOW_MIN_ORDER_SIZE",
+                                        reasonMessage = "可执行金额低于最小订单限制",
+                                        detail = mapOf(
+                                            "actualBuyAmount" to actualBuyAmount.toPlainString(),
+                                            "minOrderSize" to task.minOrderSize.toPlainString()
+                                        )
+                                    )
                                     continue
                                 }
                                 val quantity = actualBuyAmount.divide(leaderTrade.price, 8, java.math.RoundingMode.DOWN)
                                 if (quantity <= BigDecimal.ZERO) {
                                     logger.debug("计算数量为0跳过: actualBuyAmount=$actualBuyAmount, price=${leaderTrade.price}")
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "SIZING",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "BUY_QUANTITY_ZERO",
+                                        reasonMessage = "计算出的买入数量为0"
+                                    )
                                     continue
                                 }
                                 val totalCost = actualBuyAmount
@@ -352,15 +549,52 @@ class BacktestExecutionService(
                                 // 更新每日订单数缓存
                                 dailyOrderCountCache[tradeDate] = dailyOrderCount + 1
                                 dailyBuyVolumeCache[tradeDate] = currentDailyVolume.add(actualBuyAmount)
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "EXECUTION",
+                                    eventType = "BUY_EXECUTED",
+                                    decision = "PASS",
+                                    leaderTrade = leaderTrade,
+                                    reasonMessage = "买入执行成功",
+                                    detail = mapOf(
+                                        "amount" to actualBuyAmount.toPlainString(),
+                                        "quantity" to quantity.toPlainString(),
+                                        "balanceAfter" to currentBalance.toPlainString()
+                                    )
+                                )
 
                             } else {
                                 // SELL 逻辑
                                 if (!task.supportSell) {
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "EXECUTION",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SELL_DISABLED",
+                                        reasonMessage = "当前任务未启用卖出跟随"
+                                    )
                                     continue
                                 }
 
                                 val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
-                                val position = positions[positionKey] ?: continue
+                                val position = positions[positionKey]
+                                if (position == null) {
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "EXECUTION",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SELL_POSITION_NOT_FOUND",
+                                        reasonMessage = "未找到可卖出的持仓"
+                                    )
+                                    continue
+                                }
 
                                 // 计算卖出数量：优先使用实际持仓比例，而不是直接使用配置比例
                                 val leaderBuyQuantity = position.leaderBuyQuantity
@@ -378,6 +612,16 @@ class BacktestExecutionService(
                                     sellQuantity
                                 }
                                 if (actualSellQuantity <= BigDecimal.ZERO) {
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "EXECUTION",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SELL_QUANTITY_ZERO",
+                                        reasonMessage = "计算出的卖出数量<=0"
+                                    )
                                     continue
                                 }
 
@@ -393,9 +637,33 @@ class BacktestExecutionService(
                                 }
                                 if (finalSellAmount < task.minOrderSize) {
                                     logger.info("卖出金额低于最小限制，跳过卖出: $finalSellAmount < ${task.minOrderSize}")
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "SIZING",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SELL_BELOW_MIN_ORDER_SIZE",
+                                        reasonMessage = "卖出金额低于最小限制",
+                                        detail = mapOf(
+                                            "sellAmount" to finalSellAmount.toPlainString(),
+                                            "minOrderSize" to task.minOrderSize.toPlainString()
+                                        )
+                                    )
                                     continue
                                 }
                                 if (actualSellQuantity <= BigDecimal.ZERO) {
+                                    addAuditEvent(
+                                        buffer = auditEvents,
+                                        taskId = taskId,
+                                        stage = "SIZING",
+                                        eventType = "TRADE_SKIPPED",
+                                        decision = "SKIP",
+                                        leaderTrade = leaderTrade,
+                                        reasonCode = "SELL_QUANTITY_ZERO_AFTER_CLIP",
+                                        reasonMessage = "金额裁剪后卖出数量<=0"
+                                    )
                                     continue
                                 }
 
@@ -449,11 +717,37 @@ class BacktestExecutionService(
                                     val currentDailyLoss = dailyLossCache.getOrDefault(tradeDate, BigDecimal.ZERO)
                                     dailyLossCache[tradeDate] = currentDailyLoss + profitLoss.negate()
                                 }
+                                addAuditEvent(
+                                    buffer = auditEvents,
+                                    taskId = taskId,
+                                    stage = "EXECUTION",
+                                    eventType = "SELL_EXECUTED",
+                                    decision = "PASS",
+                                    leaderTrade = leaderTrade,
+                                    reasonMessage = "卖出执行成功",
+                                    detail = mapOf(
+                                        "amount" to finalSellAmount.toPlainString(),
+                                        "quantity" to actualSellQuantity.toPlainString(),
+                                        "profitLoss" to profitLoss.toPlainString(),
+                                        "balanceAfter" to currentBalance.toPlainString()
+                                    )
+                                )
                             }
 
                         } catch (e: Exception) {
                             logger.error("处理交易失败: tradeId=${leaderTrade.tradeId}", e)
+                            addAuditEvent(
+                                buffer = auditEvents,
+                                taskId = taskId,
+                                stage = "EXECUTION",
+                                eventType = "TRADE_ERROR",
+                                decision = "ERROR",
+                                leaderTrade = leaderTrade,
+                                reasonCode = "TRADE_PROCESSING_EXCEPTION",
+                                reasonMessage = e.message ?: "处理交易异常"
+                            )
                         }
+                        flushAuditEventsIfNeeded(auditEvents)
                     }
 
                     // 保存本批交易
@@ -470,20 +764,61 @@ class BacktestExecutionService(
                             backtestTaskRepository.save(task)
                             logger.info("本批处理完成，lastProcessedTradeIndex=${task.lastProcessedTradeIndex}, 总处理数=${task.processedTradeCount}")
                         }
+                        addAuditEvent(
+                            buffer = auditEvents,
+                            taskId = taskId,
+                            stage = "PERSIST",
+                            eventType = "BATCH_PERSISTED",
+                            decision = "PASS",
+                            reasonMessage = "批次交易落库完成",
+                            detail = mapOf(
+                                "tradeCount" to currentPageTrades.size,
+                                "processedTradeCount" to task.processedTradeCount,
+                                "lastProcessedTradeTime" to task.lastProcessedTradeTime
+                            )
+                        )
                     } else {
                         logger.info("本批没有交易需要保存")
+                        addAuditEvent(
+                            buffer = auditEvents,
+                            taskId = taskId,
+                            stage = "PERSIST",
+                            eventType = "BATCH_NO_TRADES",
+                            decision = "INFO",
+                            reasonMessage = "本批无可落库交易"
+                        )
                     }
 
                     trades.addAll(currentPageTrades)
 
                     if (batch.nextCursorSeconds == null) {
                         logger.info("本批不足 $backtestBatchLimit 条，已是最后一页")
+                        addAuditEvent(
+                            buffer = auditEvents,
+                            taskId = taskId,
+                            stage = "FETCH",
+                            eventType = "NO_NEXT_CURSOR",
+                            decision = "INFO",
+                            reasonMessage = "到达最后一页数据"
+                        )
+                        flushAuditEvents(auditEvents)
                         break
                     }
                     cursorSeconds = batch.nextCursorSeconds!!
+                    flushAuditEvents(auditEvents)
 
                 } catch (e: Exception) {
                     logger.error("获取或处理本批数据失败: ${e.message}", e)
+                    addAuditEvent(
+                        buffer = auditEvents,
+                        taskId = taskId,
+                        stage = "FETCH",
+                        eventType = "BATCH_FAILED",
+                        decision = "ERROR",
+                        reasonCode = "BATCH_PROCESS_EXCEPTION",
+                        reasonMessage = e.message ?: "批次处理异常"
+                    )
+                    flushAuditEvents(auditEvents)
                     // 重试失败，标记任务为 FAILED
                     throw e
                 }
@@ -495,6 +830,15 @@ class BacktestExecutionService(
             if (remainingSettlements.isNotEmpty()) {
                 backtestTradeRepository.saveAll(remainingSettlements)
                 logger.info("回测结束结算剩余持仓，持久化 ${remainingSettlements.size} 笔 SETTLEMENT(CLOSED)")
+                addAuditEvent(
+                    buffer = auditEvents,
+                    taskId = taskId,
+                    stage = "SETTLEMENT",
+                    eventType = "REMAINING_POSITIONS_SETTLED",
+                    decision = "PASS",
+                    reasonMessage = "回测结束时完成剩余持仓结算",
+                    detail = mapOf("count" to remainingSettlements.size)
+                )
             }
 
             // 7. 计算最终统计数据
@@ -529,6 +873,22 @@ class BacktestExecutionService(
             task.updatedAt = System.currentTimeMillis()
 
             backtestTaskRepository.save(task)
+            addAuditEvent(
+                buffer = auditEvents,
+                taskId = taskId,
+                stage = "LIFECYCLE",
+                eventType = "TASK_COMPLETED",
+                decision = "PASS",
+                reasonMessage = "回测执行完成",
+                detail = mapOf(
+                    "status" to finalStatus,
+                    "totalTrades" to trades.size,
+                    "finalBalance" to currentBalance.toPlainString(),
+                    "profitAmount" to profitAmount.toPlainString(),
+                    "profitRate" to profitRate.toPlainString()
+                )
+            )
+            flushAuditEvents(auditEvents)
 
             logger.info("回测任务执行完成: taskId=${task.id}, " +
                 "最终余额=${currentBalance.toPlainString()}, " +
@@ -544,6 +904,16 @@ class BacktestExecutionService(
             task.executionFinishedAt = System.currentTimeMillis()
             task.updatedAt = System.currentTimeMillis()
             backtestTaskRepository.save(task)
+            addAuditEvent(
+                buffer = auditEvents,
+                taskId = taskId,
+                stage = "LIFECYCLE",
+                eventType = "TASK_FAILED",
+                decision = "ERROR",
+                reasonCode = "TASK_EXECUTION_EXCEPTION",
+                reasonMessage = e.message ?: "回测执行失败"
+            )
+            flushAuditEvents(auditEvents)
             throw e
         }
     }
@@ -760,6 +1130,64 @@ class BacktestExecutionService(
             maxDrawdown = maxDrawdown.toPlainString(),
             avgHoldingTime = avgHoldingTime
         )
+    }
+
+    private fun addAuditEvent(
+        buffer: MutableList<BacktestAuditEvent>,
+        taskId: Long,
+        stage: String,
+        eventType: String,
+        decision: String,
+        leaderTrade: TradeData? = null,
+        reasonCode: String? = null,
+        reasonMessage: String? = null,
+        detail: Map<String, Any?>? = null
+    ) {
+        if (taskId <= 0) return
+        val mergedDetail = mutableMapOf<String, Any?>()
+        if (leaderTrade != null) {
+            mergedDetail["tradeId"] = leaderTrade.tradeId
+            mergedDetail["tradeTimestamp"] = leaderTrade.timestamp
+            mergedDetail["marketId"] = leaderTrade.marketId
+            mergedDetail["marketTitle"] = leaderTrade.marketTitle
+            mergedDetail["side"] = leaderTrade.side
+            mergedDetail["price"] = leaderTrade.price.toPlainString()
+            mergedDetail["size"] = leaderTrade.size.toPlainString()
+            mergedDetail["amount"] = leaderTrade.amount.toPlainString()
+        }
+        detail?.forEach { (key, value) -> mergedDetail[key] = value }
+        buffer += BacktestAuditEvent(
+            backtestTaskId = taskId,
+            eventTime = leaderTrade?.timestamp,
+            stage = stage,
+            eventType = eventType,
+            decision = decision,
+            leaderTradeId = leaderTrade?.tradeId,
+            marketId = leaderTrade?.marketId,
+            marketTitle = leaderTrade?.marketTitle,
+            side = leaderTrade?.side,
+            reasonCode = reasonCode,
+            reasonMessage = reasonMessage,
+            detailJson = mergedDetail.takeIf { it.isNotEmpty() }?.toJson(),
+            createdAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun flushAuditEventsIfNeeded(buffer: MutableList<BacktestAuditEvent>) {
+        if (buffer.size >= maxAuditEventsPerFlush) {
+            flushAuditEvents(buffer)
+        }
+    }
+
+    private fun flushAuditEvents(buffer: MutableList<BacktestAuditEvent>) {
+        if (buffer.isEmpty()) return
+        val snapshot = buffer.toList()
+        buffer.clear()
+        try {
+            backtestAuditTrailService.appendEvents(snapshot)
+        } catch (e: Exception) {
+            logger.warn("写入回测审计事件失败: count={}, message={}", snapshot.size, e.message)
+        }
     }
 
     /**

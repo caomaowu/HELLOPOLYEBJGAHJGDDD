@@ -10,7 +10,8 @@ data class LeaderDiscoveryBaseRequest(
     val maxSeedMarkets: Int? = 20,
     val marketTradeLimit: Int? = 120,
     val traderLimit: Int? = 30,
-    val excludeExistingLeaders: Boolean? = true
+    val excludeExistingLeaders: Boolean? = true,
+    val excludeBlacklistedTraders: Boolean? = true
 )
 
 /**
@@ -23,7 +24,11 @@ data class LeaderTraderScanRequest(
     val maxSeedMarkets: Int? = 20,
     val marketTradeLimit: Int? = 120,
     val traderLimit: Int? = 30,
-    val excludeExistingLeaders: Boolean? = true
+    val excludeExistingLeaders: Boolean? = true,
+    val excludeBlacklistedTraders: Boolean? = true,
+    val favoriteOnly: Boolean? = false,
+    val includeTags: List<String>? = null,
+    val excludeTags: List<String>? = null
 )
 
 /**
@@ -38,6 +43,10 @@ data class LeaderCandidateRecommendRequest(
     val marketTradeLimit: Int? = 120,
     val traderLimit: Int? = 20,
     val excludeExistingLeaders: Boolean? = true,
+    val excludeBlacklistedTraders: Boolean? = true,
+    val favoriteOnly: Boolean? = false,
+    val includeTags: List<String>? = null,
+    val excludeTags: List<String>? = null,
     val minTrades: Int? = 8,
     val maxOpenPositions: Int? = 8,
     val maxMarketConcentrationRate: Double? = 0.45,
@@ -55,6 +64,10 @@ data class LeaderMarketTraderLookupRequest(
     val limitPerMarket: Int? = 20,
     val minTradesPerTrader: Int? = 1,
     val excludeExistingLeaders: Boolean? = false,
+    val excludeBlacklistedTraders: Boolean? = true,
+    val favoriteOnly: Boolean? = false,
+    val includeTags: List<String>? = null,
+    val excludeTags: List<String>? = null,
     val preferPool: Boolean? = true
 )
 
@@ -88,7 +101,11 @@ data class LeaderDiscoveredTraderDto(
     val sourceLeaderIds: List<Long>,
     val sampleMarkets: List<LeaderDiscoveryMarketDto>,
     val firstSeenAt: Long?,
-    val lastSeenAt: Long?
+    val lastSeenAt: Long?,
+    val favorite: Boolean = false,
+    val blacklisted: Boolean = false,
+    val manualNote: String? = null,
+    val manualTags: List<String> = emptyList()
 )
 
 /**
@@ -129,7 +146,11 @@ data class LeaderCandidateRecommendationDto(
     val tags: List<String>,
     val reasons: List<String>,
     val sampleMarkets: List<LeaderDiscoveryMarketDto>,
-    val lastSeenAt: Long?
+    val lastSeenAt: Long?,
+    val favorite: Boolean = false,
+    val blacklisted: Boolean = false,
+    val manualNote: String? = null,
+    val manualTags: List<String> = emptyList()
 )
 
 /**
@@ -154,7 +175,11 @@ data class LeaderMarketTraderDto(
     val sellCount: Int,
     val totalVolume: String,
     val firstSeenAt: Long?,
-    val lastSeenAt: Long?
+    val lastSeenAt: Long?,
+    val favorite: Boolean = false,
+    val blacklisted: Boolean = false,
+    val manualNote: String? = null,
+    val manualTags: List<String> = emptyList()
 )
 
 /**
@@ -242,6 +267,25 @@ data class LeaderCandidatePoolLabelUpdateRequest(
 )
 
 /**
+ * 候选池批量人工标注更新请求
+ */
+data class LeaderCandidatePoolBatchLabelUpdateRequest(
+    val addresses: List<String>,
+    val favorite: Boolean? = null,
+    val blacklisted: Boolean? = null,
+    val manualNote: String? = null,
+    val manualTags: List<String>? = null
+)
+
+/**
+ * 候选池批量人工标注更新响应
+ */
+data class LeaderCandidatePoolBatchLabelUpdateResponse(
+    val updatedCount: Int,
+    val list: List<LeaderCandidatePoolItemDto>
+)
+
+/**
  * 候选评分历史查询请求
  */
 data class LeaderCandidateScoreHistoryRequest(
@@ -281,4 +325,104 @@ data class LeaderCandidateScoreHistoryResponse(
     val total: Long,
     val page: Int,
     val limit: Int
+)
+
+/**
+ * 按地址查询 activity 历史事件请求
+ */
+data class LeaderActivityHistoryByAddressRequest(
+    val address: String,
+    val page: Int? = 1,
+    val limit: Int? = 20,
+    val startTime: Long? = null,
+    val endTime: Long? = null,
+    val includeRaw: Boolean? = false
+)
+
+/**
+ * 按市场查询 activity 历史事件请求
+ */
+data class LeaderActivityHistoryByMarketRequest(
+    val marketId: String,
+    val traderAddress: String? = null,
+    val page: Int? = 1,
+    val limit: Int? = 20,
+    val startTime: Long? = null,
+    val endTime: Long? = null,
+    val includeRaw: Boolean? = false
+)
+
+/**
+ * Activity 历史事件条目
+ */
+data class LeaderActivityHistoryItemDto(
+    val eventKey: String,
+    val source: String,
+    val traderAddress: String,
+    val displayName: String? = null,
+    val marketId: String,
+    val marketTitle: String? = null,
+    val marketSlug: String? = null,
+    val asset: String? = null,
+    val transactionHash: String? = null,
+    val side: String? = null,
+    val outcome: String? = null,
+    val outcomeIndex: Int? = null,
+    val price: String? = null,
+    val size: String? = null,
+    val volume: String? = null,
+    val eventTimestamp: Long,
+    val receivedAt: Long,
+    val favorite: Boolean = false,
+    val blacklisted: Boolean = false,
+    val manualNote: String? = null,
+    val manualTags: List<String> = emptyList(),
+    val normalizedJson: String? = null,
+    val rawPayloadJson: String? = null
+)
+
+/**
+ * Activity 历史事件分页响应
+ */
+data class LeaderActivityHistoryResponse(
+    val list: List<LeaderActivityHistoryItemDto>,
+    val total: Long,
+    val page: Int,
+    val limit: Int
+)
+
+/**
+ * Activity 历史事件回填请求
+ */
+data class LeaderActivityHistoryBackfillRequest(
+    val leaderIds: List<Long>? = null,
+    val addresses: List<String>? = null,
+    val days: Int? = 7,
+    val maxRecordsPerAddress: Int? = 500
+)
+
+/**
+ * Activity 历史事件回填条目
+ */
+data class LeaderActivityHistoryBackfillItemDto(
+    val address: String,
+    val fetchedTrades: Int,
+    val insertedEvents: Int,
+    val skippedEvents: Int,
+    val firstEventTime: Long? = null,
+    val lastEventTime: Long? = null
+)
+
+/**
+ * Activity 历史事件回填响应
+ */
+data class LeaderActivityHistoryBackfillResponse(
+    val source: String = "data-api-backfill",
+    val days: Int,
+    val maxRecordsPerAddress: Int,
+    val totalAddresses: Int,
+    val totalFetchedTrades: Int,
+    val totalInsertedEvents: Int,
+    val totalSkippedEvents: Int,
+    val list: List<LeaderActivityHistoryBackfillItemDto>
 )

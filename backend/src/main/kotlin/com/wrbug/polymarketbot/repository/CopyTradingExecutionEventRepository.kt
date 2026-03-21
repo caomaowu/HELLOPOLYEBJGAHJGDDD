@@ -17,6 +17,7 @@ interface CopyTradingExecutionEventRepository : JpaRepository<CopyTradingExecuti
         WHERE e.copyTradingId = :copyTradingId
           AND (:eventType IS NULL OR e.eventType = :eventType)
           AND (:stage IS NULL OR e.stage = :stage)
+          AND (:source IS NULL OR e.source = :source)
           AND (:status IS NULL OR e.status = :status)
           AND (:startTime IS NULL OR e.createdAt >= :startTime)
           AND (:endTime IS NULL OR e.createdAt <= :endTime)
@@ -27,6 +28,7 @@ interface CopyTradingExecutionEventRepository : JpaRepository<CopyTradingExecuti
         @Param("copyTradingId") copyTradingId: Long,
         @Param("eventType") eventType: String?,
         @Param("stage") stage: String?,
+        @Param("source") source: String?,
         @Param("status") status: String?,
         @Param("startTime") startTime: Long?,
         @Param("endTime") endTime: Long?,

@@ -1,5 +1,21 @@
 import axios, { AxiosInstance, AxiosError } from 'axios'
 import type { ApiResponse, NotificationConfig, NotificationConfigRequest, NotificationConfigUpdateRequest } from '../types'
+import type {
+  BacktestAuditRequest,
+  BacktestAuditEventListRequest,
+  BacktestAuditEventListResponse,
+  BacktestAuditResponse,
+  BacktestCompareRequest,
+  BacktestCompareResponse,
+  BacktestCreateRequest,
+  BacktestDetailRequest,
+  BacktestDetailResponse,
+  BacktestListRequest,
+  BacktestListResponse,
+  BacktestRerunRequest,
+  BacktestTradeListRequest,
+  BacktestTradeListResponse
+} from '../types/backtest'
 import { getToken, setToken, removeToken } from '../utils'
 import { wsManager } from './websocket'
 import i18n from '../i18n/config'
@@ -377,10 +393,28 @@ export const apiService = {
       apiClient.post<ApiResponse<import('../types').LeaderCandidatePoolItem>>('/copy-trading/leaders/discovery/pool/update-labels', data),
 
     /**
+     * 批量更新候选池人工标注
+     */
+    discoveryPoolBatchUpdateLabels: (data: import('../types').LeaderCandidatePoolBatchLabelUpdateRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderCandidatePoolBatchLabelUpdateResponse>>('/copy-trading/leaders/discovery/pool/update-labels-batch', data),
+
+    /**
      * 查询候选评分历史
      */
     discoveryPoolHistory: (data: import('../types').LeaderCandidateScoreHistoryRequest) =>
-      apiClient.post<ApiResponse<import('../types').LeaderCandidateScoreHistoryResponse>>('/copy-trading/leaders/discovery/pool/history', data)
+      apiClient.post<ApiResponse<import('../types').LeaderCandidateScoreHistoryResponse>>('/copy-trading/leaders/discovery/pool/history', data),
+
+    /**
+     * 按地址查询 discovery activity 历史事件
+     */
+    discoveryHistoryByAddress: (data: import('../types').LeaderActivityHistoryByAddressRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderActivityHistoryResponse>>('/copy-trading/leaders/discovery/history/address', data),
+
+    /**
+     * 按市场查询 discovery activity 历史事件
+     */
+    discoveryHistoryByMarket: (data: import('../types').LeaderActivityHistoryByMarketRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderActivityHistoryResponse>>('/copy-trading/leaders/discovery/history/market', data)
   },
   
   /**
@@ -486,6 +520,15 @@ export const apiService = {
     getExecutionEvents: (data: import('../types').CopyTradingExecutionEventListRequest) =>
       apiClient.post<ApiResponse<import('../types').CopyTradingExecutionEventListResponse>>(
         '/copy-trading/configs/execution-events',
+        data
+      ),
+
+    /**
+     * 查询小额聚合缓冲快照
+     */
+    getAggregationSnapshot: (data: import('../types').CopyTradingAggregationSnapshotRequest) =>
+      apiClient.post<ApiResponse<import('../types').CopyTradingAggregationSnapshot>>(
+        '/copy-trading/configs/aggregation-snapshot',
         data
       )
   },
@@ -856,82 +899,64 @@ export const backtestService = {
   /**
    * 创建回测任务
    */
-  create: (data: {
-    taskName: string
-    leaderId: number
-    initialBalance: string
-    backtestDays: number
-    copyMode?: 'RATIO' | 'FIXED' | 'ADAPTIVE'
-    copyRatio?: string
-    fixedAmount?: string
-    adaptiveMinRatio?: string
-    adaptiveMaxRatio?: string
-    adaptiveThreshold?: string
-    multiplierMode?: 'NONE' | 'SINGLE' | 'TIERED'
-    tradeMultiplier?: string
-    tieredMultipliers?: Array<{ min: string; max?: string | null; multiplier: string }>
-    maxOrderSize?: string
-    minOrderSize?: string
-    maxDailyLoss?: string
-    maxDailyOrders?: number
-    maxDailyVolume?: string
-    priceTolerance?: string
-    delaySeconds?: number
-    supportSell?: boolean
-    minOrderDepth?: string
-    maxSpread?: string
-    minPrice?: string
-    maxPrice?: string
-    maxPositionValue?: string
-    keywordFilterMode?: 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
-    keywords?: string[]
-    maxMarketEndDate?: number | null
-  }) => apiClient.post('/backtest/tasks', data),
+  create: (data: BacktestCreateRequest) =>
+    apiClient.post<ApiResponse<void>>('/backtest/tasks', data),
 
   /**
    * 查询回测任务列表
    */
-  list: (data: {
-    leaderId?: number
-    status?: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'STOPPED' | 'FAILED'
-    sortBy?: 'profitAmount' | 'profitRate' | 'createdAt'
-    sortOrder?: 'asc' | 'desc'
-    page: number
-    size: number
-  }) => apiClient.post('/backtest/tasks/list', data),
+  list: (data: BacktestListRequest) =>
+    apiClient.post<ApiResponse<BacktestListResponse>>('/backtest/tasks/list', data),
 
   /**
    * 查询回测任务详情
    */
-  detail: (data: { id: number }) => apiClient.post('/backtest/tasks/detail', data),
+  detail: (data: BacktestDetailRequest) =>
+    apiClient.post<ApiResponse<BacktestDetailResponse>>('/backtest/tasks/detail', data),
 
   /**
    * 查询回测交易记录
    */
-  trades: (data: {
-    taskId: number
-    page: number
-    size: number
-  }) => apiClient.post('/backtest/tasks/trades', data),
+  trades: (data: BacktestTradeListRequest) =>
+    apiClient.post<ApiResponse<BacktestTradeListResponse>>('/backtest/tasks/trades', data),
+
+  /**
+   * 比较多个已完成回测任务
+   */
+  compare: (data: BacktestCompareRequest) =>
+    apiClient.post<ApiResponse<BacktestCompareResponse>>('/backtest/tasks/compare', data),
+
+  /**
+   * 生成回测审计摘要
+   */
+  audit: (data: BacktestAuditRequest) =>
+    apiClient.post<ApiResponse<BacktestAuditResponse>>('/backtest/tasks/audit', data),
+
+  /**
+   * 查询回测审计事件
+   */
+  auditEvents: (data: BacktestAuditEventListRequest) =>
+    apiClient.post<ApiResponse<BacktestAuditEventListResponse>>('/backtest/tasks/audit-events', data),
 
   /**
    * 停止回测任务
    */
-  stop: (data: { id: number }) => apiClient.post('/backtest/tasks/stop', data),
+  stop: (data: { id: number }) => apiClient.post<ApiResponse<void>>('/backtest/tasks/stop', data),
 
   /**
    * 删除回测任务
    */
-  delete: (data: { id: number }) => apiClient.post('/backtest/tasks/delete', data),
+  delete: (data: { id: number }) => apiClient.post<ApiResponse<void>>('/backtest/tasks/delete', data),
 
   /**
    * 重试回测任务
    */
-  retry: (data: { id: number }) => apiClient.post('/backtest/tasks/retry', data),
+  retry: (data: { id: number }) => apiClient.post<ApiResponse<void>>('/backtest/tasks/retry', data),
 
   /**
    * 按当前配置重新测试（仅支持已完成任务，创建同名配置的新任务）
    */
-  rerun: (data: { id: number; taskName?: string }) => apiClient.post('/backtest/tasks/rerun', data)
+  rerun: (data: BacktestRerunRequest) =>
+    apiClient.post<ApiResponse<void>>('/backtest/tasks/rerun', data)
 }
 

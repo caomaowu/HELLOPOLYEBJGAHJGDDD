@@ -27,6 +27,39 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
   const [page, setPage] = useState(1)
   const [limit] = useState(20)
   const [filterType, setFilterType] = useState<string | undefined>(undefined)
+
+  const filterTypeMap: Record<string, { color: string; text: string }> = {
+    ORDER_DEPTH: { color: 'orange', text: t('filteredOrdersList.filterTypes.orderDepth') || '订单深度不足' },
+    SPREAD: { color: 'red', text: t('filteredOrdersList.filterTypes.spread') || '价差过大' },
+    ORDERBOOK_DEPTH: { color: 'purple', text: t('filteredOrdersList.filterTypes.orderbookDepth') || '订单簿深度不足' },
+    PRICE_VALIDITY: { color: 'blue', text: t('filteredOrdersList.filterTypes.priceValidity') || '价格不合理' },
+    MARKET_STATUS: { color: 'default', text: t('filteredOrdersList.filterTypes.marketStatus') || '市场状态不可交易' },
+    ORDERBOOK_ERROR: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败' },
+    ORDERBOOK_EMPTY: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空' },
+    PRICE_RANGE: { color: 'purple', text: t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符' },
+    MAX_POSITION_VALUE: { color: 'volcano', text: t('filteredOrdersList.filterTypes.maxPositionValue') || '超过最大仓位金额' },
+    MARKET_END_DATE: { color: 'cyan', text: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
+    KEYWORD_FILTER: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' },
+    SIZING: { color: 'magenta', text: t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝' },
+    AGGREGATION_BUFFERED: { color: 'purple', text: t('filteredOrdersList.filterTypes.aggregationBuffered') || '已进入聚合缓冲' },
+    AGGREGATION_RELEASED: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.aggregationReleased') || '聚合已释放执行' },
+    AGGREGATION_TIMEOUT: { color: 'purple', text: t('filteredOrdersList.filterTypes.aggregationTimeout') || '聚合超时' },
+    AGGREGATION_DISABLED: { color: 'default', text: t('filteredOrdersList.filterTypes.aggregationDisabled') || '聚合取消' },
+    RISK_CONTROL: { color: 'volcano', text: t('filteredOrdersList.filterTypes.riskControl') || '风险控制' },
+    ORDERBOOK: { color: 'gold', text: t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足' },
+    EXECUTION_PRECHECK: { color: 'red', text: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败' }
+  }
+
+  const readableReasonMap: Record<string, string> = {
+    AGGREGATION_BUFFERED: t('filteredOrdersList.filterTypes.aggregationBuffered') || '已进入聚合缓冲',
+    AGGREGATION_RELEASED: t('filteredOrdersList.filterTypes.aggregationReleased') || '聚合已释放执行',
+    AGGREGATION_TIMEOUT: t('filteredOrdersList.filterTypes.aggregationTimeout') || '聚合超时',
+    AGGREGATION_DISABLED: t('filteredOrdersList.filterTypes.aggregationDisabled') || '聚合取消',
+    SIZING: t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝',
+    RISK_CONTROL: t('filteredOrdersList.filterTypes.riskControl') || '风险控制',
+    ORDERBOOK: t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足',
+    EXECUTION_PRECHECK: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败'
+  }
   
   useEffect(() => {
     if (open && copyTradingId) {
@@ -59,28 +92,11 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
   }
   
   const getFilterTypeTag = (filterType: string) => {
-    const typeMap: Record<string, { color: string; text: string }> = {
-      ORDER_DEPTH: { color: 'orange', text: t('filteredOrdersList.filterTypes.orderDepth') || '订单深度不足' },
-      SPREAD: { color: 'red', text: t('filteredOrdersList.filterTypes.spread') || '价差过大' },
-      ORDERBOOK_DEPTH: { color: 'purple', text: t('filteredOrdersList.filterTypes.orderbookDepth') || '订单簿深度不足' },
-      PRICE_VALIDITY: { color: 'blue', text: t('filteredOrdersList.filterTypes.priceValidity') || '价格不合理' },
-      MARKET_STATUS: { color: 'default', text: t('filteredOrdersList.filterTypes.marketStatus') || '市场状态不可交易' },
-      ORDERBOOK_ERROR: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败' },
-      ORDERBOOK_EMPTY: { color: 'default', text: t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空' },
-      PRICE_RANGE: { color: 'purple', text: t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符' },
-      MAX_POSITION_VALUE: { color: 'volcano', text: t('filteredOrdersList.filterTypes.maxPositionValue') || '超过最大仓位金额' },
-      MARKET_END_DATE: { color: 'cyan', text: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
-      KEYWORD_FILTER: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' },
-      SIZING: { color: 'magenta', text: 'Sizing 拒绝' },
-      AGGREGATION_TIMEOUT: { color: 'purple', text: '聚合超时' },
-      AGGREGATION_DISABLED: { color: 'default', text: '聚合取消' },
-      RISK_CONTROL: { color: 'volcano', text: '风险控制' },
-      ORDERBOOK: { color: 'gold', text: '订单簿不满足' },
-      EXECUTION_PRECHECK: { color: 'red', text: '执行前诊断失败' }
-    }
-    const config = typeMap[filterType] || { color: 'default', text: filterType }
+    const config = filterTypeMap[filterType] || { color: 'default', text: filterType }
     return <Tag color={config.color}>{config.text}</Tag>
   }
+
+  const renderFilterReason = (value: string) => readableReasonMap[value] || value
   
   const columns = [
     {
@@ -137,7 +153,9 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
       width: isMobile ? 150 : 250,
       ellipsis: true,
       render: (text: string) => (
-        <span style={{ fontSize: isMobile ? 11 : 12 }} title={text}>{text}</span>
+        <span style={{ fontSize: isMobile ? 11 : 12 }} title={renderFilterReason(text)}>
+          {renderFilterReason(text)}
+        </span>
       )
     },
     {
@@ -185,12 +203,14 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
           <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败'}</Option>
           <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空'}</Option>
           <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符'}</Option>
-          <Option value="SIZING">Sizing 拒绝</Option>
-          <Option value="AGGREGATION_TIMEOUT">聚合超时</Option>
-          <Option value="AGGREGATION_DISABLED">聚合取消</Option>
-          <Option value="RISK_CONTROL">风险控制</Option>
-          <Option value="ORDERBOOK">订单簿不满足</Option>
-          <Option value="EXECUTION_PRECHECK">执行前诊断失败</Option>
+          <Option value="SIZING">{t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝'}</Option>
+          <Option value="AGGREGATION_BUFFERED">{t('filteredOrdersList.filterTypes.aggregationBuffered') || '已进入聚合缓冲'}</Option>
+          <Option value="AGGREGATION_RELEASED">{t('filteredOrdersList.filterTypes.aggregationReleased') || '聚合已释放执行'}</Option>
+          <Option value="AGGREGATION_TIMEOUT">{t('filteredOrdersList.filterTypes.aggregationTimeout') || '聚合超时'}</Option>
+          <Option value="AGGREGATION_DISABLED">{t('filteredOrdersList.filterTypes.aggregationDisabled') || '聚合取消'}</Option>
+          <Option value="RISK_CONTROL">{t('filteredOrdersList.filterTypes.riskControl') || '风险控制'}</Option>
+          <Option value="ORDERBOOK">{t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足'}</Option>
+          <Option value="EXECUTION_PRECHECK">{t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败'}</Option>
         </Select>
       </div>
       
@@ -255,8 +275,8 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
                     
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>{t('filteredOrdersList.filterReason') || '过滤原因'}</div>
-                      <div style={{ fontSize: '12px', color: '#333' }} title={order.filterReason}>
-                        {order.filterReason}
+                      <div style={{ fontSize: '12px', color: '#333' }} title={renderFilterReason(order.filterReason)}>
+                        {renderFilterReason(order.filterReason)}
                       </div>
                     </div>
                     
