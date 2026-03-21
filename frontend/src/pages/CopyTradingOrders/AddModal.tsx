@@ -34,6 +34,8 @@ interface AddModalProps {
     maxDailyLoss?: number
     maxDailyOrders?: number
     maxDailyVolume?: number
+    smallOrderAggregationEnabled?: boolean
+    smallOrderAggregationWindowSeconds?: number
     supportSell?: boolean
     keywordFilterMode?: string
     keywords?: string[]
@@ -141,6 +143,8 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: config.maxDailyLoss,
       maxDailyOrders: config.maxDailyOrders,
       maxDailyVolume: config.maxDailyVolume,
+      smallOrderAggregationEnabled: config.smallOrderAggregationEnabled ?? false,
+      smallOrderAggregationWindowSeconds: config.smallOrderAggregationWindowSeconds,
       supportSell: config.supportSell,
       keywordFilterMode: config.keywordFilterMode || 'DISABLED',
       maxPositionValue: config.maxPositionValue
@@ -191,6 +195,8 @@ const AddModal: React.FC<AddModalProps> = ({
           minOrderSize: 1,
           maxDailyLoss: 10000,
           maxDailyOrders: 100,
+          smallOrderAggregationEnabled: false,
+          smallOrderAggregationWindowSeconds: 300,
           supportSell: true,
           keywordFilterMode: 'DISABLED'
         })
@@ -252,6 +258,8 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
       maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
+      smallOrderAggregationEnabled: template.smallOrderAggregationEnabled ?? false,
+      smallOrderAggregationWindowSeconds: template.smallOrderAggregationWindowSeconds ?? 300,
       priceTolerance: template.priceTolerance ? parseFloat(template.priceTolerance) : undefined,
       supportSell: template.supportSell,
       minOrderDepth: template.minOrderDepth ? parseFloat(template.minOrderDepth) : undefined,
@@ -400,6 +408,10 @@ const AddModal: React.FC<AddModalProps> = ({
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
+        smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
+          ? values.smallOrderAggregationWindowSeconds
+          : undefined,
         priceTolerance: values.priceTolerance?.toString(),
         delaySeconds: values.delaySeconds,
         pollIntervalSeconds: values.pollIntervalSeconds,
@@ -464,6 +476,8 @@ const AddModal: React.FC<AddModalProps> = ({
             minOrderSize: 1,
             maxDailyLoss: 10000,
             maxDailyOrders: 100,
+            smallOrderAggregationEnabled: false,
+            smallOrderAggregationWindowSeconds: 300,
             priceTolerance: 5,
             delaySeconds: 0,
             pollIntervalSeconds: 5,
@@ -883,6 +897,36 @@ const AddModal: React.FC<AddModalProps> = ({
               style={{ width: '100%' }}
               placeholder={t('copyTradingAdd.maxDailyVolumePlaceholder') || '例如：5000（可选）'}
             />
+          </Form.Item>
+
+          <Form.Item
+            label={t('copyTradingAdd.smallOrderAggregationEnabled') || '启用小额订单聚合'}
+            name="smallOrderAggregationEnabled"
+            tooltip={t('copyTradingAdd.smallOrderAggregationEnabledTooltip') || '当 sizing 结果低于最小下单金额时，先在短窗口内聚合，再尝试执行'}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.smallOrderAggregationEnabled !== currentValues.smallOrderAggregationEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('smallOrderAggregationEnabled') ? (
+              <Form.Item
+                label={t('copyTradingAdd.smallOrderAggregationWindowSeconds') || '聚合窗口 (秒)'}
+                name="smallOrderAggregationWindowSeconds"
+                rules={[{ required: true, message: t('copyTradingAdd.smallOrderAggregationWindowSecondsRequired') || '请输入聚合窗口' }]}
+                tooltip={t('copyTradingAdd.smallOrderAggregationWindowSecondsTooltip') || '窗口到期后会把同配置、同市场、同 outcome 的小额 BUY 一次性释放执行'}
+              >
+                <InputNumber
+                  min={1}
+                  max={3600}
+                  step={1}
+                  style={{ width: '100%' }}
+                  placeholder={t('copyTradingAdd.smallOrderAggregationWindowSecondsPlaceholder') || '默认 300 秒'}
+                />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           
           <Form.Item

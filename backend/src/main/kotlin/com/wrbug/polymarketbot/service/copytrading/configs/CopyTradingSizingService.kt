@@ -32,7 +32,9 @@ class CopyTradingSizingService(
         outcomeIndex: Int?
     ): CopyTradingSizingResult {
         val currentPositionValue = getCurrentPositionValue(copyTrading, marketId, outcomeIndex)
-        val currentDailyVolume = getCurrentDailyVolume(copyTrading.id ?: return rejected("跟单配置不存在"))
+        val currentDailyVolume = getCurrentDailyVolume(
+            copyTrading.id ?: return rejected("跟单配置不存在", SizingRejectionType.INVALID_INPUT)
+        )
         return calculate(
             config = copyTrading.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
@@ -66,7 +68,7 @@ class CopyTradingSizingService(
         currentDailyVolume: BigDecimal
     ): CopyTradingSizingResult {
         if (tradePrice <= BigDecimal.ZERO) {
-            return rejected("交易价格无效")
+            return rejected("交易价格无效", SizingRejectionType.INVALID_INPUT)
         }
 
         val appliedAdaptiveRatio = when (config.copyMode) {
@@ -80,7 +82,7 @@ class CopyTradingSizingService(
             CopyTradingSizingSupport.COPY_MODE_ADAPTIVE -> {
                 leaderOrderAmount.multi(appliedAdaptiveRatio ?: config.copyRatio)
             }
-            else -> return rejected("不支持的 copyMode: ${config.copyMode}")
+            else -> return rejected("不支持的 copyMode: ${config.copyMode}", SizingRejectionType.INVALID_INPUT)
         }
 
         val appliedMultiplier = resolveMultiplier(config, leaderOrderAmount)
@@ -111,7 +113,8 @@ class CopyTradingSizingService(
                     appliedAdaptiveRatio = appliedAdaptiveRatio,
                     appliedMultiplier = appliedMultiplier,
                     status = SizingStatus.REJECTED,
-                    reason = "超过最大仓位金额限制: 当前仓位=${currentPositionValue.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
+                    reason = "超过最大仓位金额限制: 当前仓位=${currentPositionValue.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额",
+                    rejectionType = SizingRejectionType.MAX_POSITION_LIMIT
                 )
             }
             if (finalAmount > remainingPosition) {
@@ -131,7 +134,8 @@ class CopyTradingSizingService(
                     appliedAdaptiveRatio = appliedAdaptiveRatio,
                     appliedMultiplier = appliedMultiplier,
                     status = SizingStatus.REJECTED,
-                    reason = "超过每日最大成交额限制: 已用=${currentDailyVolume.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
+                    reason = "超过每日最大成交额限制: 已用=${currentDailyVolume.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额",
+                    rejectionType = SizingRejectionType.MAX_DAILY_VOLUME_LIMIT
                 )
             }
             if (finalAmount > remainingDailyVolume) {
@@ -149,7 +153,8 @@ class CopyTradingSizingService(
                 appliedAdaptiveRatio = appliedAdaptiveRatio,
                 appliedMultiplier = appliedMultiplier,
                 status = SizingStatus.REJECTED,
-                reason = "金额低于最小下单限制: ${finalAmount.stripTrailingZeros().toPlainString()} < ${config.minOrderSize.stripTrailingZeros().toPlainString()} USDC"
+                reason = "金额低于最小下单限制: ${finalAmount.stripTrailingZeros().toPlainString()} < ${config.minOrderSize.stripTrailingZeros().toPlainString()} USDC",
+                rejectionType = SizingRejectionType.BELOW_MIN_ORDER_SIZE
             )
         }
 
@@ -163,7 +168,8 @@ class CopyTradingSizingService(
                 appliedAdaptiveRatio = appliedAdaptiveRatio,
                 appliedMultiplier = appliedMultiplier,
                 status = SizingStatus.REJECTED,
-                reason = "最终数量无效"
+                reason = "最终数量无效",
+                rejectionType = SizingRejectionType.INVALID_FINAL_QUANTITY
             )
         }
 
@@ -318,7 +324,7 @@ class CopyTradingSizingService(
         )
     }
 
-    private fun rejected(reason: String): CopyTradingSizingResult {
+    private fun rejected(reason: String, rejectionType: SizingRejectionType): CopyTradingSizingResult {
         return buildResult(
             baseAmount = BigDecimal.ZERO,
             multipliedAmount = BigDecimal.ZERO,
@@ -327,7 +333,8 @@ class CopyTradingSizingService(
             appliedAdaptiveRatio = null,
             appliedMultiplier = BigDecimal.ONE,
             status = SizingStatus.REJECTED,
-            reason = reason
+            reason = reason,
+            rejectionType = rejectionType
         )
     }
 
@@ -339,7 +346,8 @@ class CopyTradingSizingService(
         appliedAdaptiveRatio: BigDecimal?,
         appliedMultiplier: BigDecimal,
         status: SizingStatus,
-        reason: String
+        reason: String,
+        rejectionType: SizingRejectionType? = null
     ): CopyTradingSizingResult {
         return CopyTradingSizingResult(
             baseAmount = baseAmount,
@@ -349,7 +357,8 @@ class CopyTradingSizingService(
             appliedAdaptiveRatio = appliedAdaptiveRatio,
             appliedMultiplier = appliedMultiplier,
             status = status,
-            reason = reason
+            reason = reason,
+            rejectionType = rejectionType
         )
     }
 }

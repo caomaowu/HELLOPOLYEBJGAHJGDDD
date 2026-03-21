@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport.COPY_MODE_ADAPTIVE
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport.MULTIPLIER_MODE_NONE
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationSupport
 
 /**
  * 跟单配置管理服务（独立配置，不再绑定模板）
@@ -98,6 +99,8 @@ class CopyTradingService(
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: template.maxDailyLoss,
                     maxDailyOrders = request.maxDailyOrders ?: template.maxDailyOrders,
                     maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: template.maxDailyVolume,
+                    smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: template.smallOrderAggregationEnabled,
+                    smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds ?: template.smallOrderAggregationWindowSeconds,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                     delaySeconds = request.delaySeconds ?: template.delaySeconds,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -136,6 +139,9 @@ class CopyTradingService(
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                     maxDailyOrders = request.maxDailyOrders ?: 100,
                     maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
+                    smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: false,
+                    smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
+                        ?: SmallOrderAggregationSupport.DEFAULT_WINDOW_SECONDS,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                     delaySeconds = request.delaySeconds ?: 0,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -176,6 +182,8 @@ class CopyTradingService(
                 maxDailyLoss = config.maxDailyLoss,
                 maxDailyOrders = config.maxDailyOrders,
                 maxDailyVolume = config.maxDailyVolume,
+                smallOrderAggregationEnabled = config.smallOrderAggregationEnabled,
+                smallOrderAggregationWindowSeconds = config.smallOrderAggregationWindowSeconds,
                 priceTolerance = config.priceTolerance,
                 delaySeconds = config.delaySeconds,
                 pollIntervalSeconds = config.pollIntervalSeconds,
@@ -258,6 +266,9 @@ class CopyTradingService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: copyTrading.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: copyTrading.maxDailyOrders,
                 maxDailyVolume = mergeOptionalDecimal(request.maxDailyVolume, copyTrading.maxDailyVolume),
+                smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: copyTrading.smallOrderAggregationEnabled,
+                smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
+                    ?: copyTrading.smallOrderAggregationWindowSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: copyTrading.priceTolerance,
                 delaySeconds = request.delaySeconds ?: copyTrading.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: copyTrading.pollIntervalSeconds,
@@ -356,6 +367,8 @@ class CopyTradingService(
                     maxDailyLoss = updated.maxDailyLoss,
                     maxDailyOrders = updated.maxDailyOrders,
                     maxDailyVolume = updated.maxDailyVolume,
+                    smallOrderAggregationEnabled = updated.smallOrderAggregationEnabled,
+                    smallOrderAggregationWindowSeconds = updated.smallOrderAggregationWindowSeconds,
                     priceTolerance = updated.priceTolerance,
                     delaySeconds = updated.delaySeconds,
                     pollIntervalSeconds = updated.pollIntervalSeconds,
@@ -574,6 +587,8 @@ class CopyTradingService(
             maxDailyLoss = copyTrading.maxDailyLoss.toPlainString(),
             maxDailyOrders = copyTrading.maxDailyOrders,
             maxDailyVolume = copyTrading.maxDailyVolume?.toPlainString(),
+            smallOrderAggregationEnabled = copyTrading.smallOrderAggregationEnabled,
+            smallOrderAggregationWindowSeconds = copyTrading.smallOrderAggregationWindowSeconds,
             priceTolerance = copyTrading.priceTolerance.toPlainString(),
             delaySeconds = copyTrading.delaySeconds,
             pollIntervalSeconds = copyTrading.pollIntervalSeconds,
@@ -645,6 +660,8 @@ class CopyTradingService(
         val maxDailyLoss: BigDecimal,
         val maxDailyOrders: Int,
         val maxDailyVolume: BigDecimal?,
+        val smallOrderAggregationEnabled: Boolean,
+        val smallOrderAggregationWindowSeconds: Int,
         val priceTolerance: BigDecimal,
         val delaySeconds: Int,
         val pollIntervalSeconds: Int,
@@ -690,6 +707,10 @@ class CopyTradingService(
             maxPositionValue = config.maxPositionValue,
             maxDailyVolume = config.maxDailyVolume
         )
-        return CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()
+        CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()?.let { return it }
+        return SmallOrderAggregationSupport.validateConfig(
+            enabled = config.smallOrderAggregationEnabled,
+            windowSeconds = config.smallOrderAggregationWindowSeconds
+        ).firstOrNull()
     }
 }

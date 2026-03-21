@@ -32,6 +32,14 @@ enum class SizingStatus {
     REJECTED
 }
 
+enum class SizingRejectionType {
+    INVALID_INPUT,
+    MAX_POSITION_LIMIT,
+    MAX_DAILY_VOLUME_LIMIT,
+    BELOW_MIN_ORDER_SIZE,
+    INVALID_FINAL_QUANTITY
+}
+
 data class CopyTradingSizingResult(
     val baseAmount: BigDecimal,
     val multipliedAmount: BigDecimal,
@@ -40,7 +48,8 @@ data class CopyTradingSizingResult(
     val appliedAdaptiveRatio: BigDecimal?,
     val appliedMultiplier: BigDecimal,
     val status: SizingStatus,
-    val reason: String
+    val reason: String,
+    val rejectionType: SizingRejectionType? = null
 )
 
 object CopyTradingSizingSupport {

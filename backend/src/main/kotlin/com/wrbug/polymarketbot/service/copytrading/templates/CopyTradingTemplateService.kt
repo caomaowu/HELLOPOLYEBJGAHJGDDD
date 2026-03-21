@@ -7,6 +7,7 @@ import com.wrbug.polymarketbot.repository.CopyTradingTemplateRepository
 import com.wrbug.polymarketbot.util.IllegalBigDecimal
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingConfig
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingSupport
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationSupport
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -60,6 +61,9 @@ class CopyTradingTemplateService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                 maxDailyOrders = request.maxDailyOrders ?: 100,
                 maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
+                smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: false,
+                smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
+                    ?: SmallOrderAggregationSupport.DEFAULT_WINDOW_SECONDS,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                 delaySeconds = request.delaySeconds ?: 0,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -128,6 +132,9 @@ class CopyTradingTemplateService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: template.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: template.maxDailyOrders,
                 maxDailyVolume = mergeOptionalDecimal(request.maxDailyVolume, template.maxDailyVolume),
+                smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: template.smallOrderAggregationEnabled,
+                smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
+                    ?: template.smallOrderAggregationWindowSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                 delaySeconds = request.delaySeconds ?: template.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -205,6 +212,9 @@ class CopyTradingTemplateService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: sourceTemplate.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: sourceTemplate.maxDailyOrders,
                 maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: sourceTemplate.maxDailyVolume,
+                smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: sourceTemplate.smallOrderAggregationEnabled,
+                smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
+                    ?: sourceTemplate.smallOrderAggregationWindowSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: sourceTemplate.priceTolerance,
                 delaySeconds = request.delaySeconds ?: sourceTemplate.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: sourceTemplate.pollIntervalSeconds,
@@ -288,6 +298,8 @@ class CopyTradingTemplateService(
             maxDailyLoss = template.maxDailyLoss.toPlainString(),
             maxDailyOrders = template.maxDailyOrders,
             maxDailyVolume = template.maxDailyVolume?.toPlainString(),
+            smallOrderAggregationEnabled = template.smallOrderAggregationEnabled,
+            smallOrderAggregationWindowSeconds = template.smallOrderAggregationWindowSeconds,
             priceTolerance = template.priceTolerance.toPlainString(),
             delaySeconds = template.delaySeconds,
             pollIntervalSeconds = template.pollIntervalSeconds,
@@ -332,7 +344,11 @@ class CopyTradingTemplateService(
             maxPositionValue = null,
             maxDailyVolume = template.maxDailyVolume
         )
-        return CopyTradingSizingSupport.validateConfig(config).firstOrNull()
+        CopyTradingSizingSupport.validateConfig(config).firstOrNull()?.let { return it }
+        return SmallOrderAggregationSupport.validateConfig(
+            enabled = template.smallOrderAggregationEnabled,
+            windowSeconds = template.smallOrderAggregationWindowSeconds
+        ).firstOrNull()
     }
 }
 

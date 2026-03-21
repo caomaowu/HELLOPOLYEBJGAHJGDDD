@@ -70,6 +70,10 @@ const TemplateAdd: React.FC = () => {
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
+        smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
+          ? values.smallOrderAggregationWindowSeconds
+          : undefined,
         priceTolerance: values.priceTolerance?.toString(),
         supportSell: values.supportSell !== false,
         minOrderDepth: values.minOrderDepth?.toString(),
@@ -118,6 +122,8 @@ const TemplateAdd: React.FC = () => {
             minOrderSize: 1,
             maxDailyLoss: 10000,
             maxDailyOrders: 100,
+            smallOrderAggregationEnabled: false,
+            smallOrderAggregationWindowSeconds: 300,
             priceTolerance: 5,
             supportSell: true,
             pushFilteredOrders: false
@@ -301,6 +307,29 @@ const TemplateAdd: React.FC = () => {
             name="maxDailyVolume"
           >
             <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateAdd.smallOrderAggregationEnabled') || '启用小额订单聚合'}
+            name="smallOrderAggregationEnabled"
+            tooltip={t('templateAdd.smallOrderAggregationEnabledTooltip') || '当 sizing 结果低于最小下单金额时，先在短窗口内聚合，再尝试执行'}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.smallOrderAggregationEnabled !== currentValues.smallOrderAggregationEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('smallOrderAggregationEnabled') ? (
+              <Form.Item
+                label={t('templateAdd.smallOrderAggregationWindowSeconds') || '聚合窗口 (秒)'}
+                name="smallOrderAggregationWindowSeconds"
+                rules={[{ required: true, message: t('templateAdd.smallOrderAggregationWindowSecondsRequired') || '请输入聚合窗口' }]}
+              >
+                <InputNumber min={1} max={3600} step={1} style={{ width: '100%' }} />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           
           <Form.Item

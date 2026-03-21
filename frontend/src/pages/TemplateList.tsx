@@ -85,6 +85,8 @@ const TemplateList: React.FC = () => {
       maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
       maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
+      smallOrderAggregationEnabled: template.smallOrderAggregationEnabled ?? false,
+      smallOrderAggregationWindowSeconds: template.smallOrderAggregationWindowSeconds ?? 300,
       priceTolerance: parseFloat(template.priceTolerance),
       supportSell: template.supportSell,
       pushFilteredOrders: template.pushFilteredOrders ?? false,
@@ -150,6 +152,10 @@ const TemplateList: React.FC = () => {
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
+        smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
+          ? values.smallOrderAggregationWindowSeconds
+          : undefined,
         priceTolerance: values.priceTolerance?.toString(),
         supportSell: values.supportSell !== false,
         minOrderDepth: values.minOrderDepth?.toString(),
@@ -216,6 +222,11 @@ const TemplateList: React.FC = () => {
             {record.multiplierMode && record.multiplierMode !== 'NONE' && (
               <div style={{ fontSize: 12, color: '#666' }}>
                 {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+              </div>
+            )}
+            {record.smallOrderAggregationEnabled && (
+              <div style={{ fontSize: 12, color: '#666' }}>
+                {(t('templateList.smallOrderAggregationSummary') || '小额单聚合')}: {record.smallOrderAggregationWindowSeconds || 300}s
               </div>
             )}
           </div>
@@ -652,6 +663,29 @@ const TemplateList: React.FC = () => {
 
           <Form.Item label="每日最大成交额 (USDC)" name="maxDailyVolume">
             <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateList.smallOrderAggregationEnabled') || '启用小额订单聚合'}
+            name="smallOrderAggregationEnabled"
+            tooltip={t('templateList.smallOrderAggregationEnabledTooltip') || '当 sizing 结果低于最小下单金额时，先在短窗口内聚合，再尝试执行'}
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.smallOrderAggregationEnabled !== currentValues.smallOrderAggregationEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('smallOrderAggregationEnabled') ? (
+              <Form.Item
+                label={t('templateList.smallOrderAggregationWindowSeconds') || '聚合窗口 (秒)'}
+                name="smallOrderAggregationWindowSeconds"
+                rules={[{ required: true, message: t('templateList.smallOrderAggregationWindowSecondsRequired') || '请输入聚合窗口' }]}
+              >
+                <InputNumber min={1} max={3600} step={1} style={{ width: '100%' }} />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           
           <Form.Item

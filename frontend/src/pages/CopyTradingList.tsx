@@ -495,6 +495,11 @@ const CopyTradingList: React.FC = () => {
                         <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
                           {t('copyTradingList.dailyVolumeLimit') || '每日成交额'}: {record.maxDailyVolume ? `${formatUSDC(record.maxDailyVolume)} USDC` : (t('copyTradingList.notSet') || '未设置')}
                         </div>
+                        {record.smallOrderAggregationEnabled && (
+                          <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                            {(t('copyTradingList.smallOrderAggregationSummary') || '小额单聚合')}: {record.smallOrderAggregationWindowSeconds || 300}s
+                          </div>
+                        )}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Tag color={record.enabled ? 'green' : 'red'}>
                             {record.enabled ? '启用' : '禁用'}

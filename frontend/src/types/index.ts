@@ -202,6 +202,8 @@ export interface CopyTradingTemplate {
   maxDailyLoss?: string
   maxDailyOrders: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
   supportSell: boolean
   // 过滤条件
@@ -241,6 +243,8 @@ export interface TemplateCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -265,6 +269,8 @@ export interface TemplateUpdateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -289,6 +295,8 @@ export interface TemplateCopyRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
 }
@@ -320,6 +328,8 @@ export interface CopyTrading {
   maxDailyLoss: string
   maxDailyOrders: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
   delaySeconds: number
   pollIntervalSeconds: number
@@ -376,6 +386,8 @@ export interface CopyTradingCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   delaySeconds?: number
   pollIntervalSeconds?: number
@@ -421,6 +433,8 @@ export interface CopyTradingUpdateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  smallOrderAggregationEnabled?: boolean
+  smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   delaySeconds?: number
   pollIntervalSeconds?: number

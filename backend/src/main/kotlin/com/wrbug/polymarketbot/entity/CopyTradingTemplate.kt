@@ -96,6 +96,12 @@ data class CopyTradingTemplate(
     @Column(name = "max_daily_volume", precision = 20, scale = 8)
     val maxDailyVolume: BigDecimal? = null,
 
+    @Column(name = "small_order_aggregation_enabled", nullable = false)
+    val smallOrderAggregationEnabled: Boolean = false,
+
+    @Column(name = "small_order_aggregation_window_seconds", nullable = false)
+    val smallOrderAggregationWindowSeconds: Int = 300,
+
     @Column(name = "created_at", nullable = false)
     val createdAt: Long = System.currentTimeMillis(),
     

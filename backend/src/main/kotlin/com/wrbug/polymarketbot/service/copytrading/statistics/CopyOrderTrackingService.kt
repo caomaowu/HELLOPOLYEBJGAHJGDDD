@@ -27,10 +27,17 @@ import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import com.wrbug.polymarketbot.util.CryptoUtils
 import org.springframework.context.ApplicationContext
 import org.springframework.context.ApplicationContextAware
+import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import java.math.RoundingMode
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationBatch
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationRequest
+import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationService
+import com.wrbug.polymarketbot.service.copytrading.configs.SizingRejectionType
 
 /**
  * 订单跟踪服务
@@ -48,6 +55,7 @@ open class CopyOrderTrackingService(
     private val accountRepository: AccountRepository,
     private val filterService: CopyTradingFilterService,
     private val sizingService: CopyTradingSizingService,
+    private val smallOrderAggregationService: SmallOrderAggregationService,
     private val leaderRepository: LeaderRepository,
     private val orderSigningService: OrderSigningService,
     private val blockchainService: BlockchainService,
@@ -85,6 +93,31 @@ open class CopyOrderTrackingService(
         private const val MAX_RETRY_ATTEMPTS = 2  // 最多重试次数（首次 + 1次重试）
         private const val RETRY_DELAY_MS = 3000L  // 重试前等待时间（毫秒，3秒）
     }
+
+    private val aggregationFlushRunning = AtomicBoolean(false)
+
+    private data class BuyTradeSegment(
+        val leaderTradeId: String,
+        val leaderQuantity: BigDecimal,
+        val leaderOrderAmount: BigDecimal,
+        val tradePrice: BigDecimal,
+        val outcome: String?,
+        val source: String
+    )
+
+    private data class BuyExecutionPayload(
+        val tokenId: String,
+        val marketId: String,
+        val outcomeIndex: Int?,
+        val tradePrice: BigDecimal,
+        val leaderQuantity: BigDecimal,
+        val leaderOrderAmount: BigDecimal,
+        val outcome: String?,
+        val source: String,
+        val representativeTradeId: String,
+        val trades: List<BuyTradeSegment>,
+        val allowAggregation: Boolean
+    )
 
     /**
      * 获取或创建 Mutex（按交易ID）
@@ -132,6 +165,21 @@ open class CopyOrderTrackingService(
                 throw RuntimeException("解密 API Passphrase 失败: ${e.message}", e)
             }
         } ?: throw IllegalStateException("账户未配置 API Passphrase")
+    }
+
+    @Scheduled(fixedDelay = 1000)
+    fun flushBufferedBuyAggregations() {
+        if (!aggregationFlushRunning.compareAndSet(false, true)) {
+            return
+        }
+
+        try {
+            runBlocking {
+                releaseBufferedBuyAggregations()
+            }
+        } finally {
+            aggregationFlushRunning.set(false)
+        }
     }
 
     /**
@@ -236,321 +284,19 @@ open class CopyOrderTrackingService(
     @Transactional
     suspend fun processBuyTrade(leaderId: Long, trade: TradeResponse, source: String): Result<Unit> {
         return try {
-            // 1. 查找所有启用且支持该Leader的跟单关系
             val copyTradings = copyTradingRepository.findByLeaderIdAndEnabledTrue(leaderId)
-
             if (copyTradings.isEmpty()) {
                 return Result.success(Unit)
             }
 
-            // 2. 为每个跟单关系创建买入订单跟踪
+            val payload = buildImmediateBuyPayload(trade, source) ?: return Result.success(Unit)
             for (copyTrading in copyTradings) {
                 try {
-                    // 获取账户
                     val account = accountRepository.findById(copyTrading.accountId).orElse(null)
                         ?: continue
-
-                    // 验证账户API凭证
-                    if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
-                        logger.warn("账户未配置API凭证，跳过创建订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
-                        continue
-                    }
-
-                    // 验证账户是否启用
-                    if (!account.isEnabled) {
-                        continue
-                    }
-
-                    // 获取 tokenId：优先使用链上解析得到的 tokenId（与 Gamma clobTokenIds 一致），否则用 conditionId+outcomeIndex 链上重算
-                    val tokenId = if (!trade.tokenId.isNullOrBlank()) {
-                        trade.tokenId
-                    } else {
-                        if (trade.outcomeIndex == null) {
-                            logger.warn("交易缺少outcomeIndex且无tokenId，无法确定tokenId: tradeId=${trade.id}, market=${trade.market}")
-                            continue
-                        }
-                        val tokenIdResult = blockchainService.getTokenId(trade.market, trade.outcomeIndex)
-                        if (tokenIdResult.isFailure) {
-                            logger.error("获取tokenId失败: market=${trade.market}, outcomeIndex=${trade.outcomeIndex}, error=${tokenIdResult.exceptionOrNull()?.message}")
-                            continue
-                        }
-                        tokenIdResult.getOrNull() ?: continue
-                    }
-
-                    // 当链上解析时 Gamma 失败导致 market/outcomeIndex 为空时，按 tokenId 补查市场信息
-                    var effectiveMarketId = trade.market
-                    var effectiveOutcomeIndex = trade.outcomeIndex
-                    if (effectiveMarketId.isBlank() && !trade.tokenId.isNullOrBlank()) {
-                        val infoByToken = marketService.getMarketInfoByTokenId(trade.tokenId)
-                        if (infoByToken != null) {
-                            effectiveMarketId = infoByToken.conditionId
-                            effectiveOutcomeIndex = infoByToken.outcomeIndex
-                        }
-                    }
-                    if (effectiveMarketId.isBlank()) {
-                        logger.warn("无法确定市场(conditionId)，跳过: tradeId=${trade.id}, tokenId=${trade.tokenId}")
-                        continue
-                    }
-
-                    val tradePrice = trade.price.toSafeBigDecimal()
-                    val leaderOrderAmount = trade.size.toSafeBigDecimal().multi(tradePrice)
-
-                    // 如果启用了关键字过滤或市场截止时间过滤，需要先获取市场信息
-                    var marketTitle: String? = null
-                    var marketEndDate: Long? = null
-                    val needMarketInfo =
-                        copyTrading.keywordFilterMode != "DISABLED" || copyTrading.maxMarketEndDate != null
-
-                    if (needMarketInfo) {
-                        try {
-                            val market = marketService.getMarket(effectiveMarketId)
-                            marketTitle = market?.title
-                            marketEndDate = market?.endDate
-                        } catch (e: Exception) {
-                            logger.warn("获取市场信息失败（关键字过滤/市场截止时间检查需要）: ${e.message}", e)
-                        }
-                    }
-
-                    // 过滤条件检查：只负责订单簿/关键字/价格区间/市场截止时间等过滤
-                    val filterResult = filterService.checkFilters(
-                        copyTrading,
-                        tokenId,
-                        tradePrice = tradePrice,
-                        marketTitle = marketTitle,
-                        marketEndDate = marketEndDate
-                    )
-                    val orderbook = filterResult.orderbook  // 获取订单簿（如果需要）
-                    if (!filterResult.isPassed) {
-                        logger.warn("过滤条件检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${filterResult.reason}")
-                        recordFilteredBuyOrderAsync(
-                            copyTrading = copyTrading,
-                            account = account,
-                            trade = trade,
-                            marketId = effectiveMarketId,
-                            outcomeIndex = effectiveOutcomeIndex,
-                            filterReason = filterResult.reason,
-                            filterType = extractFilterType(filterResult.status, filterResult.reason),
-                            calculatedQuantity = null
-                        )
-                        continue
-                    }
-
-                    val sizingResult = sizingService.calculateRealTimeBuySizing(
-                        copyTrading = copyTrading,
-                        leaderOrderAmount = leaderOrderAmount,
-                        tradePrice = tradePrice,
-                        marketId = effectiveMarketId,
-                        outcomeIndex = effectiveOutcomeIndex
-                    )
-                    if (sizingResult.status != SizingStatus.EXECUTABLE) {
-                        logger.warn("sizing 检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${sizingResult.reason}")
-                        recordFilteredBuyOrderAsync(
-                            copyTrading = copyTrading,
-                            account = account,
-                            trade = trade,
-                            marketId = effectiveMarketId,
-                            outcomeIndex = effectiveOutcomeIndex,
-                            filterReason = sizingResult.reason,
-                            filterType = "SIZING",
-                            calculatedQuantity = null
-                        )
-                        continue
-                    }
-
-                    var finalBuyQuantity = sizingResult.finalQuantity
-                    if (finalBuyQuantity.lte(BigDecimal.ZERO)) {
-                        logger.warn("计算得到的买入数量为0，跳过跟单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}")
-                        continue
-                    }
-                    if (finalBuyQuantity.lt(BigDecimal.ONE)) {
-                        logger.warn("计算得到的买入数量小于1，自动调整为1 (Polymarket 最小下单数量): copyTradingId=${copyTrading.id}, tradeId=${trade.id}, originalQuantity=$finalBuyQuantity")
-                        finalBuyQuantity = BigDecimal.ONE
-                    }
-
-                    // 风险控制检查
-                    val riskCheckResult = checkRiskControls(copyTrading)
-                    if (!riskCheckResult.first) {
-                        logger.warn("风险控制检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${riskCheckResult.second}")
-                        continue
-                    }
-
-                    // 延迟跟单（如果配置了延迟）
-                    if (copyTrading.delaySeconds > 0) {
-                        logger.info("延迟跟单: copyTradingId=${copyTrading.id}, delaySeconds=${copyTrading.delaySeconds}")
-                        delay(copyTrading.delaySeconds * 1000L)  // 转换为毫秒
-                    }
-
-                    // 计算价格（应用价格容忍度）
-                    val buyPrice = calculateAdjustedPrice(trade.price.toSafeBigDecimal(), copyTrading, isBuy = true)
-                    logger.debug("计算价格结果：$buyPrice")
-                    // 在创建订单前，检查订单簿中是否有可匹配的订单（避免 FAK 订单失败）
-                    // 如果过滤检查时已经获取了订单簿，直接使用；否则重新获取
-                    val orderbookForCheck = orderbook ?: run {
-                        val orderbookResult = clobService.getOrderbookByTokenId(tokenId)
-                        if (orderbookResult.isSuccess) {
-                            orderbookResult.getOrNull()
-                        } else {
-                            null
-                        }
-                    }
-
-                    // 检查是否有可匹配的卖单（asks）
-                    if (orderbookForCheck != null) {
-                        val bestAsk = orderbookForCheck.asks
-                            .mapNotNull { it.price.toSafeBigDecimal() }
-                            .minOrNull()
-
-                        if (bestAsk == null) {
-                            logger.warn("订单簿中没有卖单，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}")
-                            continue
-                        }
-
-                        // 如果调整后的买入价格低于最佳卖单价格，无法匹配
-                        if (buyPrice.lt(bestAsk)) {
-                            logger.info("调整后的买入价格 ($buyPrice) 低于最佳卖单价格 ($bestAsk)，无法匹配，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, leaderPrice=${trade.price}, tolerance=${copyTrading.priceTolerance}")
-                            continue
-                        }
-                    }
-
-                    // 解密 API 凭证
-                    val apiSecret = try {
-                        decryptApiSecret(account)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-                    val apiPassphrase = try {
-                        decryptApiPassphrase(account)
-                    } catch (e: Exception) {
-                        logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
-                        continue
-                    }
-
-                    // 创建带认证的CLOB API客户端
-                    val clobApi = retrofitFactory.createClobApi(
-                        account.apiKey,
-                        apiSecret,
-                        apiPassphrase,
-                        account.walletAddress
-                    )
-
-                    // 解密私钥
-                    val decryptedPrivateKey = decryptPrivateKey(account)
-
-                    // 获取费率（根据 Polymarket Maker Rebates Program 要求）
-                    val feeRateResult = clobService.getFeeRate(tokenId)
-                    val feeRateBps = if (feeRateResult.isSuccess) {
-                        feeRateResult.getOrNull()?.toString() ?: "0"
-                    } else {
-                        logger.warn("获取费率失败，使用默认值 0: tokenId=$tokenId, error=${feeRateResult.exceptionOrNull()?.message}")
-                        "0"
-                    }
-
-                    logger.info("准备创建买入订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, leaderPrice=${trade.price}, tolerance=${copyTrading.priceTolerance}, calculatedPrice=$buyPrice, quantity=$finalBuyQuantity, baseFee=$feeRateBps")
-
-                    // Neg Risk 市场需用 Neg Risk Exchange 签约，否则服务端返回 invalid signature
-                    val negRisk = marketService.getNegRiskByConditionId(effectiveMarketId) == true
-                    val exchangeContract = orderSigningService.getExchangeContract(negRisk)
-                    if (negRisk) logger.debug("市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=$effectiveMarketId")
-
-                    // 调用API创建订单（带重试机制）
-                    // 重试策略：最多重试 MAX_RETRY_ATTEMPTS 次，每次重试前等待 RETRY_DELAY_MS 毫秒
-                    // 每次重试都会重新生成salt并重新签名，确保签名唯一性
-                    val createOrderResult = createOrderWithRetry(
-                        clobApi = clobApi,
-                        privateKey = decryptedPrivateKey,
-                        makerAddress = account.proxyAddress,
-                        walletAddress = account.walletAddress,
-                        exchangeContract = exchangeContract,
-                        tokenId = tokenId,
-                        side = "BUY",
-                        price = buyPrice.toString(),
-                        size = finalBuyQuantity.toString(),
-                        owner = account.apiKey,
-                        copyTradingId = copyTrading.id!!,
-                        tradeId = trade.id,
-                        feeRateBps = feeRateBps,
-                        signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
-                    )
-
-                    // 处理订单创建失败
-                    if (createOrderResult.isFailure) {
-                        // 提取错误信息（只保留 code 和 errorBody）
-                        val exception = createOrderResult.exceptionOrNull()
-                        logger.error("创建买入订单失败: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, leaderPrice=${trade.price}, myPrice=$buyPrice, error=${exception?.message}")
-
-                        // 发送订单失败通知（异步，不阻塞，仅在 pushFailedOrders 为 true 时发送）
-                        if (copyTrading.pushFailedOrders) {
-                            notificationScope.launch {
-                                try {
-                                    // 获取市场信息（标题和slug）
-                                    val market = marketService.getMarket(effectiveMarketId)
-                                    val marketTitle = market?.title ?: effectiveMarketId
-                                    val marketSlug = market?.eventSlug  // 跳转用的 slug
-
-                                    // 获取当前语言设置（从 LocaleContextHolder）
-                                    val locale = try {
-                                        org.springframework.context.i18n.LocaleContextHolder.getLocale()
-                                    } catch (e: Exception) {
-                                        java.util.Locale("zh", "CN")  // 默认简体中文
-                                    }
-
-                                    telegramNotificationService?.sendOrderFailureNotification(
-                                        marketTitle = marketTitle,
-                                        marketId = effectiveMarketId,
-                                        marketSlug = marketSlug,
-                                        side = "BUY",
-                                        outcome = null,  // 失败时可能没有 outcome
-                                        price = buyPrice.toString(),
-                                        size = finalBuyQuantity.toString(),
-                                        errorMessage = exception?.message.orEmpty(),  // 只传递后端返回的 msg
-                                        accountName = account.accountName,
-                                        walletAddress = account.walletAddress,
-                                        locale = locale
-                                    )
-                                } catch (e: Exception) {
-                                    logger.warn("发送订单失败通知失败: ${e.message}", e)
-                                }
-                            }
-                        }
-
-                        continue
-                    }
-
-                    val realOrderId = createOrderResult.getOrNull() ?: continue
-
-                    // 验证 orderId 格式（必须以 0x 开头的 16 进制）
-                    if (!isValidOrderId(realOrderId)) {
-                        logger.warn("买入订单ID格式无效，跳过保存: orderId=$realOrderId")
-                        continue
-                    }
-
-                    // 创建买入订单跟踪记录（使用真实订单ID，使用outcomeIndex）
-                    // 先使用下单时的价格和数量作为临时值，等待轮询任务获取实际数据后再发送通知
-                    val tracking = CopyOrderTracking(
-                        copyTradingId = copyTrading.id,
-                        accountId = copyTrading.accountId,
-                        leaderId = copyTrading.leaderId,
-                        marketId = effectiveMarketId,
-                        side = effectiveOutcomeIndex?.toString() ?: "",  // 使用outcomeIndex作为side（兼容旧数据）
-                        outcomeIndex = effectiveOutcomeIndex,  // 新增字段
-                        buyOrderId = realOrderId,  // 使用真实订单ID
-                        leaderBuyTradeId = trade.id,
-                        leaderBuyQuantity = trade.size.toSafeBigDecimal(),  // 存储 Leader 买入数量（用于固定金额模式计算卖出比例）
-                        quantity = finalBuyQuantity,  // 使用最终数量（可能已调整），临时值
-                        price = buyPrice,  // 使用下单价格，临时值
-                        remainingQuantity = finalBuyQuantity,
-                        status = "filled",
-                        notificationSent = false,  // 标记为未发送通知，等待轮询任务获取实际数据后发送
-                        source = source  // 订单来源
-                    )
-
-                    copyOrderTrackingRepository.save(tracking)
-
-                    logger.info("买入订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realOrderId, copyTradingId=${copyTrading.id}")
+                    executeBuyForCopyTrading(copyTrading, account, payload)
                 } catch (e: Exception) {
                     logger.error("处理买入交易失败: copyTradingId=${copyTrading.id}, tradeId=${trade.id}", e)
-                    // 继续处理下一个跟单关系
                 }
             }
 
@@ -559,6 +305,421 @@ open class CopyOrderTrackingService(
             logger.error("处理买入交易异常: leaderId=$leaderId, tradeId=${trade.id}", e)
             Result.failure(e)
         }
+    }
+
+    private suspend fun buildImmediateBuyPayload(
+        trade: TradeResponse,
+        source: String
+    ): BuyExecutionPayload? {
+        val tokenId = if (!trade.tokenId.isNullOrBlank()) {
+            trade.tokenId
+        } else {
+            if (trade.outcomeIndex == null) {
+                logger.warn("交易缺少outcomeIndex且无tokenId，无法确定tokenId: tradeId=${trade.id}, market=${trade.market}")
+                return null
+            }
+            val tokenIdResult = blockchainService.getTokenId(trade.market, trade.outcomeIndex)
+            if (tokenIdResult.isFailure) {
+                logger.error("获取tokenId失败: market=${trade.market}, outcomeIndex=${trade.outcomeIndex}, error=${tokenIdResult.exceptionOrNull()?.message}")
+                return null
+            }
+            tokenIdResult.getOrNull() ?: return null
+        }
+
+        var effectiveMarketId = trade.market
+        var effectiveOutcomeIndex = trade.outcomeIndex
+        if (effectiveMarketId.isBlank() && !trade.tokenId.isNullOrBlank()) {
+            val infoByToken = marketService.getMarketInfoByTokenId(trade.tokenId)
+            if (infoByToken != null) {
+                effectiveMarketId = infoByToken.conditionId
+                effectiveOutcomeIndex = infoByToken.outcomeIndex
+            }
+        }
+        if (effectiveMarketId.isBlank()) {
+            logger.warn("无法确定市场(conditionId)，跳过: tradeId=${trade.id}, tokenId=${trade.tokenId}")
+            return null
+        }
+
+        val tradePrice = trade.price.toSafeBigDecimal()
+        val leaderQuantity = trade.size.toSafeBigDecimal()
+        val leaderOrderAmount = leaderQuantity.multi(tradePrice)
+        return BuyExecutionPayload(
+            tokenId = tokenId,
+            marketId = effectiveMarketId,
+            outcomeIndex = effectiveOutcomeIndex,
+            tradePrice = tradePrice,
+            leaderQuantity = leaderQuantity,
+            leaderOrderAmount = leaderOrderAmount,
+            outcome = trade.outcome,
+            source = source,
+            representativeTradeId = trade.id,
+            trades = listOf(
+                BuyTradeSegment(
+                    leaderTradeId = trade.id,
+                    leaderQuantity = leaderQuantity,
+                    leaderOrderAmount = leaderOrderAmount,
+                    tradePrice = tradePrice,
+                    outcome = trade.outcome,
+                    source = source
+                )
+            ),
+            allowAggregation = true
+        )
+    }
+
+    private fun buildAggregatedBuyPayload(batch: SmallOrderAggregationBatch): BuyExecutionPayload {
+        return BuyExecutionPayload(
+            tokenId = batch.tokenId,
+            marketId = batch.marketId,
+            outcomeIndex = batch.outcomeIndex,
+            tradePrice = batch.averageTradePrice,
+            leaderQuantity = batch.totalLeaderQuantity,
+            leaderOrderAmount = batch.totalLeaderOrderAmount,
+            outcome = batch.representativeOutcome,
+            source = "aggregated",
+            representativeTradeId = batch.representativeTradeId,
+            trades = batch.trades.map { trade ->
+                BuyTradeSegment(
+                    leaderTradeId = trade.leaderTradeId,
+                    leaderQuantity = trade.leaderQuantity,
+                    leaderOrderAmount = trade.leaderOrderAmount,
+                    tradePrice = trade.tradePrice,
+                    outcome = trade.outcome,
+                    source = trade.source
+                )
+            },
+            allowAggregation = false
+        )
+    }
+
+    private suspend fun releaseBufferedBuyAggregations() {
+        val enabledCopyTradings = copyTradingRepository.findAll()
+            .filter { it.id != null && it.smallOrderAggregationEnabled }
+        if (enabledCopyTradings.isEmpty()) {
+            return
+        }
+
+        val readyBatches = smallOrderAggregationService.releaseExpired(
+            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds }
+        )
+        if (readyBatches.isEmpty()) {
+            return
+        }
+
+        logger.info("检测到 {} 个到期的小额 BUY 聚合组，开始释放执行", readyBatches.size)
+        for (batch in readyBatches) {
+            try {
+                val copyTrading = copyTradingRepository.findById(batch.copyTradingId).orElse(null)
+                if (copyTrading == null) {
+                    logger.warn("聚合组对应的跟单配置不存在，直接丢弃: key={}, copyTradingId={}", batch.key, batch.copyTradingId)
+                    continue
+                }
+                val account = accountRepository.findById(copyTrading.accountId).orElse(null)
+                if (account == null) {
+                    logger.warn("聚合组对应的账户不存在，直接丢弃: key={}, accountId={}", batch.key, copyTrading.accountId)
+                    continue
+                }
+
+                val payload = buildAggregatedBuyPayload(batch)
+                if (!copyTrading.enabled || !copyTrading.smallOrderAggregationEnabled) {
+                    recordFilteredBuyPayloadAsync(
+                        copyTrading = copyTrading,
+                        account = account,
+                        payload = payload,
+                        filterReason = "聚合窗口到期前配置已禁用，放弃执行",
+                        filterType = "AGGREGATION_DISABLED",
+                        calculatedQuantity = null
+                    )
+                    continue
+                }
+
+                executeBuyForCopyTrading(copyTrading, account, payload)
+            } catch (e: Exception) {
+                logger.error("释放小额 BUY 聚合组失败: key=${batch.key}, copyTradingId=${batch.copyTradingId}", e)
+            }
+        }
+    }
+
+    private suspend fun executeBuyForCopyTrading(
+        copyTrading: CopyTrading,
+        account: Account,
+        payload: BuyExecutionPayload
+    ): Result<Unit> {
+        if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
+            logger.warn("账户未配置API凭证，跳过创建订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
+            return Result.success(Unit)
+        }
+        if (!account.isEnabled) {
+            logger.warn("账户已禁用，跳过创建订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
+            return Result.success(Unit)
+        }
+
+        var marketTitle: String? = null
+        var marketEndDate: Long? = null
+        val needMarketInfo = copyTrading.keywordFilterMode != "DISABLED" || copyTrading.maxMarketEndDate != null
+        if (needMarketInfo) {
+            try {
+                val market = marketService.getMarket(payload.marketId)
+                marketTitle = market?.title
+                marketEndDate = market?.endDate
+            } catch (e: Exception) {
+                logger.warn("获取市场信息失败（关键字过滤/市场截止时间检查需要）: ${e.message}", e)
+            }
+        }
+
+        val filterResult = filterService.checkFilters(
+            copyTrading,
+            payload.tokenId,
+            tradePrice = payload.tradePrice,
+            marketTitle = marketTitle,
+            marketEndDate = marketEndDate
+        )
+        val orderbook = filterResult.orderbook
+        if (!filterResult.isPassed) {
+            logger.warn("过滤条件检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${filterResult.reason}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = filterResult.reason,
+                filterType = extractFilterType(filterResult.status, filterResult.reason),
+                calculatedQuantity = null
+            )
+            return Result.success(Unit)
+        }
+
+        val sizingResult = sizingService.calculateRealTimeBuySizing(
+            copyTrading = copyTrading,
+            leaderOrderAmount = payload.leaderOrderAmount,
+            tradePrice = payload.tradePrice,
+            marketId = payload.marketId,
+            outcomeIndex = payload.outcomeIndex
+        )
+        if (sizingResult.status != SizingStatus.EXECUTABLE) {
+            if (payload.allowAggregation &&
+                copyTrading.smallOrderAggregationEnabled &&
+                sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
+            ) {
+                smallOrderAggregationService.bufferTrade(
+                    SmallOrderAggregationRequest(
+                        copyTradingId = copyTrading.id!!,
+                        accountId = copyTrading.accountId,
+                        leaderId = copyTrading.leaderId,
+                        tokenId = payload.tokenId,
+                        marketId = payload.marketId,
+                        outcomeIndex = payload.outcomeIndex,
+                        leaderTradeId = payload.representativeTradeId,
+                        leaderQuantity = payload.leaderQuantity,
+                        leaderOrderAmount = payload.leaderOrderAmount,
+                        tradePrice = payload.tradePrice,
+                        outcome = payload.outcome,
+                        source = payload.source
+                    )
+                )
+                return Result.success(Unit)
+            }
+
+            val filterType = if (payload.trades.size > 1 && sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE) {
+                "AGGREGATION_TIMEOUT"
+            } else {
+                "SIZING"
+            }
+            logger.warn("sizing 检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${sizingResult.reason}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = sizingResult.reason,
+                filterType = filterType,
+                calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
+            )
+            return Result.success(Unit)
+        }
+
+        var finalBuyQuantity = sizingResult.finalQuantity
+        if (finalBuyQuantity.lte(BigDecimal.ZERO)) {
+            logger.warn("计算得到的买入数量为0，跳过跟单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}")
+            return Result.success(Unit)
+        }
+        if (finalBuyQuantity.lt(BigDecimal.ONE)) {
+            logger.warn("计算得到的买入数量小于1，自动调整为1 (Polymarket 最小下单数量): copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, originalQuantity=$finalBuyQuantity")
+            finalBuyQuantity = BigDecimal.ONE
+        }
+
+        val riskCheckResult = checkRiskControls(copyTrading)
+        if (!riskCheckResult.first) {
+            logger.warn("风险控制检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${riskCheckResult.second}")
+            if (payload.trades.size > 1) {
+                recordFilteredBuyPayloadAsync(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    filterReason = riskCheckResult.second,
+                    filterType = "RISK_CONTROL",
+                    calculatedQuantity = finalBuyQuantity
+                )
+            }
+            return Result.success(Unit)
+        }
+
+        if (copyTrading.delaySeconds > 0) {
+            logger.info("延迟跟单: copyTradingId=${copyTrading.id}, delaySeconds=${copyTrading.delaySeconds}")
+            delay(copyTrading.delaySeconds * 1000L)
+        }
+
+        val buyPrice = calculateAdjustedPrice(payload.tradePrice, copyTrading, isBuy = true)
+        val orderbookForCheck = orderbook ?: run {
+            val orderbookResult = clobService.getOrderbookByTokenId(payload.tokenId)
+            if (orderbookResult.isSuccess) orderbookResult.getOrNull() else null
+        }
+        if (orderbookForCheck != null) {
+            val bestAsk = orderbookForCheck.asks.mapNotNull { it.price.toSafeBigDecimal() }.minOrNull()
+            if (bestAsk == null) {
+                logger.warn("订单簿中没有卖单，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}")
+                if (payload.trades.size > 1) {
+                    recordFilteredBuyPayloadAsync(
+                        copyTrading = copyTrading,
+                        account = account,
+                        payload = payload,
+                        filterReason = "订单簿中没有可成交的卖单",
+                        filterType = "ORDERBOOK",
+                        calculatedQuantity = finalBuyQuantity
+                    )
+                }
+                return Result.success(Unit)
+            }
+            if (buyPrice.lt(bestAsk)) {
+                logger.info("调整后的买入价格 ($buyPrice) 低于最佳卖单价格 ($bestAsk)，无法匹配，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, leaderPrice=${payload.tradePrice}, tolerance=${copyTrading.priceTolerance}")
+                if (payload.trades.size > 1) {
+                    recordFilteredBuyPayloadAsync(
+                        copyTrading = copyTrading,
+                        account = account,
+                        payload = payload,
+                        filterReason = "聚合释放后订单簿无法匹配: adjustedPrice=$buyPrice < bestAsk=$bestAsk",
+                        filterType = "ORDERBOOK",
+                        calculatedQuantity = finalBuyQuantity
+                    )
+                }
+                return Result.success(Unit)
+            }
+        }
+
+        val apiSecret = try {
+            decryptApiSecret(account)
+        } catch (e: Exception) {
+            logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
+            return Result.success(Unit)
+        }
+        val apiPassphrase = try {
+            decryptApiPassphrase(account)
+        } catch (e: Exception) {
+            logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
+            return Result.success(Unit)
+        }
+
+        val clobApi = retrofitFactory.createClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
+        val decryptedPrivateKey = decryptPrivateKey(account)
+        val feeRateResult = clobService.getFeeRate(payload.tokenId)
+        val feeRateBps = if (feeRateResult.isSuccess) {
+            feeRateResult.getOrNull()?.toString() ?: "0"
+        } else {
+            logger.warn("获取费率失败，使用默认值 0: tokenId=${payload.tokenId}, error=${feeRateResult.exceptionOrNull()?.message}")
+            "0"
+        }
+
+        logger.info(
+            "准备创建买入订单: copyTradingId={}, tradeId={}, leaderPrice={}, tolerance={}, calculatedPrice={}, quantity={}, baseFee={}, aggregated={}",
+            copyTrading.id,
+            payload.representativeTradeId,
+            payload.tradePrice,
+            copyTrading.priceTolerance,
+            buyPrice,
+            finalBuyQuantity,
+            feeRateBps,
+            payload.trades.size > 1
+        )
+
+        val negRisk = marketService.getNegRiskByConditionId(payload.marketId) == true
+        val exchangeContract = orderSigningService.getExchangeContract(negRisk)
+        if (negRisk) logger.debug("市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=${payload.marketId}")
+
+        val createOrderResult = createOrderWithRetry(
+            clobApi = clobApi,
+            privateKey = decryptedPrivateKey,
+            makerAddress = account.proxyAddress,
+            walletAddress = account.walletAddress,
+            exchangeContract = exchangeContract,
+            tokenId = payload.tokenId,
+            side = "BUY",
+            price = buyPrice.toString(),
+            size = finalBuyQuantity.toString(),
+            owner = account.apiKey,
+            copyTradingId = copyTrading.id!!,
+            tradeId = payload.representativeTradeId,
+            feeRateBps = feeRateBps,
+            signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
+        )
+        if (createOrderResult.isFailure) {
+            val exception = createOrderResult.exceptionOrNull()
+            logger.error("创建买入订单失败: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, leaderPrice=${payload.tradePrice}, myPrice=$buyPrice, error=${exception?.message}")
+            if (copyTrading.pushFailedOrders) {
+                notificationScope.launch {
+                    try {
+                        val market = marketService.getMarket(payload.marketId)
+                        val marketTitle = market?.title ?: payload.marketId
+                        val marketSlug = market?.eventSlug
+                        val locale = try {
+                            org.springframework.context.i18n.LocaleContextHolder.getLocale()
+                        } catch (e: Exception) {
+                            java.util.Locale("zh", "CN")
+                        }
+                        telegramNotificationService?.sendOrderFailureNotification(
+                            marketTitle = marketTitle,
+                            marketId = payload.marketId,
+                            marketSlug = marketSlug,
+                            side = "BUY",
+                            outcome = payload.outcome,
+                            price = buyPrice.toString(),
+                            size = finalBuyQuantity.toString(),
+                            errorMessage = exception?.message.orEmpty(),
+                            accountName = account.accountName,
+                            walletAddress = account.walletAddress,
+                            locale = locale
+                        )
+                    } catch (e: Exception) {
+                        logger.warn("发送订单失败通知失败: ${e.message}", e)
+                    }
+                }
+            }
+            return Result.success(Unit)
+        }
+
+        val realOrderId = createOrderResult.getOrNull() ?: return Result.success(Unit)
+        if (!isValidOrderId(realOrderId)) {
+            logger.warn("买入订单ID格式无效，跳过保存: orderId=$realOrderId")
+            return Result.success(Unit)
+        }
+
+        val tracking = CopyOrderTracking(
+            copyTradingId = copyTrading.id,
+            accountId = copyTrading.accountId,
+            leaderId = copyTrading.leaderId,
+            marketId = payload.marketId,
+            side = payload.outcomeIndex?.toString() ?: "",
+            outcomeIndex = payload.outcomeIndex,
+            buyOrderId = realOrderId,
+            leaderBuyTradeId = payload.representativeTradeId,
+            leaderBuyQuantity = payload.leaderQuantity,
+            quantity = finalBuyQuantity,
+            price = buyPrice,
+            remainingQuantity = finalBuyQuantity,
+            status = "filled",
+            notificationSent = false,
+            source = payload.source
+        )
+        copyOrderTrackingRepository.save(tracking)
+        logger.info("买入订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realOrderId, copyTradingId=${copyTrading.id}")
+        return Result.success(Unit)
     }
 
     /**
@@ -608,32 +769,73 @@ open class CopyOrderTrackingService(
         filterType: String,
         calculatedQuantity: BigDecimal?
     ) {
+        recordFilteredBuyPayloadAsync(
+            copyTrading = copyTrading,
+            account = account,
+            payload = BuyExecutionPayload(
+                tokenId = trade.tokenId ?: "",
+                marketId = marketId,
+                outcomeIndex = outcomeIndex,
+                tradePrice = trade.price.toSafeBigDecimal(),
+                leaderQuantity = trade.size.toSafeBigDecimal(),
+                leaderOrderAmount = trade.size.toSafeBigDecimal().multi(trade.price.toSafeBigDecimal()),
+                outcome = trade.outcome,
+                source = "single",
+                representativeTradeId = trade.id,
+                trades = listOf(
+                    BuyTradeSegment(
+                        leaderTradeId = trade.id,
+                        leaderQuantity = trade.size.toSafeBigDecimal(),
+                        leaderOrderAmount = trade.size.toSafeBigDecimal().multi(trade.price.toSafeBigDecimal()),
+                        tradePrice = trade.price.toSafeBigDecimal(),
+                        outcome = trade.outcome,
+                        source = "single"
+                    )
+                ),
+                allowAggregation = false
+            ),
+            filterReason = filterReason,
+            filterType = filterType,
+            calculatedQuantity = calculatedQuantity
+        )
+    }
+
+    private fun recordFilteredBuyPayloadAsync(
+        copyTrading: CopyTrading,
+        account: Account,
+        payload: BuyExecutionPayload,
+        filterReason: String,
+        filterType: String,
+        calculatedQuantity: BigDecimal?
+    ) {
         notificationScope.launch {
             try {
-                val market = marketService.getMarket(marketId)
-                val marketTitle = market?.title ?: marketId
+                val market = marketService.getMarket(payload.marketId)
+                val marketTitle = market?.title ?: payload.marketId
                 val marketSlug = market?.slug
 
-                val filteredOrder = FilteredOrder(
-                    copyTradingId = copyTrading.id!!,
-                    accountId = copyTrading.accountId,
-                    leaderId = copyTrading.leaderId,
-                    leaderTradeId = trade.id,
-                    marketId = marketId,
-                    marketTitle = marketTitle,
-                    marketSlug = marketSlug,
-                    side = "BUY",
-                    outcomeIndex = outcomeIndex,
-                    outcome = trade.outcome,
-                    price = trade.price.toSafeBigDecimal(),
-                    size = trade.size.toSafeBigDecimal(),
-                    calculatedQuantity = calculatedQuantity,
-                    filterReason = filterReason,
-                    filterType = filterType
-                )
-
-                filteredOrderRepository.save(filteredOrder)
-                logger.info("已记录被过滤的订单: copyTradingId=${copyTrading.id}, tradeId=${trade.id}, filterType=$filterType")
+                payload.trades.forEach { trade ->
+                    filteredOrderRepository.save(
+                        FilteredOrder(
+                            copyTradingId = copyTrading.id!!,
+                            accountId = copyTrading.accountId,
+                            leaderId = copyTrading.leaderId,
+                            leaderTradeId = trade.leaderTradeId,
+                            marketId = payload.marketId,
+                            marketTitle = marketTitle,
+                            marketSlug = marketSlug,
+                            side = "BUY",
+                            outcomeIndex = payload.outcomeIndex,
+                            outcome = trade.outcome,
+                            price = trade.tradePrice,
+                            size = trade.leaderQuantity,
+                            calculatedQuantity = calculatedQuantity,
+                            filterReason = filterReason,
+                            filterType = filterType
+                        )
+                    )
+                }
+                logger.info("已记录被过滤的订单: copyTradingId={}, tradeCount={}, filterType={}", copyTrading.id, payload.trades.size, filterType)
 
                 if (copyTrading.pushFilteredOrders) {
                     val locale = try {
@@ -644,12 +846,12 @@ open class CopyOrderTrackingService(
 
                     telegramNotificationService?.sendOrderFilteredNotification(
                         marketTitle = marketTitle,
-                        marketId = marketId,
+                        marketId = payload.marketId,
                         marketSlug = marketSlug,
                         side = "BUY",
-                        outcome = trade.outcome,
-                        price = trade.price,
-                        size = trade.size,
+                        outcome = payload.outcome,
+                        price = payload.tradePrice.toPlainString(),
+                        size = payload.leaderQuantity.toPlainString(),
                         filterReason = filterReason,
                         filterType = filterType,
                         accountName = account.accountName,
