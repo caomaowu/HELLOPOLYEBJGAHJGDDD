@@ -1,5 +1,6 @@
 package com.wrbug.polymarketbot.api
 
+import com.google.gson.annotations.SerializedName
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
@@ -58,6 +59,19 @@ interface PolymarketDataApi {
         @Query("sortDirection") sortDirection: String? = null,
         @Query("side") side: String? = null
     ): Response<List<UserActivityResponse>>
+
+    /**
+     * 获取市场成交记录
+     * 用于按市场反查活跃 trader
+     */
+    @GET("/trades")
+    suspend fun getMarketTrades(
+        @Query("market") market: String,
+        @Query("limit") limit: Int? = null,
+        @Query("offset") offset: Int? = null,
+        @Query("sortBy") sortBy: String? = null,
+        @Query("sortDirection") sortDirection: String? = null
+    ): Response<List<MarketTradeResponse>>
 }
 
 /**
@@ -125,6 +139,30 @@ data class UserActivityResponse(
     val bio: String? = null,
     val profileImage: String? = null,
     val profileImageOptimized: String? = null
+)
+
+/**
+ * 市场成交响应
+ * 用于按市场聚合活跃 trader
+ */
+data class MarketTradeResponse(
+    val id: String? = null,
+    val market: String? = null,
+    val conditionId: String? = null,
+    val asset: String? = null,
+    val side: String? = null,
+    val outcome: String? = null,
+    val price: Double? = null,
+    val size: Double? = null,
+    val usdcSize: Double? = null,
+    val timestamp: Long? = null,
+    val owner: String? = null,
+    val user: String? = null,
+    val proxyWallet: String? = null,
+    @SerializedName("maker_address")
+    val makerAddress: String? = null,
+    val title: String? = null,
+    val slug: String? = null
 )
 
 

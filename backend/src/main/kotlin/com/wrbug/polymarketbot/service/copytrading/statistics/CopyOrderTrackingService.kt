@@ -5,6 +5,7 @@ import com.wrbug.polymarketbot.api.PolymarketClobApi
 import com.wrbug.polymarketbot.api.TradeResponse
 import com.wrbug.polymarketbot.entity.*
 import com.wrbug.polymarketbot.repository.*
+import com.wrbug.polymarketbot.service.accounts.AccountExecutionDiagnosticsService
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.*
 import kotlinx.coroutines.*
@@ -38,6 +39,8 @@ import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggrega
 import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationRequest
 import com.wrbug.polymarketbot.service.copytrading.aggregation.SmallOrderAggregationService
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingRejectionType
+import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventRecordRequest
+import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventService
 
 /**
  * 订单跟踪服务
@@ -56,6 +59,8 @@ open class CopyOrderTrackingService(
     private val filterService: CopyTradingFilterService,
     private val sizingService: CopyTradingSizingService,
     private val smallOrderAggregationService: SmallOrderAggregationService,
+    private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService,
+    private val executionEventService: CopyTradingExecutionEventService,
     private val leaderRepository: LeaderRepository,
     private val orderSigningService: OrderSigningService,
     private val blockchainService: BlockchainService,
@@ -421,6 +426,17 @@ open class CopyOrderTrackingService(
                 }
 
                 val payload = buildAggregatedBuyPayload(batch)
+                recordExecutionEvent(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    stage = "AGGREGATION",
+                    eventType = "AGGREGATION_RELEASED",
+                    status = "info",
+                    message = "聚合窗口到期，开始释放执行",
+                    aggregationKey = batch.key,
+                    aggregationTradeCount = batch.trades.size
+                )
                 if (!copyTrading.enabled || !copyTrading.smallOrderAggregationEnabled) {
                     recordFilteredBuyPayloadAsync(
                         copyTrading = copyTrading,
@@ -429,6 +445,17 @@ open class CopyOrderTrackingService(
                         filterReason = "聚合窗口到期前配置已禁用，放弃执行",
                         filterType = "AGGREGATION_DISABLED",
                         calculatedQuantity = null
+                    )
+                    recordExecutionEvent(
+                        copyTrading = copyTrading,
+                        account = account,
+                        payload = payload,
+                        stage = "AGGREGATION",
+                        eventType = "AGGREGATION_DISCARDED",
+                        status = "warning",
+                        message = "聚合窗口到期前配置已禁用，放弃执行",
+                        aggregationKey = batch.key,
+                        aggregationTradeCount = batch.trades.size
                     )
                     continue
                 }
@@ -445,12 +472,58 @@ open class CopyOrderTrackingService(
         account: Account,
         payload: BuyExecutionPayload
     ): Result<Unit> {
+        if (payload.trades.size == 1) {
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "DISCOVERY",
+                eventType = "SIGNAL_DETECTED",
+                status = "info",
+                message = "检测到新的 BUY 跟单信号"
+            )
+        }
+
         if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
             logger.warn("账户未配置API凭证，跳过创建订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = "账户未配置完整 API 凭证，跳过执行",
+                filterType = "EXECUTION_PRECHECK",
+                calculatedQuantity = null
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "ACCOUNT_CREDENTIALS_MISSING",
+                status = "error",
+                message = "账户未配置完整 API 凭证，无法执行跟单"
+            )
             return Result.success(Unit)
         }
         if (!account.isEnabled) {
             logger.warn("账户已禁用，跳过创建订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = "账户已禁用，跳过执行",
+                filterType = "EXECUTION_PRECHECK",
+                calculatedQuantity = null
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "ACCOUNT_DISABLED",
+                status = "error",
+                message = "账户已禁用，无法执行跟单"
+            )
             return Result.success(Unit)
         }
 
@@ -485,6 +558,15 @@ open class CopyOrderTrackingService(
                 filterType = extractFilterType(filterResult.status, filterResult.reason),
                 calculatedQuantity = null
             )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "FILTER",
+                eventType = "FILTER_REJECTED",
+                status = "warning",
+                message = filterResult.reason
+            )
             return Result.success(Unit)
         }
 
@@ -500,7 +582,7 @@ open class CopyOrderTrackingService(
                 copyTrading.smallOrderAggregationEnabled &&
                 sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
             ) {
-                smallOrderAggregationService.bufferTrade(
+                val batch = smallOrderAggregationService.bufferTrade(
                     SmallOrderAggregationRequest(
                         copyTradingId = copyTrading.id!!,
                         accountId = copyTrading.accountId,
@@ -515,6 +597,17 @@ open class CopyOrderTrackingService(
                         outcome = payload.outcome,
                         source = payload.source
                     )
+                )
+                recordExecutionEvent(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    stage = "AGGREGATION",
+                    eventType = "AGGREGATION_BUFFERED",
+                    status = "info",
+                    message = "订单金额低于最小下单限制，已进入聚合等待",
+                    aggregationKey = batch.key,
+                    aggregationTradeCount = batch.trades.size
                 )
                 return Result.success(Unit)
             }
@@ -533,12 +626,40 @@ open class CopyOrderTrackingService(
                 filterType = filterType,
                 calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
             )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "FILTER",
+                eventType = if (filterType == "AGGREGATION_TIMEOUT") "AGGREGATION_TIMEOUT" else "SIZING_REJECTED",
+                status = "warning",
+                message = sizingResult.reason,
+                calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
+            )
             return Result.success(Unit)
         }
 
         var finalBuyQuantity = sizingResult.finalQuantity
         if (finalBuyQuantity.lte(BigDecimal.ZERO)) {
             logger.warn("计算得到的买入数量为0，跳过跟单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = "最终买入数量为 0，跳过执行",
+                filterType = "SIZING",
+                calculatedQuantity = finalBuyQuantity
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "FILTER",
+                eventType = "FINAL_QUANTITY_ZERO",
+                status = "warning",
+                message = "最终买入数量为 0，跳过执行",
+                calculatedQuantity = finalBuyQuantity
+            )
             return Result.success(Unit)
         }
         if (finalBuyQuantity.lt(BigDecimal.ONE)) {
@@ -549,21 +670,63 @@ open class CopyOrderTrackingService(
         val riskCheckResult = checkRiskControls(copyTrading)
         if (!riskCheckResult.first) {
             logger.warn("风险控制检查失败，跳过创建订单: copyTradingId=${copyTrading.id}, reason=${riskCheckResult.second}")
-            if (payload.trades.size > 1) {
-                recordFilteredBuyPayloadAsync(
-                    copyTrading = copyTrading,
-                    account = account,
-                    payload = payload,
-                    filterReason = riskCheckResult.second,
-                    filterType = "RISK_CONTROL",
-                    calculatedQuantity = finalBuyQuantity
-                )
-            }
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = riskCheckResult.second,
+                filterType = "RISK_CONTROL",
+                calculatedQuantity = finalBuyQuantity
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "RISK_CONTROL_REJECTED",
+                status = "warning",
+                message = riskCheckResult.second,
+                calculatedQuantity = finalBuyQuantity
+            )
+            return Result.success(Unit)
+        }
+
+        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = false)
+        if (!diagnostics.executionReady) {
+            val diagnosticsReason = buildDiagnosticsFailureReason(diagnostics)
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = diagnosticsReason,
+                filterType = "EXECUTION_PRECHECK",
+                calculatedQuantity = finalBuyQuantity
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "EXECUTION_PRECHECK_REJECTED",
+                status = "error",
+                message = diagnosticsReason,
+                calculatedQuantity = finalBuyQuantity
+            )
             return Result.success(Unit)
         }
 
         if (copyTrading.delaySeconds > 0) {
             logger.info("延迟跟单: copyTradingId=${copyTrading.id}, delaySeconds=${copyTrading.delaySeconds}")
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "EXECUTION",
+                eventType = "EXECUTION_DELAYED",
+                status = "info",
+                message = "命中延迟执行，等待 ${copyTrading.delaySeconds} 秒后继续",
+                calculatedQuantity = finalBuyQuantity
+            )
             delay(copyTrading.delaySeconds * 1000L)
         }
 
@@ -576,30 +739,48 @@ open class CopyOrderTrackingService(
             val bestAsk = orderbookForCheck.asks.mapNotNull { it.price.toSafeBigDecimal() }.minOrNull()
             if (bestAsk == null) {
                 logger.warn("订单簿中没有卖单，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}")
-                if (payload.trades.size > 1) {
-                    recordFilteredBuyPayloadAsync(
-                        copyTrading = copyTrading,
-                        account = account,
-                        payload = payload,
-                        filterReason = "订单簿中没有可成交的卖单",
-                        filterType = "ORDERBOOK",
-                        calculatedQuantity = finalBuyQuantity
-                    )
-                }
+                recordFilteredBuyPayloadAsync(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    filterReason = "订单簿中没有可成交的卖单",
+                    filterType = "ORDERBOOK",
+                    calculatedQuantity = finalBuyQuantity
+                )
+                recordExecutionEvent(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    stage = "EXECUTION",
+                    eventType = "ORDERBOOK_UNMATCHED",
+                    status = "warning",
+                    message = "订单簿中没有可成交的卖单",
+                    calculatedQuantity = finalBuyQuantity
+                )
                 return Result.success(Unit)
             }
             if (buyPrice.lt(bestAsk)) {
                 logger.info("调整后的买入价格 ($buyPrice) 低于最佳卖单价格 ($bestAsk)，无法匹配，跳过创建订单: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, leaderPrice=${payload.tradePrice}, tolerance=${copyTrading.priceTolerance}")
-                if (payload.trades.size > 1) {
-                    recordFilteredBuyPayloadAsync(
-                        copyTrading = copyTrading,
-                        account = account,
-                        payload = payload,
-                        filterReason = "聚合释放后订单簿无法匹配: adjustedPrice=$buyPrice < bestAsk=$bestAsk",
-                        filterType = "ORDERBOOK",
-                        calculatedQuantity = finalBuyQuantity
-                    )
-                }
+                recordFilteredBuyPayloadAsync(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    filterReason = "订单簿无法匹配: adjustedPrice=$buyPrice < bestAsk=$bestAsk",
+                    filterType = "ORDERBOOK",
+                    calculatedQuantity = finalBuyQuantity
+                )
+                recordExecutionEvent(
+                    copyTrading = copyTrading,
+                    account = account,
+                    payload = payload,
+                    stage = "EXECUTION",
+                    eventType = "ORDERBOOK_UNMATCHED",
+                    status = "warning",
+                    message = "订单簿无法匹配: adjustedPrice=$buyPrice < bestAsk=$bestAsk",
+                    calculatedQuantity = finalBuyQuantity,
+                    orderPrice = buyPrice,
+                    orderQuantity = finalBuyQuantity
+                )
                 return Result.success(Unit)
             }
         }
@@ -608,12 +789,48 @@ open class CopyOrderTrackingService(
             decryptApiSecret(account)
         } catch (e: Exception) {
             logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = "API Secret 解密失败，跳过执行: ${e.message}",
+                filterType = "EXECUTION_PRECHECK",
+                calculatedQuantity = finalBuyQuantity
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "API_SECRET_DECRYPT_FAILED",
+                status = "error",
+                message = "API Secret 解密失败: ${e.message}",
+                calculatedQuantity = finalBuyQuantity
+            )
             return Result.success(Unit)
         }
         val apiPassphrase = try {
             decryptApiPassphrase(account)
         } catch (e: Exception) {
             logger.warn("解密 API 凭证失败，跳过创建订单: accountId=${account.id}, error=${e.message}")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = "API Passphrase 解密失败，跳过执行: ${e.message}",
+                filterType = "EXECUTION_PRECHECK",
+                calculatedQuantity = finalBuyQuantity
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "PRECHECK",
+                eventType = "API_PASSPHRASE_DECRYPT_FAILED",
+                status = "error",
+                message = "API Passphrase 解密失败: ${e.message}",
+                calculatedQuantity = finalBuyQuantity
+            )
             return Result.success(Unit)
         }
 
@@ -637,6 +854,18 @@ open class CopyOrderTrackingService(
             finalBuyQuantity,
             feeRateBps,
             payload.trades.size > 1
+        )
+        recordExecutionEvent(
+            copyTrading = copyTrading,
+            account = account,
+            payload = payload,
+            stage = "EXECUTION",
+            eventType = "ORDER_SUBMITTING",
+            status = "info",
+            message = "准备提交买入订单",
+            calculatedQuantity = finalBuyQuantity,
+            orderPrice = buyPrice,
+            orderQuantity = finalBuyQuantity
         )
 
         val negRisk = marketService.getNegRiskByConditionId(payload.marketId) == true
@@ -662,6 +891,18 @@ open class CopyOrderTrackingService(
         if (createOrderResult.isFailure) {
             val exception = createOrderResult.exceptionOrNull()
             logger.error("创建买入订单失败: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, leaderPrice=${payload.tradePrice}, myPrice=$buyPrice, error=${exception?.message}")
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "EXECUTION",
+                eventType = "ORDER_FAILED",
+                status = "error",
+                message = exception?.message ?: "创建买入订单失败",
+                calculatedQuantity = finalBuyQuantity,
+                orderPrice = buyPrice,
+                orderQuantity = finalBuyQuantity
+            )
             if (copyTrading.pushFailedOrders) {
                 notificationScope.launch {
                     try {
@@ -697,6 +938,19 @@ open class CopyOrderTrackingService(
         val realOrderId = createOrderResult.getOrNull() ?: return Result.success(Unit)
         if (!isValidOrderId(realOrderId)) {
             logger.warn("买入订单ID格式无效，跳过保存: orderId=$realOrderId")
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "EXECUTION",
+                eventType = "ORDER_ID_INVALID",
+                status = "warning",
+                message = "买入订单返回了无效的订单 ID，已跳过保存",
+                calculatedQuantity = finalBuyQuantity,
+                orderPrice = buyPrice,
+                orderQuantity = finalBuyQuantity,
+                orderId = realOrderId
+            )
             return Result.success(Unit)
         }
 
@@ -719,6 +973,19 @@ open class CopyOrderTrackingService(
         )
         copyOrderTrackingRepository.save(tracking)
         logger.info("买入订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realOrderId, copyTradingId=${copyTrading.id}")
+        recordExecutionEvent(
+            copyTrading = copyTrading,
+            account = account,
+            payload = payload,
+            stage = "EXECUTION",
+            eventType = "ORDER_CREATED",
+            status = "success",
+            message = "买入订单创建成功，已进入订单跟踪",
+            calculatedQuantity = finalBuyQuantity,
+            orderPrice = buyPrice,
+            orderQuantity = finalBuyQuantity,
+            orderId = realOrderId
+        )
         return Result.success(Unit)
     }
 
@@ -741,6 +1008,15 @@ open class CopyOrderTrackingService(
                 try {
                     // 检查是否支持卖出
                     if (!copyTrading.supportSell) {
+                        recordTradeExecutionEvent(
+                            copyTrading = copyTrading,
+                            accountId = copyTrading.accountId,
+                            trade = trade,
+                            stage = "FILTER",
+                            eventType = "SELL_NOT_SUPPORTED",
+                            status = "info",
+                            message = "该跟单配置未开启自动卖出，忽略 Leader 卖出信号"
+                        )
                         continue
                     }
 
@@ -865,6 +1141,105 @@ open class CopyOrderTrackingService(
         }
     }
 
+    private fun recordExecutionEvent(
+        copyTrading: CopyTrading,
+        account: Account,
+        payload: BuyExecutionPayload,
+        stage: String,
+        eventType: String,
+        status: String,
+        message: String,
+        calculatedQuantity: BigDecimal? = null,
+        orderPrice: BigDecimal? = null,
+        orderQuantity: BigDecimal? = null,
+        orderId: String? = null,
+        aggregationKey: String? = null,
+        aggregationTradeCount: Int? = null,
+        detailJson: String? = null
+    ) {
+        executionEventService.recordEvent(
+            CopyTradingExecutionEventRecordRequest(
+                copyTradingId = copyTrading.id ?: return,
+                accountId = copyTrading.accountId,
+                leaderId = copyTrading.leaderId,
+                leaderTradeId = payload.representativeTradeId,
+                marketId = payload.marketId,
+                side = "BUY",
+                outcomeIndex = payload.outcomeIndex,
+                outcome = payload.outcome,
+                source = payload.source,
+                stage = stage,
+                eventType = eventType,
+                status = status,
+                leaderPrice = payload.tradePrice,
+                leaderQuantity = payload.leaderQuantity,
+                leaderOrderAmount = payload.leaderOrderAmount,
+                calculatedQuantity = calculatedQuantity,
+                orderPrice = orderPrice,
+                orderQuantity = orderQuantity,
+                orderId = orderId,
+                aggregationKey = aggregationKey,
+                aggregationTradeCount = aggregationTradeCount ?: payload.trades.size,
+                message = message,
+                detailJson = detailJson
+            )
+        )
+    }
+
+    private fun recordTradeExecutionEvent(
+        copyTrading: CopyTrading,
+        accountId: Long,
+        trade: TradeResponse,
+        stage: String,
+        eventType: String,
+        status: String,
+        message: String,
+        calculatedQuantity: BigDecimal? = null,
+        orderPrice: BigDecimal? = null,
+        orderQuantity: BigDecimal? = null,
+        orderId: String? = null,
+        detailJson: String? = null
+    ) {
+        val leaderPrice = trade.price.toSafeBigDecimal()
+        val leaderQuantity = trade.size.toSafeBigDecimal()
+        executionEventService.recordEvent(
+            CopyTradingExecutionEventRecordRequest(
+                copyTradingId = copyTrading.id ?: return,
+                accountId = accountId,
+                leaderId = copyTrading.leaderId,
+                leaderTradeId = trade.id,
+                marketId = trade.market.takeIf { it.isNotBlank() },
+                side = trade.side.uppercase(),
+                outcomeIndex = trade.outcomeIndex,
+                outcome = trade.outcome,
+                stage = stage,
+                eventType = eventType,
+                status = status,
+                leaderPrice = leaderPrice,
+                leaderQuantity = leaderQuantity,
+                leaderOrderAmount = leaderQuantity.multi(leaderPrice),
+                calculatedQuantity = calculatedQuantity,
+                orderPrice = orderPrice,
+                orderQuantity = orderQuantity,
+                orderId = orderId,
+                message = message,
+                detailJson = detailJson
+            )
+        )
+    }
+
+    private fun buildDiagnosticsFailureReason(diagnostics: com.wrbug.polymarketbot.dto.AccountSetupStatusDto): String {
+        val errorChecks = diagnostics.checks
+            .filter { it.status == "error" }
+            .take(3)
+            .joinToString("；") { "${it.title}: ${it.message}" }
+        return if (errorChecks.isNotBlank()) {
+            "执行前诊断未通过：$errorChecks"
+        } else {
+            diagnostics.error ?: "执行前诊断未通过"
+        }
+    }
+
     /**
      * 根据未匹配订单的实际买入比例计算卖出数量
      */
@@ -978,21 +1353,58 @@ open class CopyOrderTrackingService(
         copyTrading: CopyTrading,
         leaderSellTrade: TradeResponse
     ) {
+        recordTradeExecutionEvent(
+            copyTrading = copyTrading,
+            accountId = copyTrading.accountId,
+            trade = leaderSellTrade,
+            stage = "DISCOVERY",
+            eventType = "SELL_SIGNAL_DETECTED",
+            status = "info",
+            message = "检测到新的 SELL 跟单信号"
+        )
+
         // 1. 获取账户
         val account = accountRepository.findById(copyTrading.accountId).orElse(null)
             ?: run {
                 logger.warn("账户不存在，跳过卖出匹配: accountId=${copyTrading.accountId}, copyTradingId=${copyTrading.id}")
+                recordTradeExecutionEvent(
+                    copyTrading = copyTrading,
+                    accountId = copyTrading.accountId,
+                    trade = leaderSellTrade,
+                    stage = "PRECHECK",
+                    eventType = "ACCOUNT_NOT_FOUND",
+                    status = "error",
+                    message = "账户不存在，无法执行卖出跟单"
+                )
                 return
             }
 
         // 验证账户API凭证
         if (account.apiKey == null || account.apiSecret == null || account.apiPassphrase == null) {
             logger.warn("账户未配置API凭证，跳过创建卖出订单: accountId=${account.id}, copyTradingId=${copyTrading.id}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "PRECHECK",
+                eventType = "ACCOUNT_CREDENTIALS_MISSING",
+                status = "error",
+                message = "账户未配置完整 API 凭证，无法执行卖出跟单"
+            )
             return
         }
 
         // 验证账户是否启用
         if (!account.isEnabled) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "PRECHECK",
+                eventType = "ACCOUNT_DISABLED",
+                status = "error",
+                message = "账户已禁用，无法执行卖出跟单"
+            )
             return
         }
 
@@ -1000,6 +1412,15 @@ open class CopyOrderTrackingService(
         // 直接使用outcomeIndex匹配，而不是转换为YES/NO
         if (leaderSellTrade.outcomeIndex == null) {
             logger.warn("卖出交易缺少outcomeIndex，无法匹配: tradeId=${leaderSellTrade.id}, market=${leaderSellTrade.market}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "MONITOR",
+                eventType = "SELL_OUTCOME_INDEX_MISSING",
+                status = "warning",
+                message = "卖出交易缺少 outcomeIndex，无法匹配仓位"
+            )
             return
         }
 
@@ -1011,6 +1432,15 @@ open class CopyOrderTrackingService(
         )
 
         if (unmatchedOrders.isEmpty()) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "FILTER",
+                eventType = "SELL_NO_MATCHED_POSITION",
+                status = "info",
+                message = "未找到可匹配的买入仓位，忽略卖出信号"
+            )
             return
         }
 
@@ -1028,6 +1458,18 @@ open class CopyOrderTrackingService(
             logger.warn("计算得到的卖出数量小于1，自动调整为1: copyTradingId=${copyTrading.id}, original=$needMatch")
             finalNeedMatch = BigDecimal.ONE
         }
+        if (finalNeedMatch.lte(BigDecimal.ZERO)) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "FILTER",
+                eventType = "SELL_QUANTITY_ZERO",
+                status = "info",
+                message = "根据仓位比例计算后的卖出数量为 0，忽略卖出信号"
+            )
+            return
+        }
 
         // 4. 获取 tokenId：优先使用链上解析得到的 tokenId，否则用 conditionId+outcomeIndex 链上重算
         val tokenId = if (!leaderSellTrade.tokenId.isNullOrBlank()) {
@@ -1035,11 +1477,29 @@ open class CopyOrderTrackingService(
         } else {
             if (leaderSellTrade.outcomeIndex == null) {
                 logger.error("卖出交易缺少outcomeIndex且无tokenId: market=${leaderSellTrade.market}")
+                recordTradeExecutionEvent(
+                    copyTrading = copyTrading,
+                    accountId = account.id ?: copyTrading.accountId,
+                    trade = leaderSellTrade,
+                    stage = "MONITOR",
+                    eventType = "SELL_TOKEN_ID_MISSING",
+                    status = "error",
+                    message = "卖出交易缺少 tokenId 和 outcomeIndex，无法执行"
+                )
                 return
             }
             val tokenIdResult = blockchainService.getTokenId(leaderSellTrade.market, leaderSellTrade.outcomeIndex)
             if (tokenIdResult.isFailure) {
                 logger.error("获取tokenId失败: market=${leaderSellTrade.market}, outcomeIndex=${leaderSellTrade.outcomeIndex}, error=${tokenIdResult.exceptionOrNull()?.message}")
+                recordTradeExecutionEvent(
+                    copyTrading = copyTrading,
+                    accountId = account.id ?: copyTrading.accountId,
+                    trade = leaderSellTrade,
+                    stage = "MONITOR",
+                    eventType = "SELL_TOKEN_ID_RESOLVE_FAILED",
+                    status = "error",
+                    message = "获取卖出 tokenId 失败: ${tokenIdResult.exceptionOrNull()?.message ?: "未知错误"}"
+                )
                 return
             }
             tokenIdResult.getOrNull() ?: return
@@ -1094,11 +1554,45 @@ open class CopyOrderTrackingService(
         }
 
         if (totalMatched.lte(BigDecimal.ZERO)) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "FILTER",
+                eventType = "SELL_MATCH_ZERO",
+                status = "info",
+                message = "没有可卖出的匹配数量，忽略卖出信号"
+            )
             return
         }
 
         if (totalMatched.lt(BigDecimal.ONE)) {
             logger.warn("卖出数量小于1，跳过卖出 (Polymarket 最小下单数量为 1): copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, quantity=$totalMatched")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "FILTER",
+                eventType = "SELL_BELOW_MIN_ORDER_SIZE",
+                status = "warning",
+                message = "卖出数量小于 1，低于 Polymarket 最小下单数量",
+                calculatedQuantity = totalMatched
+            )
+            return
+        }
+
+        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = false)
+        if (!diagnostics.executionReady) {
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "PRECHECK",
+                eventType = "EXECUTION_PRECHECK_REJECTED",
+                status = "error",
+                message = buildDiagnosticsFailureReason(diagnostics),
+                calculatedQuantity = totalMatched
+            )
             return
         }
 
@@ -1107,12 +1601,32 @@ open class CopyOrderTrackingService(
             decryptApiSecret(account)
         } catch (e: Exception) {
             logger.warn("解密 API 凭证失败，跳过创建卖出订单: accountId=${account.id}, error=${e.message}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "PRECHECK",
+                eventType = "API_SECRET_DECRYPT_FAILED",
+                status = "error",
+                message = "API Secret 解密失败: ${e.message}",
+                calculatedQuantity = totalMatched
+            )
             return
         }
         val apiPassphrase = try {
             decryptApiPassphrase(account)
         } catch (e: Exception) {
             logger.warn("解密 API 凭证失败，跳过创建卖出订单: accountId=${account.id}, error=${e.message}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "PRECHECK",
+                eventType = "API_PASSPHRASE_DECRYPT_FAILED",
+                status = "error",
+                message = "API Passphrase 解密失败: ${e.message}",
+                calculatedQuantity = totalMatched
+            )
             return
         }
 
@@ -1150,6 +1664,18 @@ open class CopyOrderTrackingService(
             )
         } catch (e: Exception) {
             logger.error("创建并签名卖出订单失败: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}", e)
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "EXECUTION",
+                eventType = "ORDER_SIGNING_FAILED",
+                status = "error",
+                message = "创建并签名卖出订单失败: ${e.message}",
+                calculatedQuantity = totalMatched,
+                orderPrice = sellPrice,
+                orderQuantity = totalMatched
+            )
             return
         }
 
@@ -1169,6 +1695,19 @@ open class CopyOrderTrackingService(
             apiSecret,
             apiPassphrase,
             account.walletAddress
+        )
+
+        recordTradeExecutionEvent(
+            copyTrading = copyTrading,
+            accountId = account.id ?: copyTrading.accountId,
+            trade = leaderSellTrade,
+            stage = "EXECUTION",
+            eventType = "ORDER_SUBMITTING",
+            status = "info",
+            message = "准备提交卖出订单",
+            calculatedQuantity = totalMatched,
+            orderPrice = sellPrice,
+            orderQuantity = totalMatched
         )
 
         // 13. 调用API创建卖出订单（带重试机制，重试时会重新生成salt并重新签名）
@@ -1193,6 +1732,18 @@ open class CopyOrderTrackingService(
             // 创建订单失败，记录错误日志
             val exception = createOrderResult.exceptionOrNull()
             logger.error("创建卖出订单失败: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, error=${exception?.message}")
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "EXECUTION",
+                eventType = "ORDER_FAILED",
+                status = "error",
+                message = exception?.message ?: "创建卖出订单失败",
+                calculatedQuantity = totalMatched,
+                orderPrice = sellPrice,
+                orderQuantity = totalMatched
+            )
             return
         }
 
@@ -1257,6 +1808,19 @@ open class CopyOrderTrackingService(
         }
 
         logger.info("卖出订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realSellOrderId, copyTradingId=${copyTrading.id}")
+        recordTradeExecutionEvent(
+            copyTrading = copyTrading,
+            accountId = account.id ?: copyTrading.accountId,
+            trade = leaderSellTrade,
+            stage = "EXECUTION",
+            eventType = "ORDER_CREATED",
+            status = "success",
+            message = "卖出订单创建成功，已进入订单跟踪",
+            calculatedQuantity = totalMatched,
+            orderPrice = sellPrice,
+            orderQuantity = totalMatched,
+            orderId = realSellOrderId
+        )
 
     }
 

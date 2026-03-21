@@ -71,6 +71,7 @@ class CopyTradingMonitorService(
         val enabledCopyTradings = copyTradingRepository.findByEnabledTrue()
         
         if (enabledCopyTradings.isEmpty()) {
+            activityWsService.start(emptyList())
             return
         }
         

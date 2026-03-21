@@ -18,8 +18,27 @@ export interface SetupStatus {
   proxyDeployed: boolean
   tradingEnabled: boolean
   tokensApproved: boolean
+  executionReady?: boolean
+  accountEnabled?: boolean
+  walletType?: string
+  signatureType?: number
+  expectedProxyAddress?: string
+  proxyAddressMatched?: boolean
+  walletAddressValid?: boolean
+  proxyAddressValid?: boolean
+  privateKeyMatchesWallet?: boolean
+  apiCredentialsConfigured?: boolean
+  apiCredentialsDecryptable?: boolean
   approvalDetails?: Record<string, string>
   error?: string
+  checks?: Array<{
+    code: string
+    title: string
+    status: string
+    message: string
+    detail?: string
+  }>
+  checkedAt?: number
 }
 
 interface AccountSetupStatusBlockProps {
@@ -187,8 +206,54 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
     }
   ]
 
+  const renderCheckStatus = (status: string) => {
+    switch (status) {
+      case 'success':
+        return <Tag color="success">{t('common.success') || '成功'}</Tag>
+      case 'warning':
+        return <Tag color="warning">{t('common.warning') || '警告'}</Tag>
+      case 'error':
+        return <Tag color="error">{t('common.failed') || '失败'}</Tag>
+      default:
+        return <Tag>{t('common.skip') || '跳过'}</Tag>
+    }
+  }
+
   const stepsContent = (
     <>
+      <div style={{ marginBottom: 16, padding: '12px', background: '#fafafa', borderRadius: 8 }}>
+        <Space wrap size={[8, 8]}>
+          <Tag color={setupStatus.executionReady ? 'success' : 'error'}>
+            {setupStatus.executionReady ? '执行就绪' : '执行前诊断未通过'}
+          </Tag>
+          {setupStatus.accountEnabled !== undefined && (
+            <Tag color={setupStatus.accountEnabled ? 'success' : 'error'}>
+              {setupStatus.accountEnabled ? '账户已启用' : '账户已禁用'}
+            </Tag>
+          )}
+          {setupStatus.walletType && (
+            <Tag color="blue">
+              钱包类型: {setupStatus.walletType}
+            </Tag>
+          )}
+          {setupStatus.signatureType !== undefined && setupStatus.signatureType !== null && (
+            <Tag color="geekblue">
+              签名类型: {setupStatus.signatureType}
+            </Tag>
+          )}
+        </Space>
+        {setupStatus.expectedProxyAddress && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#666', wordBreak: 'break-all' }}>
+            预期代理地址: {setupStatus.expectedProxyAddress}
+          </div>
+        )}
+        {setupStatus.checkedAt && (
+          <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>
+            最近诊断: {new Date(setupStatus.checkedAt).toLocaleString('zh-CN')}
+          </div>
+        )}
+      </div>
+
       <Steps
         direction="vertical"
         current={steps.findIndex(s => !s.completed)}
@@ -265,6 +330,38 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
                 </div>
               )
             })}
+          </Space>
+        </div>
+      )}
+
+      {setupStatus.checks && setupStatus.checks.length > 0 && (
+        <div style={{ marginTop: 16, padding: '12px', background: '#fafafa', borderRadius: 4 }}>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>执行前诊断明细</Text>
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            {setupStatus.checks.map((check) => (
+              <div
+                key={check.code}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  alignItems: 'flex-start',
+                  paddingBottom: 8,
+                  borderBottom: '1px solid #f0f0f0'
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>{check.title}</div>
+                  <div style={{ fontSize: 12, color: '#666' }}>{check.message}</div>
+                  {check.detail && (
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 2, wordBreak: 'break-all' }}>
+                      {check.detail}
+                    </div>
+                  )}
+                </div>
+                <div>{renderCheckStatus(check.status)}</div>
+              </div>
+            ))}
           </Space>
         </div>
       )}

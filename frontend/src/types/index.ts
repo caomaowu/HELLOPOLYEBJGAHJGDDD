@@ -157,6 +157,221 @@ export interface LeaderBalanceResponse {
   positions?: PositionDto[]
 }
 
+export interface LeaderDiscoveryMarket {
+  marketId: string
+  title?: string | null
+  slug?: string | null
+  category?: string | null
+  tradeCount: number
+  totalVolume: string
+  lastSeenAt?: number | null
+}
+
+export interface LeaderTraderScanRequest {
+  leaderIds?: number[]
+  seedAddresses?: string[]
+  days?: number
+  maxSeedMarkets?: number
+  marketTradeLimit?: number
+  traderLimit?: number
+  excludeExistingLeaders?: boolean
+}
+
+export interface LeaderDiscoveredTrader {
+  address: string
+  displayName?: string | null
+  profileImage?: string | null
+  existingLeaderId?: number | null
+  existingLeaderName?: string | null
+  recentTradeCount: number
+  recentBuyCount: number
+  recentSellCount: number
+  recentVolume: string
+  distinctMarkets: number
+  sourceLeaderIds: number[]
+  sampleMarkets: LeaderDiscoveryMarket[]
+  firstSeenAt?: number | null
+  lastSeenAt?: number | null
+}
+
+export interface LeaderTraderScanResponse {
+  seedAddresses: string[]
+  seedMarketCount: number
+  estimated: boolean
+  list: LeaderDiscoveredTrader[]
+}
+
+export interface LeaderCandidateRecommendRequest {
+  leaderIds?: number[]
+  seedAddresses?: string[]
+  candidateAddresses?: string[]
+  days?: number
+  maxSeedMarkets?: number
+  marketTradeLimit?: number
+  traderLimit?: number
+  excludeExistingLeaders?: boolean
+  minTrades?: number
+  maxOpenPositions?: number
+  maxMarketConcentrationRate?: number
+  maxEstimatedDrawdownRate?: number
+  maxRiskScore?: number
+  lowRiskOnly?: boolean
+}
+
+export interface LeaderCandidateRecommendation {
+  address: string
+  displayName?: string | null
+  profileImage?: string | null
+  existingLeaderId?: number | null
+  existingLeaderName?: string | null
+  recentTradeCount: number
+  distinctMarkets: number
+  activeDays: number
+  recentVolume: string
+  currentPositionCount: number
+  currentPositionValue: string
+  estimatedTotalBought: string
+  estimatedRealizedPnl: string
+  estimatedUnrealizedPnl: string
+  estimatedTotalPnl: string
+  estimatedRoiRate: string
+  estimatedDrawdownRate: string
+  marketConcentrationRate: string
+  riskScore: number
+  recommendationScore: number
+  lowRisk: boolean
+  tags: string[]
+  reasons: string[]
+  sampleMarkets: LeaderDiscoveryMarket[]
+  lastSeenAt?: number | null
+}
+
+export interface LeaderCandidateRecommendResponse {
+  seedAddresses: string[]
+  estimated: boolean
+  list: LeaderCandidateRecommendation[]
+}
+
+export interface LeaderMarketTraderLookupRequest {
+  marketIds: string[]
+  days?: number
+  limitPerMarket?: number
+  minTradesPerTrader?: number
+  excludeExistingLeaders?: boolean
+}
+
+export interface LeaderMarketTrader {
+  address: string
+  displayName?: string | null
+  existingLeaderId?: number | null
+  existingLeaderName?: string | null
+  tradeCount: number
+  buyCount: number
+  sellCount: number
+  totalVolume: string
+  firstSeenAt?: number | null
+  lastSeenAt?: number | null
+}
+
+export interface LeaderMarketTraderLookupItem {
+  marketId: string
+  marketTitle?: string | null
+  marketSlug?: string | null
+  traderCount: number
+  list: LeaderMarketTrader[]
+}
+
+export interface LeaderMarketTraderLookupResponse {
+  estimated: boolean
+  source?: string
+  list: LeaderMarketTraderLookupItem[]
+}
+
+export interface LeaderCandidatePoolListRequest {
+  page?: number
+  limit?: number
+  lowRiskOnly?: boolean
+  favoriteOnly?: boolean
+  includeBlacklisted?: boolean
+}
+
+export interface LeaderCandidatePoolItem {
+  address: string
+  displayName?: string | null
+  profileImage?: string | null
+  existingLeaderId?: number | null
+  existingLeaderName?: string | null
+  recentTradeCount: number
+  recentBuyCount: number
+  recentSellCount: number
+  recentVolume: string
+  distinctMarkets: number
+  lastMarketId?: string | null
+  lastMarketTitle?: string | null
+  lastMarketSlug?: string | null
+  favorite: boolean
+  blacklisted: boolean
+  manualNote?: string | null
+  manualTags: string[]
+  recommendationScore?: number | null
+  riskScore?: number | null
+  lowRisk: boolean
+  estimatedRoiRate?: string | null
+  estimatedDrawdownRate?: string | null
+  marketConcentrationRate?: string | null
+  lastEvaluatedAt?: number | null
+  firstSeenAt: number
+  lastSeenAt: number
+}
+
+export interface LeaderCandidatePoolListResponse {
+  list: LeaderCandidatePoolItem[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface LeaderCandidatePoolLabelUpdateRequest {
+  address: string
+  favorite?: boolean
+  blacklisted?: boolean
+  manualNote?: string | null
+  manualTags?: string[]
+}
+
+export interface LeaderCandidateScoreHistoryRequest {
+  address: string
+  page?: number
+  limit?: number
+}
+
+export interface LeaderCandidateScoreHistoryItem {
+  address: string
+  source: string
+  recommendationScore?: number | null
+  riskScore?: number | null
+  lowRisk: boolean
+  estimatedRoiRate?: string | null
+  estimatedDrawdownRate?: string | null
+  marketConcentrationRate?: string | null
+  activeDays?: number | null
+  currentPositionCount?: number | null
+  estimatedTotalPnl?: string | null
+  recentTradeCount: number
+  distinctMarkets: number
+  lastSeenAt?: number | null
+  tags: string[]
+  reasons: string[]
+  createdAt: number
+}
+
+export interface LeaderCandidateScoreHistoryResponse {
+  list: LeaderCandidateScoreHistoryItem[]
+  total: number
+  page: number
+  limit: number
+}
+
 
 /**
  * Leader 添加请求
@@ -959,6 +1174,58 @@ export interface FilteredOrderListRequest {
  */
 export interface FilteredOrderListResponse {
   list: FilteredOrder[]
+  total: number
+  page: number
+  limit: number
+}
+
+/**
+ * 跟单执行事件
+ */
+export interface CopyTradingExecutionEvent {
+  id: number
+  copyTradingId: number
+  accountId: number
+  accountName?: string
+  leaderId: number
+  leaderName?: string
+  leaderTradeId?: string
+  marketId?: string
+  marketTitle?: string
+  side?: string
+  outcomeIndex?: number
+  outcome?: string
+  source?: string
+  stage: string
+  eventType: string
+  status: string
+  leaderPrice?: string
+  leaderQuantity?: string
+  leaderOrderAmount?: string
+  calculatedQuantity?: string
+  orderPrice?: string
+  orderQuantity?: string
+  orderId?: string
+  aggregationKey?: string
+  aggregationTradeCount?: number
+  message: string
+  detailJson?: string
+  createdAt: number
+}
+
+export interface CopyTradingExecutionEventListRequest {
+  copyTradingId: number
+  eventType?: string
+  stage?: string
+  status?: string
+  page?: number
+  limit?: number
+  startTime?: number
+  endTime?: number
+}
+
+export interface CopyTradingExecutionEventListResponse {
+  list: CopyTradingExecutionEvent[]
   total: number
   page: number
   limit: number

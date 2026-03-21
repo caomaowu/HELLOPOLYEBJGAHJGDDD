@@ -12,6 +12,7 @@ import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC } from '../u
 import CopyTradingOrdersModal from './CopyTradingOrders/index'
 import StatisticsModal from './CopyTradingOrders/StatisticsModal'
 import FilteredOrdersModal from './CopyTradingOrders/FilteredOrdersModal'
+import ExecutionEventsModal from './CopyTradingOrders/ExecutionEventsModal'
 import EditModal from './CopyTradingOrders/EditModal'
 import AddModal from './CopyTradingOrders/AddModal'
 import LeaderSelect from '../components/LeaderSelect'
@@ -49,6 +50,8 @@ const CopyTradingList: React.FC = () => {
   const [statisticsModalCopyTradingId, setStatisticsModalCopyTradingId] = useState<string>('')
   const [filteredOrdersModalOpen, setFilteredOrdersModalOpen] = useState(false)
   const [filteredOrdersModalCopyTradingId, setFilteredOrdersModalCopyTradingId] = useState<string>('')
+  const [executionEventsModalOpen, setExecutionEventsModalOpen] = useState(false)
+  const [executionEventsModalCopyTradingId, setExecutionEventsModalCopyTradingId] = useState<string>('')
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editModalCopyTradingId, setEditModalCopyTradingId] = useState<string>('')
   const [addModalOpen, setAddModalOpen] = useState(false)
@@ -322,6 +325,15 @@ const CopyTradingList: React.FC = () => {
             onClick: () => {
               setFilteredOrdersModalCopyTradingId(record.id.toString())
               setFilteredOrdersModalOpen(true)
+            }
+          },
+          {
+            key: 'executionEvents',
+            label: t('copyTradingList.executionEvents') || '执行事件',
+            icon: <UnorderedListOutlined />,
+            onClick: () => {
+              setExecutionEventsModalCopyTradingId(record.id.toString())
+              setExecutionEventsModalOpen(true)
             }
           }
         ]
@@ -622,6 +634,15 @@ const CopyTradingList: React.FC = () => {
                                   setFilteredOrdersModalCopyTradingId(record.id.toString())
                                   setFilteredOrdersModalOpen(true)
                                 }
+                              },
+                              {
+                                key: 'executionEvents',
+                                label: t('copyTradingList.executionEvents') || '执行事件',
+                                icon: <UnorderedListOutlined />,
+                                onClick: () => {
+                                  setExecutionEventsModalCopyTradingId(record.id.toString())
+                                  setExecutionEventsModalOpen(true)
+                                }
                               }
                             ]
                           }} 
@@ -689,6 +710,11 @@ const CopyTradingList: React.FC = () => {
         open={filteredOrdersModalOpen}
         onClose={() => setFilteredOrdersModalOpen(false)}
         copyTradingId={filteredOrdersModalCopyTradingId}
+      />
+      <ExecutionEventsModal
+        open={executionEventsModalOpen}
+        onClose={() => setExecutionEventsModalOpen(false)}
+        copyTradingId={executionEventsModalCopyTradingId}
       />
       <EditModal
         open={editModalOpen}

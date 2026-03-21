@@ -6,7 +6,8 @@ import com.wrbug.polymarketbot.api.TradeResponse
 import com.wrbug.polymarketbot.dto.ActivityTradeMessage
 import com.wrbug.polymarketbot.dto.ActivityTradePayload
 import com.wrbug.polymarketbot.entity.Leader
-import com.wrbug.polymarketbot.repository.LeaderRepository
+import com.wrbug.polymarketbot.service.copytrading.leaders.TraderCandidatePoolService
+import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingMonitorExecutionEventService
 import com.wrbug.polymarketbot.service.copytrading.statistics.CopyOrderTrackingService
 import com.wrbug.polymarketbot.util.fromJson
 import com.wrbug.polymarketbot.constants.PolymarketConstants
@@ -27,7 +28,8 @@ import java.util.concurrent.TimeUnit
 @Service
 class PolymarketActivityWsService(
     private val copyOrderTrackingService: CopyOrderTrackingService,
-    private val leaderRepository: LeaderRepository
+    private val traderCandidatePoolService: TraderCandidatePoolService,
+    private val monitorExecutionEventService: CopyTradingMonitorExecutionEventService
 ) {
 
     private val logger = LoggerFactory.getLogger(PolymarketActivityWsService::class.java)
@@ -66,6 +68,11 @@ class PolymarketActivityWsService(
     private var jsonParseMessages = 0L
     private var duplicateTxHashMessages = 0L
 
+    private data class ActivityTradeParseResult(
+        val trade: TradeResponse? = null,
+        val failureMessage: String? = null
+    )
+
     /**
      * 启动监听
      */
@@ -79,9 +86,12 @@ class PolymarketActivityWsService(
         }
 
         if (monitoredAddresses.isEmpty()) {
-            logger.info("没有需要监听的 Leader，停止 Activity WebSocket")
-            stop()
-            return
+            if (!traderCandidatePoolService.isRealtimeDiscoveryEnabled()) {
+                logger.info("没有需要监听的 Leader，停止 Activity WebSocket")
+                stop()
+                return
+            }
+            logger.info("没有启用的 Leader，Activity WebSocket 以 discovery-only 模式运行")
         }
 
         logger.info("启动 Activity WebSocket 监听（trades + orders_matched），监控 ${monitoredAddresses.size} 个 Leader 地址")
@@ -131,7 +141,7 @@ class PolymarketActivityWsService(
         }
 
         // 如果没有 Leader 了，停止监听
-        if (monitoredAddresses.isEmpty()) {
+        if (monitoredAddresses.isEmpty() && !traderCandidatePoolService.isRealtimeDiscoveryEnabled()) {
             logger.info("没有 Leader 需要监听了，停止 Activity WebSocket")
             stop()
         }
@@ -276,36 +286,40 @@ class PolymarketActivityWsService(
      * 快速过滤，避免不必要的 JSON 解析
      * 只需要检查 "proxyWallet":"0x..." 或 "trader":{"address":"0x..."} 格式
      */
-    private fun containsMonitoredAddress(message: String): Boolean {
+    private fun findMatchedLeaderIds(message: String): Set<Long> {
         // 快速检查：如果消息很短，不可能包含地址
         if (message.length < 50) {
-            return false
+            return emptySet()
         }
+
+        val matchedLeaderIds = linkedSetOf<Long>()
 
         // 遍历所有监听的地址
         for ((address, leaderId) in monitoredAddresses) {
             // 检查 proxyWallet：格式为 "proxyWallet":"0x..."
             if (message.contains("\"proxyWallet\":\"$address\"", ignoreCase = true)) {
-                addressMatchMessages++
-                return true
+                matchedLeaderIds += leaderId
             }
 
             // 检查 trader.address：格式为 "trader":{"address":"0x..."}
             if (message.contains("\"trader\"", ignoreCase = true) &&
                 message.contains("\"address\":\"$address\"", ignoreCase = true)
             ) {
-                addressMatchMessages++
-                return true
+                matchedLeaderIds += leaderId
             }
         }
 
-        return false
+        if (matchedLeaderIds.isNotEmpty()) {
+            addressMatchMessages++
+        }
+        return matchedLeaderIds
     }
 
     /**
      * 处理消息
      */
     private fun handleMessage(message: String) {
+        val matchedLeaderIds = findMatchedLeaderIds(message)
         try {
             totalMessagesProcessed++
 
@@ -313,17 +327,17 @@ class PolymarketActivityWsService(
             if (message.trim() == "PONG" || message.trim() == "pong") {
                 return
             }
-
-            // 快速预检查：检查是否包含监听地址
-            // 绝大部分消息会在这一步被过滤掉，避免不必要的 JSON 解析
-            if (!containsMonitoredAddress(message)) {
-                return
-            }
-            logger.info("发现leader交易：${message}")
-            // 使用扩展函数解析消息（只对包含监听地址的消息）
             val tradeMessage = message.fromJson<ActivityTradeMessage>() ?: run {
-                // 不是有效的 JSON 或格式不匹配，跳过
                 logger.warn("无法解析为 ActivityTradeMessage: ${message.take(200)}")
+                if (matchedLeaderIds.isNotEmpty()) {
+                    monitorExecutionEventService.recordForLeaders(
+                        leaderIds = matchedLeaderIds,
+                        source = "activity-ws",
+                        eventType = "ACTIVITY_MESSAGE_PARSE_FAILED",
+                        status = "error",
+                        message = "Activity WS 消息命中监听地址，但 JSON 解析失败"
+                    )
+                }
                 return
             }
 
@@ -352,10 +366,24 @@ class PolymarketActivityWsService(
                 }
             }
 
+            traderCandidatePoolService.recordActivityTrade(payload)
+
             // 提取交易者地址
             val traderAddress = extractTraderAddress(payload) ?: run {
                 // 没有交易者地址，跳过
                 logger.warn("Activity Trade 消息中没有交易者地址: trader=${payload.trader}, proxyWallet=${payload.proxyWallet}, asset=${payload.asset}")
+                monitorExecutionEventService.recordForLeaders(
+                    leaderIds = matchedLeaderIds,
+                    leaderTradeId = payload.transactionHash,
+                    marketId = payload.conditionId.takeIf { it.isNotBlank() },
+                    side = payload.side.takeIf { it.isNotBlank() }?.uppercase(),
+                    outcomeIndex = payload.outcomeIndex,
+                    outcome = payload.outcome,
+                    source = "activity-ws",
+                    eventType = "ACTIVITY_TRADER_ADDRESS_MISSING",
+                    status = "warning",
+                    message = "Activity WS 消息缺少 trader/proxyWallet 地址，无法识别 Leader"
+                )
                 return
             }
 
@@ -364,29 +392,79 @@ class PolymarketActivityWsService(
             val leaderId = monitoredAddresses[normalizedAddress] ?: run {
                 return
             }
+            addressMatchMessages++
 
             // 解析交易数据
-            val trade = parseActivityTrade(payload, leaderId)
+            val parseResult = parseActivityTrade(payload, leaderId)
+            val trade = parseResult.trade
             if (trade != null) {
                 logger.info("✅ 检测到 Leader 交易: leaderId=$leaderId, address=$traderAddress, side=${trade.side}, market=${trade.market}, size=${trade.size}")
 
                 // 异步处理交易（避免阻塞消息处理）
                 scope.launch {
                     try {
-                        copyOrderTrackingService.processTrade(
+                        val result = copyOrderTrackingService.processTrade(
                             leaderId = leaderId,
                             trade = trade,
                             source = "activity-ws"
                         )
+                        if (result.isFailure) {
+                            val exception = result.exceptionOrNull()
+                            monitorExecutionEventService.recordForLeader(
+                                leaderId = leaderId,
+                                leaderTradeId = trade.id,
+                                marketId = trade.market.takeIf { it.isNotBlank() },
+                                side = trade.side.uppercase(),
+                                outcomeIndex = trade.outcomeIndex,
+                                outcome = trade.outcome,
+                                source = "activity-ws",
+                                eventType = "ACTIVITY_TRADE_PROCESSING_FAILED",
+                                status = "error",
+                                message = "Activity WS 交易处理失败: ${exception?.message ?: "未知错误"}"
+                            )
+                        }
                     } catch (e: Exception) {
                         logger.error("处理 Activity WS 交易失败: leaderId=$leaderId, tradeId=${trade.id}", e)
+                        monitorExecutionEventService.recordForLeader(
+                            leaderId = leaderId,
+                            leaderTradeId = trade.id,
+                            marketId = trade.market.takeIf { it.isNotBlank() },
+                            side = trade.side.uppercase(),
+                            outcomeIndex = trade.outcomeIndex,
+                            outcome = trade.outcome,
+                            source = "activity-ws",
+                            eventType = "ACTIVITY_TRADE_PROCESSING_FAILED",
+                            status = "error",
+                            message = "Activity WS 交易处理异常: ${e.message ?: "未知错误"}"
+                        )
                     }
                 }
             } else {
                 logger.warn("解析交易数据失败: leaderId=$leaderId, address=$traderAddress, asset=${payload.asset}, side=${payload.side}")
+                monitorExecutionEventService.recordForLeader(
+                    leaderId = leaderId,
+                    leaderTradeId = payload.transactionHash,
+                    marketId = payload.conditionId.takeIf { it.isNotBlank() },
+                    side = payload.side.takeIf { it.isNotBlank() }?.uppercase(),
+                    outcomeIndex = payload.outcomeIndex,
+                    outcome = payload.outcome,
+                    source = "activity-ws",
+                    eventType = "ACTIVITY_TRADE_PARSE_FAILED",
+                    status = "error",
+                    message = parseResult.failureMessage ?: "Activity WS 交易解析失败"
+                )
             }
         } catch (e: Exception) {
             logger.error("处理 Activity WebSocket 消息失败: ${e.message}", e)
+            if (matchedLeaderIds.isNotEmpty()) {
+                monitorExecutionEventService.recordForLeaders(
+                    leaderIds = matchedLeaderIds,
+                    source = "activity-ws",
+                    eventType = "ACTIVITY_MESSAGE_HANDLE_FAILED",
+                    status = "error",
+                    message = "处理 Activity WS 消息时发生异常: ${e.message ?: "未知错误"}"
+                )
+            }
         }
     }
 
@@ -405,7 +483,7 @@ class PolymarketActivityWsService(
     /**
      * 解析 Activity Trade 为 TradeResponse
      */
-    private fun parseActivityTrade(payload: ActivityTradePayload, leaderId: Long): TradeResponse? {
+    private fun parseActivityTrade(payload: ActivityTradePayload, leaderId: Long): ActivityTradeParseResult {
         return try {
             // 提取必需字段并验证
             val asset = payload.asset
@@ -414,7 +492,9 @@ class PolymarketActivityWsService(
 
             if (asset.isBlank() || conditionId.isBlank() || sideRaw.isBlank()) {
                 logger.warn("Activity Trade 消息缺少必需字段: asset=$asset, conditionId=$conditionId, side=$sideRaw")
-                return null
+                return ActivityTradeParseResult(
+                    failureMessage = "Activity WS 消息缺少必需字段: asset/conditionId/side"
+                )
             }
 
             val side = sideRaw.uppercase()
@@ -422,18 +502,24 @@ class PolymarketActivityWsService(
             // 验证 side 必须是 BUY 或 SELL
             if (side != "BUY" && side != "SELL") {
                 logger.warn("Activity Trade 消息 side 字段无效: side=$side")
-                return null
+                return ActivityTradeParseResult(
+                    failureMessage = "Activity WS side 字段无效: $side"
+                )
             }
 
             // price 和 size 可能是数字或字符串，统一转换为字符串
             val price = convertToString(payload.price) ?: run {
                 logger.warn("Activity Trade 消息 price 字段无效: ${payload.price}")
-                return null
+                return ActivityTradeParseResult(
+                    failureMessage = "Activity WS price 字段无效"
+                )
             }
 
             val size = convertToString(payload.size) ?: run {
                 logger.warn("Activity Trade 消息 size 字段无效: ${payload.size}")
-                return null
+                return ActivityTradeParseResult(
+                    failureMessage = "Activity WS size 字段无效"
+                )
             }
 
             // 时间戳处理：可能是秒或毫秒，可能是数字或字符串
@@ -464,21 +550,25 @@ class PolymarketActivityWsService(
             val tradeId = payload.transactionHash ?: "${leaderId}_${System.currentTimeMillis()}_${asset.take(10)}"
 
             // asset 即 CLOB 的 tokenId，必须写入 TradeResponse，跟单下单时用此 tokenId 请求订单簿/下单，否则会用 conditionId+outcomeIndex 链上重算，可能得到与 CLOB 不一致的 tokenId
-            TradeResponse(
-                id = tradeId,
-                market = conditionId,
-                side = side,
-                price = price,
-                size = size,
-                timestamp = timestamp,
-                user = null, // Activity WS 中不需要
-                outcomeIndex = outcomeIndex,
-                outcome = outcome,
-                tokenId = asset
+            ActivityTradeParseResult(
+                trade = TradeResponse(
+                    id = tradeId,
+                    market = conditionId,
+                    side = side,
+                    price = price,
+                    size = size,
+                    timestamp = timestamp,
+                    user = null, // Activity WS 中不需要
+                    outcomeIndex = outcomeIndex,
+                    outcome = outcome,
+                    tokenId = asset
+                )
             )
         } catch (e: Exception) {
             logger.error("解析 Activity Trade 失败: ${e.message}", e)
-            null
+            ActivityTradeParseResult(
+                failureMessage = "解析 Activity WS 交易时发生异常: ${e.message ?: "未知错误"}"
+            )
         }
     }
 

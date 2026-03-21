@@ -9,6 +9,7 @@ import com.wrbug.polymarketbot.repository.CopyTradingRepository
 import com.wrbug.polymarketbot.repository.CopyTradingTemplateRepository
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.copytrading.monitor.CopyTradingMonitorService
+import com.wrbug.polymarketbot.service.accounts.AccountExecutionDiagnosticsService
 import com.google.gson.Gson
 import com.wrbug.polymarketbot.util.IllegalBigDecimal
 import com.wrbug.polymarketbot.util.JsonUtils
@@ -33,6 +34,7 @@ class CopyTradingService(
     private val templateRepository: CopyTradingTemplateRepository,
     private val leaderRepository: LeaderRepository,
     private val monitorService: CopyTradingMonitorService,
+    private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService,
     private val jsonUtils: JsonUtils,
     private val gson: Gson
 ) : ApplicationContextAware {
@@ -162,6 +164,19 @@ class CopyTradingService(
             }
 
             validateConfig(config)?.let { return Result.failure(IllegalArgumentException(it)) }
+
+            if (request.enabled) {
+                val diagnostics = kotlinx.coroutines.runBlocking {
+                    accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = true)
+                }
+                if (!diagnostics.executionReady) {
+                    return Result.failure(
+                        IllegalArgumentException(
+                            "账户执行前诊断未通过，无法启用跟单：${buildDiagnosticsFailureReason(diagnostics)}"
+                        )
+                    )
+                }
+            }
             
             // 6. 创建跟单配置
             val copyTrading = CopyTrading(
@@ -387,6 +402,21 @@ class CopyTradingService(
                     pushFilteredOrders = updated.pushFilteredOrders
                 )
             )?.let { return Result.failure(IllegalArgumentException(it)) }
+
+            if (request.enabled == true && !copyTrading.enabled) {
+                val account = accountRepository.findById(updated.accountId).orElse(null)
+                    ?: return Result.failure(IllegalStateException("账户不存在"))
+                val diagnostics = kotlinx.coroutines.runBlocking {
+                    accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = true)
+                }
+                if (!diagnostics.executionReady) {
+                    return Result.failure(
+                        IllegalArgumentException(
+                            "账户执行前诊断未通过，无法启用跟单：${buildDiagnosticsFailureReason(diagnostics)}"
+                        )
+                    )
+                }
+            }
             
             val saved = copyTradingRepository.save(updated)
             
@@ -712,5 +742,17 @@ class CopyTradingService(
             enabled = config.smallOrderAggregationEnabled,
             windowSeconds = config.smallOrderAggregationWindowSeconds
         ).firstOrNull()
+    }
+
+    private fun buildDiagnosticsFailureReason(diagnostics: AccountSetupStatusDto): String {
+        val errorChecks = diagnostics.checks
+            .filter { it.status == "error" }
+            .take(3)
+            .joinToString("；") { "${it.title}: ${it.message}" }
+        return if (errorChecks.isNotBlank()) {
+            errorChecks
+        } else {
+            diagnostics.error ?: "执行前诊断未通过"
+        }
     }
 }

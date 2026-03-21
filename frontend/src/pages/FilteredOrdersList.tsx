@@ -68,6 +68,12 @@ const FilteredOrdersList: React.FC = () => {
       'MAX_POSITION_VALUE': { color: 'volcano', label: t('filteredOrdersList.filterTypes.maxPositionValue') || '超过最大仓位金额' },
       'MARKET_END_DATE': { color: 'cyan', label: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
       'KEYWORD_FILTER': { color: 'geekblue', label: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' },
+      'SIZING': { color: 'magenta', label: 'Sizing 拒绝' },
+      'AGGREGATION_TIMEOUT': { color: 'purple', label: '聚合超时' },
+      'AGGREGATION_DISABLED': { color: 'default', label: '聚合取消' },
+      'RISK_CONTROL': { color: 'volcano', label: '风险控制' },
+      'ORDERBOOK': { color: 'gold', label: '订单簿不满足' },
+      'EXECUTION_PRECHECK': { color: 'red', label: '执行前诊断失败' },
       'UNKNOWN': { color: 'default', label: t('filteredOrdersList.filterTypes.unknown') || '未知原因' }
     }
     const config = typeMap[type] || typeMap['UNKNOWN']
@@ -215,6 +221,12 @@ const FilteredOrdersList: React.FC = () => {
               <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败'}</Option>
               <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空'}</Option>
               <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符'}</Option>
+              <Option value="SIZING">Sizing 拒绝</Option>
+              <Option value="AGGREGATION_TIMEOUT">聚合超时</Option>
+              <Option value="AGGREGATION_DISABLED">聚合取消</Option>
+              <Option value="RISK_CONTROL">风险控制</Option>
+              <Option value="ORDERBOOK">订单簿不满足</Option>
+              <Option value="EXECUTION_PRECHECK">执行前诊断失败</Option>
             </Select>
           </Space>
         </div>

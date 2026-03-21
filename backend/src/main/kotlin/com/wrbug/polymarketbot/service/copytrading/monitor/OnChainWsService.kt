@@ -6,6 +6,7 @@ import com.google.gson.JsonNull
 import com.wrbug.polymarketbot.api.*
 import com.wrbug.polymarketbot.entity.Leader
 import com.wrbug.polymarketbot.repository.LeaderRepository
+import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingMonitorExecutionEventService
 import com.wrbug.polymarketbot.service.copytrading.statistics.CopyOrderTrackingService
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import jakarta.annotation.PreDestroy
@@ -25,7 +26,8 @@ class OnChainWsService(
     private val unifiedOnChainWsService: UnifiedOnChainWsService,
     private val retrofitFactory: RetrofitFactory,
     private val copyOrderTrackingService: CopyOrderTrackingService,
-    private val leaderRepository: LeaderRepository
+    private val leaderRepository: LeaderRepository,
+    private val monitorExecutionEventService: CopyTradingMonitorExecutionEventService
 ) {
 
     private val logger = LoggerFactory.getLogger(OnChainWsService::class.java)
@@ -123,12 +125,28 @@ class OnChainWsService(
             val receiptResponse = rpcApi.call(receiptRequest)
             if (!receiptResponse.isSuccessful || receiptResponse.body() == null) {
                 logger.warn("获取交易 receipt 失败: leaderId=$leaderId, txHash=$txHash, code=${receiptResponse.code()}")
+                monitorExecutionEventService.recordForLeader(
+                    leaderId = leaderId,
+                    leaderTradeId = txHash,
+                    source = "onchain-ws",
+                    eventType = "ONCHAIN_RECEIPT_FETCH_FAILED",
+                    status = "error",
+                    message = "链上交易 receipt 拉取失败: code=${receiptResponse.code()}"
+                )
                 return
             }
 
             val receiptRpcResponse = receiptResponse.body()!!
             if (receiptRpcResponse.error != null || receiptRpcResponse.result == null || receiptRpcResponse.result is JsonNull) {
                 logger.warn("交易 receipt 错误: leaderId=$leaderId, txHash=$txHash, error=${receiptRpcResponse.error}")
+                monitorExecutionEventService.recordForLeader(
+                    leaderId = leaderId,
+                    leaderTradeId = txHash,
+                    source = "onchain-ws",
+                    eventType = "ONCHAIN_RECEIPT_INVALID",
+                    status = "error",
+                    message = "链上交易 receipt 异常或为空: ${receiptRpcResponse.error?.message ?: "result=null"}"
+                )
                 return
             }
 
@@ -146,6 +164,14 @@ class OnChainWsService(
             // 解析 receipt 中的 Transfer 日志
             val logs = receiptJson.getAsJsonArray("logs") ?: run {
                 logger.warn("交易 receipt 中没有日志: leaderId=$leaderId, txHash=$txHash")
+                monitorExecutionEventService.recordForLeader(
+                    leaderId = leaderId,
+                    leaderTradeId = txHash,
+                    source = "onchain-ws",
+                    eventType = "ONCHAIN_RECEIPT_LOGS_EMPTY",
+                    status = "warning",
+                    message = "链上交易 receipt 不包含可解析日志"
+                )
                 return
             }
             val (erc20Transfers, erc1155Transfers) = OnChainWsUtils.parseReceiptTransfers(logs)
@@ -164,16 +190,47 @@ class OnChainWsService(
             if (trade != null) {
                 logger.info("成功解析交易: leaderId=$leaderId, txHash=$txHash, side=${trade.side}, market=${trade.market}, size=${trade.size}")
                 // 调用 processTrade 处理交易
-                copyOrderTrackingService.processTrade(
+                val result = copyOrderTrackingService.processTrade(
                     leaderId = leaderId,
                     trade = trade,
                     source = "onchain-ws"
                 )
+                if (result.isFailure) {
+                    val exception = result.exceptionOrNull()
+                    monitorExecutionEventService.recordForLeader(
+                        leaderId = leaderId,
+                        leaderTradeId = trade.id,
+                        marketId = trade.market.takeIf { it.isNotBlank() },
+                        side = trade.side.uppercase(),
+                        outcomeIndex = trade.outcomeIndex,
+                        outcome = trade.outcome,
+                        source = "onchain-ws",
+                        eventType = "ONCHAIN_TRADE_PROCESSING_FAILED",
+                        status = "error",
+                        message = "链上交易处理失败: ${exception?.message ?: "未知错误"}"
+                    )
+                }
             } else {
                 logger.warn("无法解析交易（返回 null）: leaderId=$leaderId, txHash=$txHash, erc20Transfers=${erc20Transfers.size}, erc1155Transfers=${erc1155Transfers.size}")
+                monitorExecutionEventService.recordForLeader(
+                    leaderId = leaderId,
+                    leaderTradeId = txHash,
+                    source = "onchain-ws",
+                    eventType = "ONCHAIN_TRADE_PARSE_FAILED",
+                    status = "warning",
+                    message = "链上日志命中 Leader，但未能解析成标准交易"
+                )
             }
         } catch (e: Exception) {
             logger.error("处理 Leader 交易失败: leaderId=$leaderId, txHash=$txHash, ${e.message}", e)
+            monitorExecutionEventService.recordForLeader(
+                leaderId = leaderId,
+                leaderTradeId = txHash,
+                source = "onchain-ws",
+                eventType = "ONCHAIN_TRADE_PROCESSING_FAILED",
+                status = "error",
+                message = "处理链上交易时发生异常: ${e.message ?: "未知错误"}"
+            )
         }
     }
 

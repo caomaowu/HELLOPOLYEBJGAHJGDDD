@@ -344,7 +344,43 @@ export const apiService = {
      * 查询 Leader 余额
      */
     balance: (data: { leaderId: number }) =>
-      apiClient.post<ApiResponse<any>>('/copy-trading/leaders/balance', data)
+      apiClient.post<ApiResponse<any>>('/copy-trading/leaders/balance', data),
+
+    /**
+     * 扫描近期活跃 Trader
+     */
+    discoveryScan: (data: import('../types').LeaderTraderScanRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderTraderScanResponse>>('/copy-trading/leaders/discovery/scan', data),
+
+    /**
+     * 推荐候选 Leader
+     */
+    discoveryRecommend: (data: import('../types').LeaderCandidateRecommendRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderCandidateRecommendResponse>>('/copy-trading/leaders/discovery/recommend', data),
+
+    /**
+     * 按市场反查活跃 Trader
+     */
+    discoveryMarketTraders: (data: import('../types').LeaderMarketTraderLookupRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderMarketTraderLookupResponse>>('/copy-trading/leaders/discovery/market-traders', data),
+
+    /**
+     * 查询实时候选池
+     */
+    discoveryPool: (data: import('../types').LeaderCandidatePoolListRequest = {}) =>
+      apiClient.post<ApiResponse<import('../types').LeaderCandidatePoolListResponse>>('/copy-trading/leaders/discovery/pool', data),
+
+    /**
+     * 更新候选池人工标注
+     */
+    discoveryPoolUpdateLabels: (data: import('../types').LeaderCandidatePoolLabelUpdateRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderCandidatePoolItem>>('/copy-trading/leaders/discovery/pool/update-labels', data),
+
+    /**
+     * 查询候选评分历史
+     */
+    discoveryPoolHistory: (data: import('../types').LeaderCandidateScoreHistoryRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderCandidateScoreHistoryResponse>>('/copy-trading/leaders/discovery/pool/history', data)
   },
   
   /**
@@ -442,7 +478,16 @@ export const apiService = {
       startTime?: number
       endTime?: number
     }) => 
-      apiClient.post<ApiResponse<any>>('/copy-trading/configs/filtered-orders', data)
+      apiClient.post<ApiResponse<any>>('/copy-trading/configs/filtered-orders', data),
+
+    /**
+     * 查询执行事件列表
+     */
+    getExecutionEvents: (data: import('../types').CopyTradingExecutionEventListRequest) =>
+      apiClient.post<ApiResponse<import('../types').CopyTradingExecutionEventListResponse>>(
+        '/copy-trading/configs/execution-events',
+        data
+      )
   },
 
   /**

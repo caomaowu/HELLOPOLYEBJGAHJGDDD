@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingService
 import com.wrbug.polymarketbot.service.copytrading.configs.FilteredOrderService
+import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventService
 import org.slf4j.LoggerFactory
 import org.springframework.context.MessageSource
 import org.springframework.http.ResponseEntity
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.*
 class CopyTradingController(
     private val copyTradingService: CopyTradingService,
     private val filteredOrderService: FilteredOrderService,
+    private val executionEventService: CopyTradingExecutionEventService,
     private val messageSource: MessageSource
 ) {
     
@@ -215,6 +217,24 @@ class CopyTradingController(
             ResponseEntity.ok(ApiResponse.success(response))
         } catch (e: Exception) {
             logger.error("查询被过滤订单列表异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询执行事件列表
+     */
+    @PostMapping("/execution-events")
+    fun getExecutionEvents(@RequestBody request: CopyTradingExecutionEventListRequest): ResponseEntity<ApiResponse<CopyTradingExecutionEventListResponse>> {
+        return try {
+            if (request.copyTradingId <= 0) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_COPY_TRADING_ID_INVALID, messageSource = messageSource))
+            }
+
+            val response = executionEventService.getEvents(request)
+            ResponseEntity.ok(ApiResponse.success(response))
+        } catch (e: Exception) {
+            logger.error("查询执行事件列表异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
         }
     }

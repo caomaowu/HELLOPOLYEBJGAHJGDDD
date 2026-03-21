@@ -15,6 +15,7 @@ import org.springframework.context.ApplicationContextAware
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderPushService
 import com.wrbug.polymarketbot.service.copytrading.monitor.PolymarketActivityWsService
 import com.wrbug.polymarketbot.service.copytrading.monitor.UnifiedOnChainWsService
+import com.wrbug.polymarketbot.service.accounts.AccountExecutionDiagnosticsService
 import com.wrbug.polymarketbot.service.binance.BinanceKlineService
 import org.springframework.stereotype.Service
 import java.util.concurrent.TimeUnit
@@ -24,7 +25,8 @@ import java.util.concurrent.TimeUnit
  */
 @Service
 class ApiHealthCheckService(
-    private val rpcNodeService: RpcNodeService
+    private val rpcNodeService: RpcNodeService,
+    private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService
 ) : ApplicationContextAware {
 
     private var applicationContext: ApplicationContext? = null
@@ -109,7 +111,8 @@ class ApiHealthCheckService(
                 async { checkPolymarketActivityWebSocket() },
                 async { checkUnifiedOnChainWebSocket() },
                 async { checkBuilderRelayerApi() },
-                async { checkGitHubApi() }
+                async { checkGitHubApi() },
+                async { checkCopyTradingExecutionReadiness() }
             )
 
             jobs.awaitAll().forEach { result ->
@@ -607,6 +610,29 @@ class ApiHealthCheckService(
         val url = "https://api.github.com/"
         // 直接使用 GitHub API 根端点检查可用性
         checkApi("GitHub API", url)
+    }
+
+    /**
+     * 检查启用中的跟单配置是否通过执行前诊断
+     */
+    private suspend fun checkCopyTradingExecutionReadiness(): ApiHealthCheckDto = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val summary = accountExecutionDiagnosticsService.summarizeEnabledCopyTradingReadiness()
+            ApiHealthCheckDto(
+                name = "跟单执行前诊断",
+                url = "/api/accounts/check-setup-status",
+                status = summary.status,
+                message = summary.message
+            )
+        } catch (e: Exception) {
+            logger.warn("检查跟单执行前诊断失败", e)
+            ApiHealthCheckDto(
+                name = "跟单执行前诊断",
+                url = "/api/accounts/check-setup-status",
+                status = "error",
+                message = e.message ?: "检查失败"
+            )
+        }
     }
 }
 

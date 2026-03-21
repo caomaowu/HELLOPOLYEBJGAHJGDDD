@@ -1,6 +1,22 @@
 package com.wrbug.polymarketbot.dto
 
 /**
+ * 账户执行诊断单项结果
+ */
+data class AccountExecutionCheckDto(
+    /** 诊断项编码 */
+    val code: String,
+    /** 诊断项名称 */
+    val title: String,
+    /** 诊断状态：success / warning / error / skipped */
+    val status: String,
+    /** 诊断说明 */
+    val message: String,
+    /** 额外细节（可选） */
+    val detail: String? = null
+)
+
+/**
  * 账户设置状态检查结果
  */
 data class AccountSetupStatusDto(
@@ -18,6 +34,61 @@ data class AccountSetupStatusDto(
      * 步骤3：代币是否已批准
      */
     val tokensApproved: Boolean,
+
+    /**
+     * 是否满足执行前校验
+     */
+    val executionReady: Boolean = false,
+
+    /**
+     * 账户当前是否启用
+     */
+    val accountEnabled: Boolean = true,
+
+    /**
+     * 钱包类型
+     */
+    val walletType: String? = null,
+
+    /**
+     * 推导出的签名类型（1=Magic, 2=Safe, 0=EOA）
+     */
+    val signatureType: Int? = null,
+
+    /**
+     * 预期的代理地址（根据 walletAddress + walletType 推导）
+     */
+    val expectedProxyAddress: String? = null,
+
+    /**
+     * 存储的代理地址是否与链上推导结果一致
+     */
+    val proxyAddressMatched: Boolean? = null,
+
+    /**
+     * 钱包地址格式是否正确
+     */
+    val walletAddressValid: Boolean = false,
+
+    /**
+     * 代理地址格式是否正确
+     */
+    val proxyAddressValid: Boolean = false,
+
+    /**
+     * 私钥是否与钱包地址匹配
+     */
+    val privateKeyMatchesWallet: Boolean = false,
+
+    /**
+     * API 凭证是否都已配置
+     */
+    val apiCredentialsConfigured: Boolean = false,
+
+    /**
+     * API 凭证是否可成功解密
+     */
+    val apiCredentialsDecryptable: Boolean = false,
     
     /**
      * 代币批准详情（各合约的授权额度）
@@ -29,7 +100,17 @@ data class AccountSetupStatusDto(
     /**
      * 检查错误信息（如果有）
      */
-    val error: String? = null
+    val error: String? = null,
+
+    /**
+     * 详细诊断列表
+     */
+    val checks: List<AccountExecutionCheckDto> = emptyList(),
+
+    /**
+     * 检查时间
+     */
+    val checkedAt: Long = System.currentTimeMillis()
 )
 
 /**

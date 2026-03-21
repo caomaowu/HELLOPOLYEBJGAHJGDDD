@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.controller.copytrading.leaders
 
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
+import com.wrbug.polymarketbot.service.copytrading.leaders.LeaderDiscoveryService
 import com.wrbug.polymarketbot.service.copytrading.leaders.LeaderService
 import org.slf4j.LoggerFactory
 import org.springframework.context.MessageSource
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/api/copy-trading/leaders")
 class LeaderController(
     private val leaderService: LeaderService,
+    private val leaderDiscoveryService: LeaderDiscoveryService,
     private val messageSource: MessageSource
 ) {
     
@@ -186,6 +188,156 @@ class LeaderController(
             )
         } catch (e: Exception) {
             logger.error("查询 Leader 余额异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 扫描近期活跃 Trader
+     */
+    @PostMapping("/discovery/scan")
+    fun scanTraders(@RequestBody request: LeaderTraderScanRequest): ResponseEntity<ApiResponse<LeaderTraderScanResponse>> {
+        return try {
+            val result = leaderDiscoveryService.scanTraders(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("扫描 Trader 失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("扫描 Trader 异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 推荐候选 Leader
+     */
+    @PostMapping("/discovery/recommend")
+    fun recommendCandidates(@RequestBody request: LeaderCandidateRecommendRequest): ResponseEntity<ApiResponse<LeaderCandidateRecommendResponse>> {
+        return try {
+            val result = leaderDiscoveryService.recommendCandidates(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("推荐候选 Leader 失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("推荐候选 Leader 异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 按市场反查活跃 Trader
+     */
+    @PostMapping("/discovery/market-traders")
+    fun lookupMarketTraders(@RequestBody request: LeaderMarketTraderLookupRequest): ResponseEntity<ApiResponse<LeaderMarketTraderLookupResponse>> {
+        return try {
+            val result = leaderDiscoveryService.lookupMarketTraders(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("按市场反查活跃 Trader 失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("按市场反查活跃 Trader 异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询实时候选池
+     */
+    @PostMapping("/discovery/pool")
+    fun getCandidatePool(@RequestBody request: LeaderCandidatePoolListRequest): ResponseEntity<ApiResponse<LeaderCandidatePoolListResponse>> {
+        return try {
+            val result = leaderDiscoveryService.getCandidatePool(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("查询候选池失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("查询候选池异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 更新候选池人工标注
+     */
+    @PostMapping("/discovery/pool/update-labels")
+    fun updateCandidatePoolLabels(@RequestBody request: LeaderCandidatePoolLabelUpdateRequest): ResponseEntity<ApiResponse<LeaderCandidatePoolItemDto>> {
+        return try {
+            val result = leaderDiscoveryService.updateCandidatePoolLabels(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("更新候选池人工标注失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("更新候选池人工标注异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询候选评分历史
+     */
+    @PostMapping("/discovery/pool/history")
+    fun getCandidateScoreHistory(@RequestBody request: LeaderCandidateScoreHistoryRequest): ResponseEntity<ApiResponse<LeaderCandidateScoreHistoryResponse>> {
+        return try {
+            val result = leaderDiscoveryService.getCandidateScoreHistory(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("查询候选评分历史失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("查询候选评分历史异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
         }
     }

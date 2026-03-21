@@ -43,7 +43,8 @@ class AccountService(
     private val marketService: MarketService,  // 市场信息服务
     private val telegramNotificationService: TelegramNotificationService? = null,  // 可选，避免循环依赖
     private val relayClientService: RelayClientService,
-    private val jsonUtils: JsonUtils
+    private val jsonUtils: JsonUtils,
+    private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService
 ) {
 
     private val logger = LoggerFactory.getLogger(AccountService::class.java)
@@ -385,64 +386,7 @@ class AccountService(
      * @return AccountSetupStatusDto
      */
     suspend fun checkAccountSetupStatus(accountId: Long): Result<AccountSetupStatusDto> {
-        return try {
-            if (accountId <= 0) {
-                return Result.failure(IllegalArgumentException("账户 ID 无效"))
-            }
-            val account = accountRepository.findById(accountId).orElse(null)
-                ?: return Result.failure(IllegalArgumentException("账户不存在"))
-
-            val proxyAddress = account.proxyAddress
-            if (proxyAddress.isBlank()) {
-                return Result.success(
-                    AccountSetupStatusDto(
-                        proxyDeployed = false,
-                        tradingEnabled = account.apiKey != null && account.apiSecret != null && account.apiPassphrase != null,
-                        tokensApproved = false,
-                        approvalDetails = null,
-                        error = "代理地址为空"
-                    )
-                )
-            }
-
-            // 步骤1：代理钱包是否已部署
-            val proxyDeployed = blockchainService.isProxyDeployed(proxyAddress)
-
-            // 步骤2：交易是否已启用（API 凭证是否已配置）
-            val tradingEnabled = account.apiKey != null &&
-                    account.apiSecret != null &&
-                    account.apiPassphrase != null
-
-            // 步骤3：代币是否已批准（USDC 对各 spender 的 allowance，默认无限授权）
-            val approvalDetails = mutableMapOf<String, String>()
-            var tokensApproved = true
-            for ((name, spender) in setupApprovalSpenders) {
-                val allowanceResult = blockchainService.getUsdcAllowance(proxyAddress, spender)
-                val allowance = allowanceResult.getOrNull() ?: BigInteger.ZERO
-                val displayAmount = if (allowance >= unlimitedAllowance) {
-                    "unlimited"
-                } else {
-                    java.math.BigDecimal(allowance).divide(usdcDecimals, 6, java.math.RoundingMode.DOWN).toPlainString()
-                }
-                approvalDetails[name] = displayAmount
-                if (allowance <= BigInteger.ZERO) {
-                    tokensApproved = false
-                }
-            }
-
-            Result.success(
-                AccountSetupStatusDto(
-                    proxyDeployed = proxyDeployed,
-                    tradingEnabled = tradingEnabled,
-                    tokensApproved = tokensApproved,
-                    approvalDetails = approvalDetails,
-                    error = null
-                )
-            )
-        } catch (e: Exception) {
-            logger.error("检查账户设置状态失败: accountId=$accountId, ${e.message}", e)
-            Result.failure(e)
-        }
+        return accountExecutionDiagnosticsService.diagnoseAccount(accountId, forceRefresh = true)
     }
 
     /** 步骤1 跳转 URL（代理部署需在 Polymarket 完成） */
@@ -527,6 +471,7 @@ class AccountService(
                         updatedAt = System.currentTimeMillis()
                     )
                     accountRepository.save(updated)
+                    accountExecutionDiagnosticsService.invalidate(accountId)
                     orderPushService.refreshSubscriptions()
                     Result.success(ExecuteSetupStepResponse(success = true))
                 }
@@ -549,6 +494,7 @@ class AccountService(
                     )
                     executeResult.fold(
                         onSuccess = { txHash ->
+                            accountExecutionDiagnosticsService.invalidate(accountId)
                             Result.success(
                                 ExecuteSetupStepResponse(
                                     success = true,
@@ -595,6 +541,7 @@ class AccountService(
             val saved = accountRepository.save(updated)
 
             // 刷新订单推送订阅（账户状态变更时）
+            accountExecutionDiagnosticsService.invalidate(saved.id)
             orderPushService.refreshSubscriptions()
 
             Result.success(toDto(saved))
@@ -619,6 +566,7 @@ class AccountService(
             accountRepository.delete(account)
 
             // 刷新订单推送订阅（账户删除时）
+            accountExecutionDiagnosticsService.invalidate(accountId)
             orderPushService.refreshSubscriptions()
 
             Result.success(Unit)

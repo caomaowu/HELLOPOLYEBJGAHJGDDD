@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, List, Empty, Spin, Divider, Typography, Modal, Descriptions, Statistic, Row, Col } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, GlobalOutlined, EyeOutlined, ReloadOutlined, WalletOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, GlobalOutlined, EyeOutlined, ReloadOutlined, WalletOutlined, SearchOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { Leader, LeaderBalanceResponse } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { formatUSDC } from '../utils'
+import LeaderDiscoveryModal from '../components/LeaderDiscoveryModal'
 
 const { Text } = Typography
 
@@ -24,6 +25,7 @@ const LeaderList: React.FC = () => {
   const [detailLeader, setDetailLeader] = useState<Leader | null>(null)
   const [detailBalance, setDetailBalance] = useState<LeaderBalanceResponse | null>(null)
   const [detailBalanceLoading, setDetailBalanceLoading] = useState(false)
+  const [discoveryVisible, setDiscoveryVisible] = useState(false)
 
   useEffect(() => {
     fetchLeaders()
@@ -327,9 +329,14 @@ const LeaderList: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('leaderList.title')}</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/leaders/add')} size={isMobile ? 'middle' : 'large'} style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px', fontSize: isMobile ? '14px' : '16px' }}>
-          {t('leaderList.addLeader')}
-        </Button>
+        <Space wrap>
+          <Button icon={<SearchOutlined />} onClick={() => setDiscoveryVisible(true)} size={isMobile ? 'middle' : 'large'} style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px', fontSize: isMobile ? '14px' : '16px' }}>
+            {t('leaderDiscovery.open')}
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/leaders/add')} size={isMobile ? 'middle' : 'large'} style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px', fontSize: isMobile ? '14px' : '16px' }}>
+            {t('leaderList.addLeader')}
+          </Button>
+        </Space>
       </div>
 
       <Card style={{ borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #e8e8e8' }} bodyStyle={{ padding: isMobile ? '12px' : '24px' }}>
@@ -586,6 +593,13 @@ const LeaderList: React.FC = () => {
           </>
         )}
       </Modal>
+
+      <LeaderDiscoveryModal
+        open={discoveryVisible}
+        leaders={leaders}
+        onClose={() => setDiscoveryVisible(false)}
+        onLeaderAdded={fetchLeaders}
+      />
     </div>
   )
 }

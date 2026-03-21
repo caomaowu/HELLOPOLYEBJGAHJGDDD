@@ -1,0 +1,410 @@
+package com.wrbug.polymarketbot.service.accounts
+
+import com.wrbug.polymarketbot.dto.AccountExecutionCheckDto
+import com.wrbug.polymarketbot.dto.AccountSetupStatusDto
+import com.wrbug.polymarketbot.entity.Account
+import com.wrbug.polymarketbot.enums.WalletType
+import com.wrbug.polymarketbot.repository.AccountRepository
+import com.wrbug.polymarketbot.repository.CopyTradingRepository
+import com.wrbug.polymarketbot.service.common.BlockchainService
+import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
+import com.wrbug.polymarketbot.util.CryptoUtils
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import org.web3j.crypto.Credentials
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.math.RoundingMode
+import java.util.concurrent.ConcurrentHashMap
+
+@Service
+class AccountExecutionDiagnosticsService(
+    private val accountRepository: AccountRepository,
+    private val copyTradingRepository: CopyTradingRepository,
+    private val blockchainService: BlockchainService,
+    private val orderSigningService: OrderSigningService,
+    private val cryptoUtils: CryptoUtils
+) {
+
+    companion object {
+        private const val CACHE_TTL_MS = 30_000L
+
+        private val APPROVAL_SPENDERS = mapOf(
+            "CTF_CONTRACT" to "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
+            "CTF_EXCHANGE" to "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
+            "NEG_RISK_EXCHANGE" to "0xC5d563A36AE78145C45a50134d48A1215220f80a",
+            "NEG_RISK_ADAPTER" to "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+        )
+
+        private val USDC_DECIMALS = BigDecimal("1000000")
+        private val UNLIMITED_ALLOWANCE = BigInteger("115792089237316195423570985008687907853269984665640564039457584007913129639935")
+    }
+
+    data class ExecutionReadinessSummary(
+        val status: String,
+        val message: String,
+        val enabledCopyTradingCount: Int = 0,
+        val unhealthyCopyTradingCount: Int = 0,
+        val unhealthyAccountCount: Int = 0
+    )
+
+    private data class CachedDiagnostics(
+        val value: AccountSetupStatusDto,
+        val cachedAt: Long
+    )
+
+    private val logger = LoggerFactory.getLogger(AccountExecutionDiagnosticsService::class.java)
+    private val cache = ConcurrentHashMap<Long, CachedDiagnostics>()
+
+    suspend fun diagnoseAccount(accountId: Long, forceRefresh: Boolean = true): Result<AccountSetupStatusDto> {
+        if (accountId <= 0) {
+            return Result.failure(IllegalArgumentException("账户 ID 无效"))
+        }
+        val account = accountRepository.findById(accountId).orElse(null)
+            ?: return Result.failure(IllegalArgumentException("账户不存在"))
+        return Result.success(diagnoseAccount(account, forceRefresh))
+    }
+
+    suspend fun diagnoseAccount(account: Account, forceRefresh: Boolean = false): AccountSetupStatusDto {
+        val accountId = account.id
+        if (!forceRefresh && accountId != null) {
+            val cached = cache[accountId]
+            if (cached != null && System.currentTimeMillis() - cached.cachedAt < CACHE_TTL_MS) {
+                return cached.value
+            }
+        }
+
+        val diagnostics = buildDiagnostics(account)
+        if (accountId != null) {
+            cache[accountId] = CachedDiagnostics(diagnostics, System.currentTimeMillis())
+        }
+        return diagnostics
+    }
+
+    fun invalidate(accountId: Long? = null) {
+        if (accountId == null) {
+            cache.clear()
+        } else {
+            cache.remove(accountId)
+        }
+    }
+
+    suspend fun summarizeEnabledCopyTradingReadiness(): ExecutionReadinessSummary {
+        val enabledCopyTradings = copyTradingRepository.findByEnabledTrue()
+        if (enabledCopyTradings.isEmpty()) {
+            return ExecutionReadinessSummary(
+                status = "skipped",
+                message = "当前没有启用的跟单配置"
+            )
+        }
+
+        val accountIds = enabledCopyTradings.map { it.accountId }.distinct()
+        val diagnosticsByAccountId = mutableMapOf<Long, AccountSetupStatusDto>()
+        for (accountId in accountIds) {
+            val account = accountRepository.findById(accountId).orElse(null)
+            if (account != null) {
+                diagnosticsByAccountId[accountId] = diagnoseAccount(account, forceRefresh = false)
+            }
+        }
+
+        val unhealthyAccounts = diagnosticsByAccountId
+            .filterValues { !it.executionReady }
+            .keys
+        val unhealthyCopyTradings = enabledCopyTradings.count { unhealthyAccounts.contains(it.accountId) }
+
+        return if (unhealthyAccounts.isEmpty()) {
+            ExecutionReadinessSummary(
+                status = "success",
+                message = "所有启用的跟单配置都通过执行前诊断",
+                enabledCopyTradingCount = enabledCopyTradings.size
+            )
+        } else {
+            val sampleNames = unhealthyAccounts.take(3).mapNotNull { accountId ->
+                accountRepository.findById(accountId).orElse(null)?.accountName ?: "账户#$accountId"
+            }
+            ExecutionReadinessSummary(
+                status = "error",
+                message = "发现 ${unhealthyAccounts.size} 个账户、${unhealthyCopyTradings} 个启用配置存在执行前风险：${sampleNames.joinToString("、")}",
+                enabledCopyTradingCount = enabledCopyTradings.size,
+                unhealthyCopyTradingCount = unhealthyCopyTradings,
+                unhealthyAccountCount = unhealthyAccounts.size
+            )
+        }
+    }
+
+    private suspend fun buildDiagnostics(account: Account): AccountSetupStatusDto {
+        val checks = mutableListOf<AccountExecutionCheckDto>()
+        val errors = mutableListOf<String>()
+
+        fun addCheck(
+            code: String,
+            title: String,
+            status: String,
+            message: String,
+            detail: String? = null
+        ) {
+            checks += AccountExecutionCheckDto(
+                code = code,
+                title = title,
+                status = status,
+                message = message,
+                detail = detail
+            )
+            if (status == "error") {
+                errors += message
+            }
+        }
+
+        val walletType = WalletType.fromStringOrDefault(account.walletType, WalletType.MAGIC)
+        val walletAddressValid = isValidEthereumAddress(account.walletAddress)
+        addCheck(
+            code = "WALLET_ADDRESS",
+            title = "钱包地址",
+            status = if (walletAddressValid) "success" else "error",
+            message = if (walletAddressValid) "钱包地址格式正确" else "钱包地址格式不合法"
+        )
+
+        val proxyAddressValid = isValidEthereumAddress(account.proxyAddress)
+        addCheck(
+            code = "PROXY_ADDRESS",
+            title = "代理钱包地址",
+            status = if (proxyAddressValid) "success" else "error",
+            message = if (proxyAddressValid) "代理钱包地址格式正确" else "代理钱包地址格式不合法"
+        )
+
+        addCheck(
+            code = "ACCOUNT_ENABLED",
+            title = "账户启用状态",
+            status = if (account.isEnabled) "success" else "error",
+            message = if (account.isEnabled) "账户已启用" else "账户已禁用，无法执行跟单"
+        )
+
+        var decryptedPrivateKey: String? = null
+        var privateKeyMatchesWallet = false
+        try {
+            decryptedPrivateKey = cryptoUtils.decrypt(account.privateKey)
+            val derivedAddress = Credentials.create(decryptedPrivateKey).address
+            privateKeyMatchesWallet = derivedAddress.equals(account.walletAddress, ignoreCase = true)
+            addCheck(
+                code = "PRIVATE_KEY_MATCH",
+                title = "私钥与钱包地址",
+                status = if (privateKeyMatchesWallet) "success" else "error",
+                message = if (privateKeyMatchesWallet) {
+                    "私钥与钱包地址匹配"
+                } else {
+                    "私钥与钱包地址不匹配"
+                },
+                detail = if (privateKeyMatchesWallet) null else "推导地址: $derivedAddress"
+            )
+        } catch (e: Exception) {
+            logger.warn("解密账户私钥失败: accountId={}", account.id, e)
+            addCheck(
+                code = "PRIVATE_KEY_MATCH",
+                title = "私钥与钱包地址",
+                status = "error",
+                message = "账户私钥无法解密或格式不合法"
+            )
+        }
+
+        val apiCredentialsConfigured = !account.apiKey.isNullOrBlank() &&
+            !account.apiSecret.isNullOrBlank() &&
+            !account.apiPassphrase.isNullOrBlank()
+        addCheck(
+            code = "API_CREDENTIALS_CONFIGURED",
+            title = "API 凭证完整性",
+            status = if (apiCredentialsConfigured) "success" else "error",
+            message = if (apiCredentialsConfigured) "API Key / Secret / Passphrase 已配置" else "API 凭证不完整"
+        )
+
+        val apiCredentialsDecryptable = if (apiCredentialsConfigured) {
+            try {
+                cryptoUtils.decrypt(account.apiSecret!!)
+                cryptoUtils.decrypt(account.apiPassphrase!!)
+                true
+            } catch (e: Exception) {
+                logger.warn("解密 API 凭证失败: accountId={}", account.id, e)
+                false
+            }
+        } else {
+            false
+        }
+        addCheck(
+            code = "API_CREDENTIALS_DECRYPTABLE",
+            title = "API 凭证可用性",
+            status = when {
+                !apiCredentialsConfigured -> "skipped"
+                apiCredentialsDecryptable -> "success"
+                else -> "error"
+            },
+            message = when {
+                !apiCredentialsConfigured -> "未配置完整 API 凭证，跳过解密检查"
+                apiCredentialsDecryptable -> "API Secret / Passphrase 解密成功"
+                else -> "API Secret / Passphrase 解密失败"
+            }
+        )
+
+        val expectedProxyAddress = if (walletAddressValid) {
+            resolveExpectedProxyAddress(account.walletAddress, walletType)
+        } else {
+            null
+        }
+        val proxyAddressMatched = expectedProxyAddress?.equals(account.proxyAddress, ignoreCase = true)
+        addCheck(
+            code = "PROXY_RELATION",
+            title = "代理钱包关系",
+            status = when {
+                expectedProxyAddress == null -> "warning"
+                proxyAddressMatched == true -> "success"
+                else -> "error"
+            },
+            message = when {
+                expectedProxyAddress == null -> "暂时无法推导预期代理钱包地址"
+                proxyAddressMatched == true -> "代理钱包与链上推导结果一致"
+                else -> "代理钱包与链上推导结果不一致"
+            },
+            detail = expectedProxyAddress?.let { "预期代理地址: $it" }
+        )
+
+        val proxyDeployed = if (proxyAddressValid) {
+            try {
+                blockchainService.isProxyDeployed(account.proxyAddress)
+            } catch (e: Exception) {
+                logger.warn("检查代理部署状态失败: accountId={}", account.id, e)
+                false
+            }
+        } else {
+            false
+        }
+        addCheck(
+            code = "PROXY_DEPLOYED",
+            title = "代理部署状态",
+            status = when {
+                !proxyAddressValid -> "skipped"
+                proxyDeployed -> "success"
+                else -> "error"
+            },
+            message = when {
+                !proxyAddressValid -> "代理地址无效，跳过部署检查"
+                proxyDeployed -> "代理钱包已部署"
+                else -> "代理钱包未部署"
+            }
+        )
+
+        val signatureType = try {
+            orderSigningService.getSignatureTypeForWalletType(account.walletType)
+        } catch (e: Exception) {
+            logger.warn("计算签名类型失败: accountId={}", account.id, e)
+            null
+        }
+        addCheck(
+            code = "SIGNATURE_TYPE",
+            title = "签名类型",
+            status = if (signatureType != null) "success" else "warning",
+            message = signatureType?.let { "签名类型=$it" } ?: "未能计算签名类型"
+        )
+
+        val approvalDetails = linkedMapOf<String, String>()
+        var tokensApproved = true
+        if (proxyAddressValid && proxyDeployed) {
+            for ((name, spender) in APPROVAL_SPENDERS) {
+                try {
+                    val allowance = blockchainService.getUsdcAllowance(account.proxyAddress, spender).getOrNull()
+                        ?: BigInteger.ZERO
+                    val displayAmount = if (allowance >= UNLIMITED_ALLOWANCE) {
+                        "unlimited"
+                    } else {
+                        BigDecimal(allowance).divide(USDC_DECIMALS, 6, RoundingMode.DOWN).toPlainString()
+                    }
+                    approvalDetails[name] = displayAmount
+                    val approved = allowance > BigInteger.ZERO
+                    if (!approved) {
+                        tokensApproved = false
+                    }
+                    addCheck(
+                        code = "ALLOWANCE_$name",
+                        title = "USDC 授权 / $name",
+                        status = if (approved) "success" else "error",
+                        message = if (approved) "授权正常: $displayAmount" else "未授权或授权额度为 0",
+                        detail = spender
+                    )
+                } catch (e: Exception) {
+                    logger.warn("读取 allowance 失败: accountId={}, spender={}", account.id, spender, e)
+                    tokensApproved = false
+                    approvalDetails[name] = "error"
+                    addCheck(
+                        code = "ALLOWANCE_$name",
+                        title = "USDC 授权 / $name",
+                        status = "error",
+                        message = "读取 allowance 失败",
+                        detail = spender
+                    )
+                }
+            }
+        } else {
+            tokensApproved = false
+            addCheck(
+                code = "ALLOWANCE_CHECK",
+                title = "USDC 授权检查",
+                status = "skipped",
+                message = "代理地址不可用或尚未部署，跳过 allowance 检查"
+            )
+        }
+
+        val error = errors.firstOrNull()
+        val executionReady = account.isEnabled &&
+            walletAddressValid &&
+            proxyAddressValid &&
+            privateKeyMatchesWallet &&
+            apiCredentialsConfigured &&
+            apiCredentialsDecryptable &&
+            proxyDeployed &&
+            (proxyAddressMatched != false) &&
+            tokensApproved
+
+        return AccountSetupStatusDto(
+            proxyDeployed = proxyDeployed,
+            tradingEnabled = apiCredentialsConfigured && apiCredentialsDecryptable,
+            tokensApproved = tokensApproved,
+            executionReady = executionReady,
+            accountEnabled = account.isEnabled,
+            walletType = account.walletType,
+            signatureType = signatureType,
+            expectedProxyAddress = expectedProxyAddress,
+            proxyAddressMatched = proxyAddressMatched,
+            walletAddressValid = walletAddressValid,
+            proxyAddressValid = proxyAddressValid,
+            privateKeyMatchesWallet = privateKeyMatchesWallet,
+            apiCredentialsConfigured = apiCredentialsConfigured,
+            apiCredentialsDecryptable = apiCredentialsDecryptable,
+            approvalDetails = approvalDetails.ifEmpty { null },
+            error = error,
+            checks = checks,
+            checkedAt = System.currentTimeMillis()
+        )
+    }
+
+    private suspend fun resolveExpectedProxyAddress(walletAddress: String, walletType: WalletType): String? {
+        return try {
+            blockchainService.getProxyAddress(walletAddress, walletType).getOrNull()
+                ?: if (walletType == WalletType.MAGIC) {
+                    blockchainService.calculateMagicProxyAddress(walletAddress)
+                } else {
+                    null
+                }
+        } catch (e: Exception) {
+            logger.warn("推导代理地址失败: walletAddress={}, walletType={}", walletAddress, walletType, e)
+            if (walletType == WalletType.MAGIC) {
+                blockchainService.calculateMagicProxyAddress(walletAddress)
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun isValidEthereumAddress(address: String?): Boolean {
+        if (address.isNullOrBlank()) {
+            return false
+        }
+        return address.matches(Regex("^0x[0-9a-fA-F]{40}$"))
+    }
+}
