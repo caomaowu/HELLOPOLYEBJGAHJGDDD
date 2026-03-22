@@ -18,7 +18,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
 BACKEND_APP_PROPS="$PROJECT_ROOT/backend/src/main/resources/application.properties"
@@ -29,6 +29,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
 NC='\033[0m'
 
 print_step() {
@@ -87,7 +88,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
         print_err ".env.example not found"
         exit 1
     fi
-}
+fi
 
 declare -A env_hash
 while IFS='=' read -r key value; do
@@ -104,6 +105,7 @@ DB_PASSWORD=$(get_env_value "DB_PASSWORD" "")
 DB_NAME=$(get_env_value "DB_NAME" "polyhermes")
 SERVER_PORT=$(get_env_value "SERVER_PORT" "8000")
 JWT_SECRET=$(get_env_value "JWT_SECRET" "change-me-in-production")
+ADMIN_RESET_PASSWORD_KEY=$(get_env_value "ADMIN_RESET_PASSWORD_KEY" "change-me-in-production-use-openssl-rand-hex-32")
 VITE_API_URL=$(get_env_value "VITE_API_URL" "http://localhost:8000")
 VITE_WS_URL=$(get_env_value "VITE_WS_URL" "ws://localhost:8000")
 VITE_ENABLE_SYSTEM_UPDATE=$(get_env_value "VITE_ENABLE_SYSTEM_UPDATE" "false")
@@ -118,14 +120,18 @@ print_ok ".env file loaded"
 
 print_step "2. Checking prerequisites"
 
-echo -n "  - Checking MySQL..."
-if ! command -v mysql &> /dev/null; then
-    echo ""
-    print_err "MySQL client not found"
-    echo -e "Please install MySQL or add it to PATH"
-    exit 1
+if [[ "$SKIP_DB_CREATE" == "false" ]]; then
+    echo -n "  - Checking MySQL..."
+    if ! command -v mysql &> /dev/null; then
+        echo ""
+        print_err "MySQL client not found"
+        echo -e "Please install MySQL or add it to PATH"
+        exit 1
+    fi
+    print_ok "MySQL found"
+else
+    print_info "Skipping MySQL client check"
 fi
-print_ok "MySQL found"
 
 echo -n "  - Checking JDK..."
 if ! command -v java &> /dev/null; then
@@ -188,6 +194,7 @@ if [[ -f "$BACKEND_APP_PROPS" ]]; then
     update_app_property "$BACKEND_APP_PROPS" "spring.datasource.password" "\${DB_PASSWORD:$DB_PASSWORD}"
     update_app_property "$BACKEND_APP_PROPS" "server.port" "\${SERVER_PORT:$SERVER_PORT}"
     update_app_property "$BACKEND_APP_PROPS" "jwt.secret" "\${JWT_SECRET:$JWT_SECRET}"
+    update_app_property "$BACKEND_APP_PROPS" "admin.reset-password.key" "\${ADMIN_RESET_PASSWORD_KEY:$ADMIN_RESET_PASSWORD_KEY}"
     print_ok "Backend configuration updated"
 else
     print_err "application.properties not found at $BACKEND_APP_PROPS"

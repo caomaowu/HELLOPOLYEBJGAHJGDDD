@@ -22,10 +22,10 @@
   ↓
 Nginx (80/443)
   ├─ /            → frontend/dist
-  ├─ /api/*       → http://127.0.0.1:8000
-  └─ /ws          → ws://127.0.0.1:8000
+  ├─ /api/*       → http://127.0.0.1:<SERVER_PORT>
+  └─ /ws          → ws://127.0.0.1:<SERVER_PORT>
 
-Spring Boot (127.0.0.1:8000)
+Spring Boot (127.0.0.1:<SERVER_PORT>)
   ↓
 MySQL (127.0.0.1:3306)
 ```
@@ -45,7 +45,7 @@ Windows:
 ```powershell
 Copy-Item ".env.example" ".env"
 # 编辑 .env，至少填写 DB_PASSWORD
-.\init-dev-env.ps1
+.\dev-scripts\init-dev-env.ps1
 ```
 
 Linux/macOS:
@@ -53,8 +53,8 @@ Linux/macOS:
 ```bash
 cp ".env.example" ".env"
 # 编辑 .env，至少填写 DB_PASSWORD
-chmod +x "./init-dev-env.sh"
-./init-dev-env.sh
+chmod +x "./dev-scripts/init-dev-env.sh"
+./dev-scripts/init-dev-env.sh
 ```
 
 建议保持以下关键值：
@@ -70,6 +70,7 @@ VITE_ENABLE_SYSTEM_UPDATE=false
 
 说明：
 
+- `SERVER_PORT` 可以改成任意未占用端口，但 `VITE_API_URL`、`VITE_WS_URL` 和反向代理必须同步修改
 - `VITE_ENABLE_SYSTEM_UPDATE=false` 用于关闭容器专属的在线更新模块
 - 初始化脚本会写入 `frontend/.env`
 - 后端通过 Flyway 自动迁移数据库
@@ -115,6 +116,22 @@ npm run dev
 - 宿主机 MySQL
 - 宿主机 `systemd` 管理后端
 - 宿主机 Nginx 托管前端静态文件并做反向代理
+
+如果你只是想先在服务器项目目录里直接跑起来，也可以先使用：
+
+```bash
+./prod-scripts/init-prod-env.sh
+./prod-scripts/build-prod.sh
+./prod-scripts/start-prod.sh
+```
+
+停止方式：
+
+```bash
+./prod-scripts/stop-prod.sh
+```
+
+这套脚本适合单机直接运行源码目录，但长期稳定运行仍建议切换到 `systemd + Nginx`。
 
 ### 1. 后端构建
 
@@ -188,6 +205,7 @@ LOG_LEVEL_APP=INFO
 
 - 这里必须使用 `127.0.0.1` 或真实数据库地址，不要再使用 `mysql:3306`
 - `JWT_SECRET`、`ADMIN_RESET_PASSWORD_KEY`、`ENCRYPTION_KEY` 必须使用真实随机值
+- `SERVER_PORT` 改动后，需要同步更新 Nginx 反向代理端口
 
 ### 5. systemd 服务示例
 
@@ -201,11 +219,14 @@ After=network.target mysql.service
 [Service]
 Type=simple
 User=polyhermes
-WorkingDirectory=/opt/polyhermes/backend
-EnvironmentFile=/opt/polyhermes/backend/.env
-ExecStart=/usr/bin/java -Xms512m -Xmx1024m -XX:+UseG1GC -jar /opt/polyhermes/backend/app.jar
+WorkingDirectory=/opt/polyhermes/PolyHermes
+EnvironmentFile=/opt/polyhermes/PolyHermes/.env
+ExecStart=/bin/bash -lc 'cd /opt/polyhermes/PolyHermes && JAR_PATH=$(find backend/build/libs -maxdepth 1 -type f -name "*.jar" ! -name "*-plain.jar" | head -n 1) && exec java ${JAVA_OPTS:--Xms512m -Xmx1024m -XX:+UseG1GC} -jar "$JAR_PATH"'
 Restart=always
 RestartSec=10
+SuccessExitStatus=143
+TimeoutStopSec=30
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -235,8 +256,8 @@ journalctl -u polyhermes-backend -f
 核心思路：
 
 - `root` 指向 `frontend/dist`
-- `/api` 代理到 `127.0.0.1:8000`
-- `/ws` 代理到 `127.0.0.1:8000`
+- `/api` 代理到 `127.0.0.1:<SERVER_PORT>`
+- `/ws` 代理到 `127.0.0.1:<SERVER_PORT>`
 - 其他路径回退到 `index.html`
 
 ### 7. 升级流程

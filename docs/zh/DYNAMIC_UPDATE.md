@@ -4,40 +4,33 @@
 
 当前推荐的升级方式是标准的非 Docker 发布流程：
 
-1. 构建新的后端 JAR
-2. 构建新的前端静态资源
-3. 备份当前生产产物
-4. 替换 `app.jar`
-5. 替换前端 `dist`
-6. 重启后端进程
-7. 重载 Nginx
+1. 在服务器项目根目录重新构建
+2. 备份当前生产产物
+3. 停止后端进程
+4. 启动新的后端进程
+5. 如有需要，重载 Nginx
 
 ## 推荐流程
 
 ```bash
-./deploy.sh
+./prod-scripts/build-prod.sh
+./prod-scripts/stop-prod.sh
+./prod-scripts/start-prod.sh
 ```
-
-然后将以下产物发布到服务器：
-
-- `deploy/package/backend/app.jar`
-- `deploy/package/frontend/dist`
-- `deploy/package/nginx.conf`
 
 ## 升级命令示例
 
 ```bash
-sudo systemctl stop polyhermes-backend
-cp app.jar /opt/polyhermes/backend/app.jar
-rsync -av --delete dist/ /opt/polyhermes/frontend/dist/
-sudo systemctl start polyhermes-backend
+./prod-scripts/build-prod.sh
+./prod-scripts/stop-prod.sh
+./prod-scripts/start-prod.sh
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ## 回滚建议
 
-- 保留上一个版本的 `app.jar`
-- 保留上一个版本的 `dist` 目录快照
+- 保留上一个稳定提交或分支
+- 保留上一个版本的 `frontend/dist` 目录快照
 - 每次升级前导出数据库备份
 
 ## 前端在线更新模块

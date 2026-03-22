@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--install-deps" ]]; then
 fi
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$PROJECT_ROOT/.." && pwd)"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 RUN_DIR="$PROJECT_ROOT/.run"
@@ -15,6 +16,8 @@ BACKEND_LOG="$RUN_DIR/backend.log"
 FRONTEND_LOG="$RUN_DIR/frontend.log"
 BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
+ENV_FILE="$PROJECT_ROOT/.env"
+BACKEND_PORT="8000"
 
 info() {
     printf '[INFO] %s\n' "$1"
@@ -27,6 +30,16 @@ ok() {
 fail() {
     printf '[ERROR] %s\n' "$1" >&2
     exit 1
+}
+
+load_backend_port() {
+    if [[ -f "$ENV_FILE" ]]; then
+        local line
+        line="$(grep -E '^SERVER_PORT=' "$ENV_FILE" | tail -n 1 || true)"
+        if [[ -n "$line" ]]; then
+            BACKEND_PORT="${line#*=}"
+        fi
+    fi
 }
 
 assert_command() {
@@ -60,7 +73,7 @@ start_background() {
 
     (
         cd "$workdir"
-        nohup bash -lc "$command" >>"$log_file" 2>&1 &
+        nohup bash -lc "exec $command" >>"$log_file" 2>&1 &
         echo $! > "$pid_file"
     )
 
@@ -75,14 +88,15 @@ assert_command npm "请安装 npm。"
 [[ -f "$FRONTEND_DIR/package.json" ]] || fail "未找到 frontend/package.json"
 
 mkdir -p "$RUN_DIR"
+load_backend_port
 
 if [[ "$INSTALL_DEPS" == "true" || ! -d "$FRONTEND_DIR/node_modules" ]]; then
     info "安装前端依赖"
     (cd "$FRONTEND_DIR" && npm install)
 fi
 
-[[ -f "$PROJECT_ROOT/.env" ]] || info "提示：根目录 .env 不存在，建议先执行 ./init-dev-env.sh"
-[[ -f "$FRONTEND_DIR/.env" ]] || info "提示：frontend/.env 不存在，建议先执行 ./init-dev-env.sh"
+[[ -f "$PROJECT_ROOT/.env" ]] || info "提示：根目录 .env 不存在，建议先执行 ./dev-scripts/init-dev-env.sh"
+[[ -f "$FRONTEND_DIR/.env" ]] || info "提示：frontend/.env 不存在，建议先执行 ./dev-scripts/init-dev-env.sh"
 
 info "启动后端"
 start_background "Backend" "$BACKEND_DIR" "./gradlew bootRun" "$BACKEND_LOG" "$BACKEND_PID_FILE"
@@ -95,6 +109,9 @@ start_background "Frontend" "$FRONTEND_DIR" "npm run dev" "$FRONTEND_LOG" "$FRON
 printf '\n'
 ok "前后端已启动"
 printf 'Frontend: http://localhost:3000\n'
-printf 'Backend:  http://localhost:8000\n'
+printf 'Backend:  http://localhost:%s\n' "$BACKEND_PORT"
 printf 'Backend Log:  %s\n' "$BACKEND_LOG"
 printf 'Frontend Log: %s\n' "$FRONTEND_LOG"
+
+echo ""
+echo "停止方式：执行 ./dev-scripts/stop-dev.sh 脚本"

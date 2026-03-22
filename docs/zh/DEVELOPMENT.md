@@ -44,6 +44,8 @@ polyhermes/
 │   │   ├── locales/            # 文案资源（当前仅 zh-CN）
 │   │   └── styles/             # 样式文件
 │   └── public/                 # 静态资源
+├── dev-scripts/                # 开发环境脚本（init/start/stop）
+├── prod-scripts/               # 生产环境脚本（deploy/release）
 ├── docs/                       # 文档
 │   ├── DEPLOYMENT.md           # 部署文档
 │   ├── VERSION_MANAGEMENT.md  # 版本号管理文档
@@ -79,15 +81,15 @@ cd PolyHermes
 ```powershell
 cp .env.example .env
 # 编辑 .env，填入数据库密码
-.\init-dev-env.ps1
+.\dev-scripts\init-dev-env.ps1
 ```
 
 **Linux:**
 ```bash
 cp .env.example .env
 # 编辑 .env，填入数据库密码
-chmod +x init-dev-env.sh
-./init-dev-env.sh
+chmod +x dev-scripts/init-dev-env.sh
+./dev-scripts/init-dev-env.sh
 ```
 
 脚本会自动：

@@ -21,16 +21,19 @@ import { wsManager } from './websocket'
 
 /**
  * API 基础配置
- * 默认使用相对路径 /api（通过反向代理转发）
- * 如果设置了 VITE_API_URL 环境变量，则使用完整 URL（用于跨域场景）
+ * 开发环境统一使用相对路径 /api，由 Vite 代理转发，避免跨域问题。
+ * 生产环境如果设置了 VITE_API_URL，则使用完整 URL；否则回退到相对路径。
  */
 const getBaseURL = (): string => {
-  const envApiUrl = import.meta.env.VITE_API_URL
-  if (envApiUrl) {
-    // 如果设置了环境变量，使用完整 URL（支持跨域）
-    return `${envApiUrl}/api`
+  if (import.meta.env.DEV) {
+    return '/api'
   }
-  // 否则使用相对路径（通过反向代理转发）
+
+  const envApiUrl = import.meta.env.VITE_API_URL?.trim()
+  if (envApiUrl) {
+    return `${envApiUrl.replace(/\/+$/, '')}/api`
+  }
+
   return '/api'
 }
 

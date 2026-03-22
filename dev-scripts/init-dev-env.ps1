@@ -1,5 +1,5 @@
 # PolyHermes Development Environment Initialization Script
-# Usage: .\init-dev-env.ps1
+# Usage: .\dev-scripts\init-dev-env.ps1
 
 param(
     [switch]$SkipDbCreate
@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = $ScriptDir
+$ProjectRoot = Split-Path -Parent $ScriptDir
 $EnvFile = Join-Path $ProjectRoot ".env"
 $EnvExampleFile = Join-Path $ProjectRoot ".env.example"
 $BackendAppProps = Join-Path $ProjectRoot "backend\src\main\resources\application.properties"
@@ -90,6 +90,7 @@ $DB_PASSWORD = Get-EnvValue "DB_PASSWORD"
 $DB_NAME = Get-EnvValue "DB_NAME" "polyhermes"
 $SERVER_PORT = Get-EnvValue "SERVER_PORT" "8000"
 $JWT_SECRET = Get-EnvValue "JWT_SECRET" "change-me-in-production"
+$ADMIN_RESET_PASSWORD_KEY = Get-EnvValue "ADMIN_RESET_PASSWORD_KEY" "change-me-in-production-use-openssl-rand-hex-32"
 $VITE_API_URL = Get-EnvValue "VITE_API_URL" "http://localhost:8000"
 $VITE_WS_URL = Get-EnvValue "VITE_WS_URL" "ws://localhost:8000"
 $VITE_ENABLE_SYSTEM_UPDATE = Get-EnvValue "VITE_ENABLE_SYSTEM_UPDATE" "false"
@@ -104,19 +105,23 @@ Write-Success ".env file loaded"
 
 Write-Step "2. Checking prerequisites"
 
-Write-Host "  - Checking MySQL..." -NoNewline
-try {
-    $mysqlCmd = Get-Command mysql -ErrorAction SilentlyContinue
-    if (-not $mysqlCmd) {
-        Write-Err "MySQL client not found"
-        Write-Host "Please install MySQL or add it to PATH" -ForegroundColor Yellow
+if (-not $SkipDbCreate) {
+    Write-Host "  - Checking MySQL..." -NoNewline
+    try {
+        $mysqlCmd = Get-Command mysql -ErrorAction SilentlyContinue
+        if (-not $mysqlCmd) {
+            Write-Err "MySQL client not found"
+            Write-Host "Please install MySQL or add it to PATH" -ForegroundColor Yellow
+            exit 1
+        }
+        $null = & mysql --version 2>&1
+        Write-Success "MySQL found"
+    } catch {
+        Write-Err "MySQL not found"
         exit 1
     }
-    $null = & mysql --version 2>&1
-    Write-Success "MySQL found"
-} catch {
-    Write-Err "MySQL not found"
-    exit 1
+} else {
+    Write-Info "Skipping MySQL client check"
 }
 
 Write-Host "  - Checking JDK..." -NoNewline
@@ -128,7 +133,8 @@ try {
         exit 1
     }
     $javaVersion = & java -version 2>&1
-    if ($javaVersion -match "version\s+`"(\d+)\.(\d+)") {
+    $javaVersionStr = $javaVersion -join "`n"
+    if ($javaVersionStr -match "version\s+`"(\d+)\.(\d+)") {
         $major = [int]$Matches[1]
         $minor = [int]$Matches[2]
         if ($major -lt 17) {
@@ -157,17 +163,19 @@ try {
 
 if (-not $SkipDbCreate) {
     Write-Step "3. Testing database connection"
+    Write-Info "Executing: mysql -h $($DB_HOST.Split(':')[0]) -P $($DB_HOST.Split(':')[1]) -u $DB_USERNAME --password=*** -e 'SELECT 1'"
     $mysqlConnStr = "mysql://$DB_HOST"
-    $null = & mysql -h $DB_HOST.Split(":")[0] -P $DB_HOST.Split(":")[1] -u $DB_USERNAME -p$DB_PASSWORD -e "SELECT 1" 2>&1
+    $result = & mysql -h $DB_HOST.Split(":")[0] -P $DB_HOST.Split(":")[1] -u $DB_USERNAME "--password=$DB_PASSWORD" -e "SELECT 1" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Cannot connect to MySQL at $DB_HOST"
+        Write-Err "Error details: $result"
         Write-Host "Please check your database credentials in .env" -ForegroundColor Yellow
         exit 1
     }
     Write-Success "Database connection OK"
 
     Write-Step "4. Creating database"
-    $null = & mysql -h $DB_HOST.Split(":")[0] -P $DB_HOST.Split(":")[1] -u $DB_USERNAME -p$DB_PASSWORD -e "CREATE DATABASE IF NOT EXISTS ``$DB_NAME`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" 2>&1
+    $null = & mysql -h $DB_HOST.Split(":")[0] -P $DB_HOST.Split(":")[1] -u $DB_USERNAME "--password=$DB_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS ``$DB_NAME`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Failed to create database"
         exit 1
@@ -185,6 +193,7 @@ if (Test-Path $BackendAppProps) {
     Update-AppProperty -File $BackendAppProps -Key "spring.datasource.password" -Value "`${DB_PASSWORD:$DB_PASSWORD}"
     Update-AppProperty -File $BackendAppProps -Key "server.port" -Value "`${SERVER_PORT:$SERVER_PORT}"
     Update-AppProperty -File $BackendAppProps -Key "jwt.secret" -Value "`${JWT_SECRET:$JWT_SECRET}"
+    Update-AppProperty -File $BackendAppProps -Key "admin.reset-password.key" -Value "`${ADMIN_RESET_PASSWORD_KEY:$ADMIN_RESET_PASSWORD_KEY}"
     Write-Success "Backend configuration updated"
 } else {
     Write-Err "application.properties not found at $BackendAppProps"
