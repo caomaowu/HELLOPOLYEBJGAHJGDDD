@@ -15,15 +15,13 @@ crypto-tail-strategy/
 │   ├── crypto-tail-strategy-flow.md          # 流程说明
 │   ├── crypto-tail-strategy-min-spread-flow.md  # 最小/最大价差流程
 │   └── crypto-tail-strategy-market-data.md   # 市场数据与周期
-└── en/                 # 英文文档
-    └── crypto-tail-strategy-user-guide.md    # User configuration guide
 ```
 
 ## 文档说明
 
 | 文档 | 说明 |
 |------|------|
-| **user-guide** (zh/en) | 面向用户的策略配置指南与 FAQ |
+| **user-guide** (zh) | 面向用户的策略配置指南与 FAQ |
 | **ui-spec** (zh) | 前端列表、表单、时间窗口、触发记录等 UI 规格 |
 | **tasks** (zh) | 开发任务与验收项 |
 | **flow** (zh) | 策略整体流程 |

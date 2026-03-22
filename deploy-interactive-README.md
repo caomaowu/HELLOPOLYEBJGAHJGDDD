@@ -191,4 +191,4 @@ docker compose -f docker-compose.prod.yml up -d
 
 - [GitHub 仓库](https://github.com/WrBug/PolyHermes)
 - [问题反馈](https://github.com/WrBug/PolyHermes/issues)
-- [完整部署文档](docs/zh/DEPLOYMENT_GUIDE.md)
+- [完整部署文档](docs/zh/DEPLOYMENT.md)

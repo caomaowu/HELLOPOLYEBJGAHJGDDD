@@ -497,9 +497,9 @@ val decrypted = cryptoUtils.decrypt(encrypted)
 
 ## 📚 相关文档
 
-- [部署文档](DEPLOYMENT.md) / [English](../en/DEPLOYMENT.md) - 详细的部署指南
-- [版本号管理文档](VERSION_MANAGEMENT.md) / [English](../en/VERSION_MANAGEMENT.md) - 版本号管理和自动构建
-- [开发文档](DEVELOPMENT.md) / [English](../en/DEVELOPMENT.md) - 开发指南
+- [部署文档](DEPLOYMENT.md) - 详细的部署指南
+- [版本号管理文档](VERSION_MANAGEMENT.md) - 版本号管理和自动构建
+- [开发文档](DEVELOPMENT.md) - 开发指南
 - [跟单系统需求文档](copy-trading-requirements.md) - 后端 API 接口文档
 - [前端需求文档](copy-trading-frontend-requirements.md) - 前端功能文档
 

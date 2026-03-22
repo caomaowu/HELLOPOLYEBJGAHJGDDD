@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Card, Form, Button, Switch, Input, InputNumber, message, Typography, Space, Alert, Select, Table, Tag, Popconfirm, Modal } from 'antd'
-import { SaveOutlined, CheckCircleOutlined, ReloadOutlined, GlobalOutlined, NotificationOutlined, KeyOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons'
+import { SaveOutlined, CheckCircleOutlined, ReloadOutlined, NotificationOutlined, KeyOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
 import { useMediaQuery } from 'react-responsive'
 import { useTranslation } from 'react-i18next'
@@ -37,14 +37,10 @@ const PROXY_TYPE_OPTIONS = [
 ] as const
 
 const SystemSettings: React.FC = () => {
-  const { t, i18n: i18nInstance } = useTranslation()
+  const { t } = useTranslation()
   const isMobile = useMediaQuery({ maxWidth: 768 })
 
-  // 第一部分：多语言
-  const [languageForm] = Form.useForm()
-  const [currentLang, setCurrentLang] = useState<string>('auto')
-
-  // 第二部分：消息推送设置
+  // 第一部分：消息推送设置
   const [notificationConfigs, setNotificationConfigs] = useState<NotificationConfig[]>([])
   const [notificationLoading, setNotificationLoading] = useState(false)
   const [notificationModalVisible, setNotificationModalVisible] = useState(false)
@@ -52,14 +48,14 @@ const SystemSettings: React.FC = () => {
   const [notificationForm] = Form.useForm()
   const [testLoading, setTestLoading] = useState(false)
 
-  // 第三部分：Relayer配置
+  // 第二部分：Relayer配置
   const [relayerForm] = Form.useForm()
   const [autoRedeemForm] = Form.useForm()
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null)
   const [relayerLoading, setRelayerLoading] = useState(false)
   const [autoRedeemLoading, setAutoRedeemLoading] = useState(false)
 
-  // 第四部分：代理设置
+  // 第三部分：代理设置
   const [proxyForm] = Form.useForm()
   const [proxyLoading, setProxyLoading] = useState(false)
   const [proxyChecking, setProxyChecking] = useState(false)
@@ -67,49 +63,12 @@ const SystemSettings: React.FC = () => {
   const [currentProxyConfig, setCurrentProxyConfig] = useState<ProxyConfig | null>(null)
 
   useEffect(() => {
-    // 初始化多语言设置
-    const savedLanguage = localStorage.getItem('i18n_language') || 'auto'
-    setCurrentLang(savedLanguage)
-    languageForm.setFieldsValue({ language: savedLanguage })
-
-    // 加载其他配置
     fetchNotificationConfigs()
     fetchSystemConfig()
     fetchProxyConfig()
   }, [])
 
-  // ==================== 第一部分：多语言 ====================
-  const detectSystemLanguage = (): string => {
-    const systemLanguage = navigator.language || navigator.languages?.[0] || 'en'
-    const lang = systemLanguage.toLowerCase()
-    if (lang.startsWith('zh')) {
-      if (lang.includes('tw') || lang.includes('hk') || lang.includes('mo')) {
-        return 'zh-TW'
-      }
-      return 'zh-CN'
-    }
-    return 'en'
-  }
-
-  const handleLanguageSubmit = async (values: { language: string }) => {
-    try {
-      let actualLang = values.language
-      if (values.language === 'auto') {
-        actualLang = detectSystemLanguage()
-        localStorage.setItem('i18n_language', 'auto')
-      } else {
-        localStorage.setItem('i18n_language', values.language)
-      }
-
-      setCurrentLang(values.language)
-      await i18nInstance.changeLanguage(actualLang)
-      message.success(t('languageSettings.changeSuccess') || '语言设置已保存')
-    } catch (error) {
-      message.error(t('languageSettings.changeFailed') || '语言设置保存失败')
-    }
-  }
-
-  // ==================== 第二部分：消息推送设置 ====================
+  // ==================== 第一部分：消息推送设置 ====================
   const fetchNotificationConfigs = async () => {
     setNotificationLoading(true)
     try {
@@ -513,60 +472,7 @@ const SystemSettings: React.FC = () => {
       {/* 系统更新 */}
       <SystemUpdate />
 
-      {/* 第一部分：多语言 */}
-      <Card
-        title={
-          <Space>
-            <GlobalOutlined />
-            <span>{t('systemSettings.language.title') || '多语言设置'}</span>
-          </Space>
-        }
-        style={{ marginBottom: '16px' }}
-      >
-        <Form
-          form={languageForm}
-          layout="vertical"
-          onFinish={handleLanguageSubmit}
-          size={isMobile ? 'middle' : 'large'}
-          initialValues={{ language: currentLang }}
-        >
-          <Form.Item
-            label={t('systemSettings.language.currentLanguage') || '当前语言'}
-            name="language"
-            rules={[{ required: true, message: t('systemSettings.language.languageRequired') || '请选择语言' }]}
-          >
-            <Select
-              options={[
-                { value: 'auto', label: t('languageSettings.followSystem') || '跟随系统' },
-                { value: 'zh-CN', label: '简体中文' },
-                { value: 'zh-TW', label: '繁體中文' },
-                { value: 'en', label: 'English' }
-              ]}
-            />
-          </Form.Item>
-          {currentLang === 'auto' && (
-            <Form.Item>
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                {t('languageSettings.currentSystemLanguage') || '当前系统语言'}: {
-                  detectSystemLanguage() === 'zh-CN' ? '简体中文' :
-                    detectSystemLanguage() === 'zh-TW' ? '繁體中文' : 'English'
-                }
-              </Text>
-            </Form.Item>
-          )}
-          <Form.Item>
-            <Button
-              type="primary"
-              htmlType="submit"
-              icon={<SaveOutlined />}
-            >
-              {t('common.save') || '保存设置'}
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
-
-      {/* 第二部分：消息推送设置 */}
+      {/* 第一部分：消息推送设置 */}
       <Card
         title={
           <Space>
@@ -647,7 +553,7 @@ const SystemSettings: React.FC = () => {
         </Modal>
       </Card>
 
-      {/* 第三部分：Relayer配置 */}
+      {/* 第二部分：Relayer配置 */}
       <Card
         title={
           <Space>
@@ -791,7 +697,7 @@ const SystemSettings: React.FC = () => {
         </div>
       </Card>
 
-      {/* 第四部分：代理设置 */}
+      {/* 第三部分：代理设置 */}
       <Card
         title={
           <Space>

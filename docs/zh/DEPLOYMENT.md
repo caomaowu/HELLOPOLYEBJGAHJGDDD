@@ -297,8 +297,6 @@ ports:
 
 详细配置示例请参考：[Nginx 反向代理配置](nginx-reverse-proxy.conf)
 
-> 📖 **English Version**: [Deployment Guide (English)](../en/DEPLOYMENT.md)
-
 ## 后端部署
 
 ### Java 直接部署

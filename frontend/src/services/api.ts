@@ -42,13 +42,7 @@ const apiClient: AxiosInstance = axios.create({
   }
 })
 
-/**
- * 获取当前语言设置（优先从 localStorage 读取，确保获取最新值）
- */
-const getCurrentLanguage = (): string => {
-  // 项目固定中文，API 统一发送简体中文头。
-  return 'zh-CN'
-}
+const API_LANGUAGE = 'zh-CN'
 
 /**
  * 请求拦截器
@@ -60,9 +54,8 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
-    // 添加语言 Header（每次请求都获取最新值）
-    const language = getCurrentLanguage()
-    config.headers['X-Language'] = language
+    // 项目固定简体中文，API 统一发送中文语言头。
+    config.headers['X-Language'] = API_LANGUAGE
     return config
   },
   (error) => {
