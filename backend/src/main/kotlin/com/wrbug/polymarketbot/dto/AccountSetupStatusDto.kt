@@ -13,7 +13,9 @@ data class AccountExecutionCheckDto(
     /** 诊断说明 */
     val message: String,
     /** 额外细节（可选） */
-    val detail: String? = null
+    val detail: String? = null,
+    /** 修复建议（可选） */
+    val suggestion: String? = null
 )
 
 /**

@@ -335,6 +335,8 @@
   },
   "apiHealthStatus": {
     "title": "API 健康状态",
+    "startupTitle": "启动前健康检查",
+    "startupDescription": "统一检查外部依赖、监听链路与启用中的跟单账户执行前状态。",
     "checkFailed": "检查失败",
     "status": "状态",
     "responseTime": "响应时间",
@@ -344,7 +346,22 @@
     "unknown": "未知",
     "normal": "正常",
     "notConfigured": "未配置",
-    "abnormal": "异常"
+    "abnormal": "异常",
+    "warning": "告警",
+    "fixSuggestion": "修复建议",
+    "topActions": "优先处理",
+    "totalChecks": "检查项总数",
+    "errorCount": "阻断项",
+    "warningCount": "告警项",
+    "enabledCopyTradingCount": "异常跟单配置",
+    "problemSuffix": "异常",
+    "accountSectionTitle": "异常账户",
+    "accountSectionCount": "{{count}} 个账户待处理",
+    "noAccountIssues": "当前没有异常账户",
+    "copyTradingCount": "{{count}} 个启用配置",
+    "errorCountSimple": "错误 {{count}}",
+    "warningCountSimple": "告警 {{count}}",
+    "apiSectionTitle": "基础服务与监听链路"
   },
   "proxySettings": {
     "title": "代理设置",

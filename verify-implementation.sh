@@ -1,103 +1,95 @@
 #!/bin/bash
 
-# PolyHermes 动态更新功能验证脚本
+# Verify dynamic update implementation for PolyHermes.
 
 echo "========================================"
-echo "  PolyHermes 动态更新功能验证"
+echo "  PolyHermes dynamic update verifier"
 echo "========================================"
 echo ""
 
 ERRORS=0
 
-# 检查文件存在性
-echo "📋 检查文件..."
+echo "[1/3] Check required files..."
 
 files=(
-    "Dockerfile"
-    "docker/update-service.py"
-    "docker/start.sh"
-    "docker/nginx.conf"
-    "docker-compose.yml"
-    "docker-compose.test.yml"
-    ".github/workflows/docker-build.yml"
-    "docs/zh/DYNAMIC_UPDATE.md"
+  "Dockerfile"
+  "docker/update-service.py"
+  "docker/start.sh"
+  "docker/nginx.conf"
+  "docker-compose.yml"
+  "docker-compose.test.yml"
+  ".github/workflows/docker-build.yml"
+  "docs/zh/DYNAMIC_UPDATE.md"
 )
 
 for file in "${files[@]}"; do
-    if [ -f "$file" ]; then
-        echo "  ✅ $file"
-    else
-        echo "  ❌ $file (缺失)"
-        ((ERRORS++))
-    fi
+  if [ -f "$file" ]; then
+    echo "  [OK] $file"
+  else
+    echo "  [MISSING] $file"
+    ((ERRORS++))
+  fi
 done
 
 echo ""
-echo "📋 检查关键配置..."
+echo "[2/3] Check key config markers..."
 
-# 检查 Dockerfile 是否包含 BUILD_IN_DOCKER
 if grep -q "ARG BUILD_IN_DOCKER=true" Dockerfile; then
-    echo "  ✅ Dockerfile 包含 BUILD_IN_DOCKER 参数"
+  echo "  [OK] Dockerfile has BUILD_IN_DOCKER"
 else
-    echo "  ❌ Dockerfile 缺少 BUILD_IN_DOCKER 参数"
-    ((ERRORS++))
+  echo "  [FAIL] Dockerfile missing BUILD_IN_DOCKER"
+  ((ERRORS++))
 fi
 
-# 检查 Dockerfile 是否安装 Python
 if grep -q "python3" Dockerfile; then
-    echo "  ✅ Dockerfile 安装 Python"
+  echo "  [OK] Dockerfile installs python3"
 else
-    echo "  ❌ Dockerfile 缺少 Python 安装"
-    ((ERRORS++))
+  echo "  [FAIL] Dockerfile missing python3 install"
+  ((ERRORS++))
 fi
 
-# 检查 nginx.conf 是否包含更新服务代理
 if grep -q "/api/update/" docker/nginx.conf; then
-    echo "  ✅ Nginx 配置包含更新服务代理"
+  echo "  [OK] nginx includes update service proxy"
 else
-    echo "  ❌ Nginx 配置缺少更新服务代理"
-    ((ERRORS++))
+  echo "  [FAIL] nginx missing update service proxy"
+  ((ERRORS++))
 fi
 
-# 检查 docker-compose.yml 是否包含 ALLOW_PRERELEASE
 if grep -q "ALLOW_PRERELEASE" docker-compose.yml; then
-    echo "  ✅ docker-compose.yml 包含 ALLOW_PRERELEASE"
+  echo "  [OK] docker-compose.yml includes ALLOW_PRERELEASE"
 else
-    echo "  ❌ docker-compose.yml 缺少 ALLOW_PRERELEASE"
-    ((ERRORS++))
+  echo "  [FAIL] docker-compose.yml missing ALLOW_PRERELEASE"
+  ((ERRORS++))
 fi
 
-# 检查 GitHub Actions 是否包含 IS_PRERELEASE
 if grep -q "IS_PRERELEASE" .github/workflows/docker-build.yml; then
-    echo "  ✅ GitHub Actions 包含 Pre-release 检测"
+  echo "  [OK] workflow has pre-release detection"
 else
-    echo "  ❌ GitHub Actions 缺少 Pre-release 检测"
-    ((ERRORS++))
+  echo "  [FAIL] workflow missing pre-release detection"
+  ((ERRORS++))
 fi
 
-# 检查 GitHub Actions 是否包含编译步骤
 if grep -q "Build Backend JAR" .github/workflows/docker-build.yml; then
-    echo "  ✅ GitHub Actions 包含后端编译步骤"
+  echo "  [OK] workflow has backend build step"
 else
-    echo "  ❌ GitHub Actions 缺少后端编译步骤"
-    ((ERRORS++))
+  echo "  [FAIL] workflow missing backend build step"
+  ((ERRORS++))
 fi
 
-# 检查 update-service.py 是否可执行Python语法
 echo ""
-echo "📋 检查 Python 语法..."
+echo "[3/3] Check python syntax for update service..."
 if python3 -m py_compile docker/update-service.py 2>/dev/null; then
-    echo "  ✅ update-service.py 语法正确"
+  echo "  [OK] docker/update-service.py syntax is valid"
 else
-    echo "  ⚠️  update-service.py 语法检查失败（可能需要 Flask）"
+  echo "  [WARN] Python syntax check skipped or failed (python3/runtime issue)"
 fi
 
 echo ""
 echo "========================================"
 if [ $ERRORS -eq 0 ]; then
-    echo "  ✅ 验证通过！所有检查项正常"
+  echo "  [PASS] All checks passed"
 else
-    echo "  ⚠️  发现 $ERRORS 个问题"
+  echo "  [FAIL] Found $ERRORS issue(s)"
 fi
 echo "========================================"
 

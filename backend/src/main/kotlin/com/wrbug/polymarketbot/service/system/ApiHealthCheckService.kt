@@ -3,6 +3,8 @@ package com.wrbug.polymarketbot.service.system
 import com.wrbug.polymarketbot.constants.PolymarketConstants
 import com.wrbug.polymarketbot.dto.ApiHealthCheckDto
 import com.wrbug.polymarketbot.dto.ApiHealthCheckResponse
+import com.wrbug.polymarketbot.dto.StartupHealthAccountDto
+import com.wrbug.polymarketbot.dto.StartupHealthSummaryDto
 import com.wrbug.polymarketbot.util.createClient
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -96,10 +98,7 @@ class ApiHealthCheckService(
      * 检查所有 API 的健康状态
      */
     suspend fun checkAllApis(): ApiHealthCheckResponse {
-        val apis = mutableListOf<ApiHealthCheckDto>()
-
-        // 并行检查所有 API
-        coroutineScope {
+        val apis = coroutineScope {
             val jobs = mutableListOf<Deferred<ApiHealthCheckDto>>(
                 async { checkClobApi() },
                 async { checkDataApi() },
@@ -114,13 +113,16 @@ class ApiHealthCheckService(
                 async { checkGitHubApi() },
                 async { checkCopyTradingExecutionReadiness() }
             )
-
-            jobs.awaitAll().forEach { result ->
-                apis.add(result)
-            }
+            jobs.awaitAll()
         }
+            .map(::attachSuggestion)
 
-        return ApiHealthCheckResponse(apis = apis)
+        val accountDiagnostics = accountExecutionDiagnosticsService.diagnoseEnabledCopyTradingAccounts(forceRefresh = false)
+        return ApiHealthCheckResponse(
+            apis = apis,
+            summary = buildStartupSummary(apis, accountDiagnostics),
+            unhealthyAccounts = buildUnhealthyAccounts(accountDiagnostics)
+        )
     }
 
     /**
@@ -338,22 +340,48 @@ class ApiHealthCheckService(
     private suspend fun checkPolymarketActivityWebSocket(): ApiHealthCheckDto = withContext(Dispatchers.Default) {
         try {
             val activityWsService = getPolymarketActivityWsService()
-            val isConnected = activityWsService?.isConnected() ?: false
-
-            if (isConnected) {
-                ApiHealthCheckDto(
-                    name = "Polymarket Activity WebSocket",
-                    url = PolymarketConstants.ACTIVITY_WS_URL,
-                    status = "success",
-                    message = "连接正常"
-                )
-            } else {
-                ApiHealthCheckDto(
+            val snapshot = activityWsService?.getHealthSnapshot()
+                ?: return@withContext ApiHealthCheckDto(
                     name = "Polymarket Activity WebSocket",
                     url = PolymarketConstants.ACTIVITY_WS_URL,
                     status = "error",
-                    message = "连接断开"
+                    message = "服务未初始化"
                 )
+
+            when {
+                snapshot.connected && snapshot.idleMillis != null && snapshot.idleMillis >= snapshot.silenceTimeoutMs -> {
+                    ApiHealthCheckDto(
+                        name = "Polymarket Activity WebSocket",
+                        url = PolymarketConstants.ACTIVITY_WS_URL,
+                        status = "warning",
+                        message = "连接存在，但已静默 ${snapshot.idleMillis}ms，等待自愈重连",
+                        suggestion = "检查 Activity WS 自愈日志与代理网络连通性，确认重连后能重新收到全局 activity 消息。"
+                    )
+                }
+                snapshot.connected -> {
+                    ApiHealthCheckDto(
+                        name = "Polymarket Activity WebSocket",
+                        url = PolymarketConstants.ACTIVITY_WS_URL,
+                        status = "success",
+                        message = "连接正常，监听 ${snapshot.monitoredCount} 个 Leader"
+                    )
+                }
+                snapshot.monitoredCount == 0 -> {
+                    ApiHealthCheckDto(
+                        name = "Polymarket Activity WebSocket",
+                        url = PolymarketConstants.ACTIVITY_WS_URL,
+                        status = "skipped",
+                        message = "当前无启用 Leader，未启动监听"
+                    )
+                }
+                else -> {
+                    ApiHealthCheckDto(
+                        name = "Polymarket Activity WebSocket",
+                        url = PolymarketConstants.ACTIVITY_WS_URL,
+                        status = "error",
+                        message = "连接断开"
+                    )
+                }
             }
         } catch (e: Exception) {
             logger.warn("检查 Polymarket Activity WebSocket 状态失败", e)
@@ -622,7 +650,12 @@ class ApiHealthCheckService(
                 name = "跟单执行前诊断",
                 url = "/api/accounts/check-setup-status",
                 status = summary.status,
-                message = summary.message
+                message = summary.message,
+                suggestion = if (summary.status == "error") {
+                    "先处理异常账户的执行前诊断失败项，再启用或重启对应跟单配置。"
+                } else {
+                    null
+                }
             )
         } catch (e: Exception) {
             logger.warn("检查跟单执行前诊断失败", e)
@@ -633,6 +666,106 @@ class ApiHealthCheckService(
                 message = e.message ?: "检查失败"
             )
         }
+    }
+
+    private fun buildStartupSummary(
+        apis: List<ApiHealthCheckDto>,
+        accountDiagnostics: List<AccountExecutionDiagnosticsService.EnabledAccountDiagnostics>
+    ): StartupHealthSummaryDto {
+        val successCount = apis.count { it.status == "success" }
+        val warningCount = apis.count { it.status == "warning" }
+        val errorCount = apis.count { it.status == "error" }
+        val enabledCopyTradingCount = accountDiagnostics.sumOf { it.enabledCopyTradingCount }
+        val unhealthyAccounts = accountDiagnostics.filter { !it.setupStatus.executionReady }
+        val unhealthyCopyTradingCount = unhealthyAccounts.sumOf { it.enabledCopyTradingCount }
+        val status = when {
+            errorCount > 0 || unhealthyAccounts.isNotEmpty() -> "error"
+            warningCount > 0 -> "warning"
+            else -> "success"
+        }
+        val message = when (status) {
+            "error" -> "启动前检查发现阻断项，请先处理异常服务或账户后再启动跟单"
+            "warning" -> "启动前检查存在告警项，建议先处理后再启动跟单"
+            else -> "启动前检查通过，可以启动当前跟单链路"
+        }
+        val actionItems = buildActionItems(apis, unhealthyAccounts)
+
+        return StartupHealthSummaryDto(
+            status = status,
+            message = message,
+            checkedAt = System.currentTimeMillis(),
+            totalChecks = apis.size,
+            successCount = successCount,
+            warningCount = warningCount,
+            errorCount = errorCount,
+            enabledCopyTradingCount = enabledCopyTradingCount,
+            unhealthyCopyTradingCount = unhealthyCopyTradingCount,
+            unhealthyAccountCount = unhealthyAccounts.size,
+            actionItems = actionItems
+        )
+    }
+
+    private fun buildUnhealthyAccounts(
+        accountDiagnostics: List<AccountExecutionDiagnosticsService.EnabledAccountDiagnostics>
+    ): List<StartupHealthAccountDto> {
+        return accountDiagnostics
+            .filter { !it.setupStatus.executionReady }
+            .map { item ->
+                val failedChecks = item.setupStatus.checks.filter { check ->
+                    check.status == "error" || check.status == "warning"
+                }
+                StartupHealthAccountDto(
+                    accountId = item.accountId,
+                    accountName = item.accountName,
+                    enabledCopyTradingCount = item.enabledCopyTradingCount,
+                    executionReady = item.setupStatus.executionReady,
+                    errorCount = failedChecks.count { it.status == "error" },
+                    warningCount = failedChecks.count { it.status == "warning" },
+                    failedChecks = failedChecks,
+                    checkedAt = item.setupStatus.checkedAt
+                )
+            }
+    }
+
+    private fun buildActionItems(
+        apis: List<ApiHealthCheckDto>,
+        unhealthyAccounts: List<AccountExecutionDiagnosticsService.EnabledAccountDiagnostics>
+    ): List<String> {
+        val apiItems = apis
+            .filter { it.status == "error" || it.status == "warning" }
+            .mapNotNull { it.suggestion }
+
+        val accountItems = unhealthyAccounts.flatMap { item ->
+            item.setupStatus.checks
+                .filter { it.status == "error" || it.status == "warning" }
+                .mapNotNull { it.suggestion }
+        }
+
+        return (apiItems + accountItems)
+            .distinct()
+            .take(8)
+    }
+
+    private fun attachSuggestion(check: ApiHealthCheckDto): ApiHealthCheckDto {
+        if (!check.suggestion.isNullOrBlank()) {
+            return check
+        }
+        val suggestion = when (check.name) {
+            "Polymarket CLOB API" -> "确认代理配置、网络出口和 Polymarket CLOB 服务可达，再重新执行健康检查。"
+            "Polymarket Data API" -> "检查 Data API 连通性；若长期失败，需要评估 discovery 与兜底数据源是否受影响。"
+            "Polymarket Gamma API" -> "检查市场数据接口可达性，必要时切换网络或代理。"
+            "Polygon RPC" -> "检查当前 RPC 节点配置和优先级，必要时切换到健康节点。"
+            "币安 API" -> "检查访问地区限制、代理配置和外网连通性。"
+            "币安 WebSocket" -> "确认已启用的加密策略所需订阅正常，必要时检查代理和 WebSocket 出口。"
+            "Polymarket RTDS WebSocket" -> "检查账户 API 凭证和 RTDS 连接状态，确保用户频道能自动重连并重新订阅。"
+            "Polymarket Activity WebSocket" -> "检查 Activity WS 自愈日志、代理连通性和全局 activity 流是否恢复。"
+            "链上 WebSocket" -> "检查 RPC WebSocket 节点是否可用，并确认已启用账户的链上监听已成功订阅。"
+            "Builder Relayer API" -> "补齐 Builder API Key/Secret/Passphrase，或检查 Builder Relayer 可达性。"
+            "GitHub API" -> "检查外网访问和代理设置，避免更新检查与公告同步失败。"
+            "跟单执行前诊断" -> "先修复异常账户的执行前诊断失败项，再启动跟单。"
+            else -> null
+        }
+        return check.copy(suggestion = suggestion)
     }
 }
 

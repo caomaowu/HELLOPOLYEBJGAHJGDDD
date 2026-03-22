@@ -12,7 +12,7 @@ const { Title, Text, Paragraph } = Typography
 
 interface ProxyConfig {
   id?: number
-  type: string
+  type: 'HTTP' | 'HTTPS' | 'SOCKS5'
   enabled: boolean
   host?: string
   port?: number
@@ -29,6 +29,12 @@ interface ProxyCheckResponse {
   responseTime?: number
   latency?: number
 }
+
+const PROXY_TYPE_OPTIONS = [
+  { value: 'HTTP', label: 'HTTP' },
+  { value: 'HTTPS', label: 'HTTPS' },
+  { value: 'SOCKS5', label: 'SOCKS5' },
+] as const
 
 const SystemSettings: React.FC = () => {
   const { t, i18n: i18nInstance } = useTranslation()
@@ -425,6 +431,7 @@ const SystemSettings: React.FC = () => {
         setCurrentProxyConfig(data)
         if (data) {
           proxyForm.setFieldsValue({
+            type: data.type || 'HTTP',
             enabled: data.enabled,
             host: data.host || '',
             port: data.port || undefined,
@@ -432,7 +439,14 @@ const SystemSettings: React.FC = () => {
             password: '',
           })
         } else {
-          proxyForm.resetFields()
+          proxyForm.setFieldsValue({
+            type: 'HTTP',
+            enabled: false,
+            host: '',
+            port: undefined,
+            username: '',
+            password: '',
+          })
         }
       } else {
         message.error(response.data.msg || '获取代理配置失败')
@@ -445,7 +459,8 @@ const SystemSettings: React.FC = () => {
   const handleProxySubmit = async (values: any) => {
     setProxyLoading(true)
     try {
-      const response = await apiService.proxyConfig.saveHttp({
+      const response = await apiService.proxyConfig.save({
+        type: values.type,
         enabled: values.enabled || false,
         host: values.host,
         port: values.port,
@@ -791,7 +806,24 @@ const SystemSettings: React.FC = () => {
           layout="vertical"
           onFinish={handleProxySubmit}
           size={isMobile ? 'middle' : 'large'}
+          initialValues={{ type: 'HTTP', enabled: false }}
         >
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: '16px' }}
+            message="代理协议说明"
+            description="支持 HTTP、HTTPS、SOCKS5。HTTPS 代理仍通过 HTTP CONNECT 建链；如果第三方服务要求 SOCKS5 账号密码认证，请选择 SOCKS5 并填写用户名、密码。"
+          />
+
+          <Form.Item
+            label="代理协议"
+            name="type"
+            rules={[{ required: true, message: '请选择代理协议' }]}
+          >
+            <Select options={PROXY_TYPE_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} />
+          </Form.Item>
+
           <Form.Item
             label={t('proxySettings.enabled') || '启用代理'}
             name="enabled"
@@ -828,18 +860,18 @@ const SystemSettings: React.FC = () => {
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.username') || '代理用户名（可选）'}
+            label="代理用户名（可选）"
             name="username"
           >
-            <Input placeholder={t('proxySettings.usernamePlaceholder') || '如果代理需要认证，请输入用户名'} />
+            <Input placeholder="如果代理需要认证，请输入用户名" />
           </Form.Item>
 
           <Form.Item
-            label={t('proxySettings.password') || '代理密码（可选）'}
+            label="代理密码（可选）"
             name="password"
-            help={currentProxyConfig ? (t('proxySettings.passwordHelpUpdate') || '留空则不更新密码，输入新密码则更新') : (t('proxySettings.passwordHelp') || '如果代理需要认证，请输入密码')}
+            help={currentProxyConfig ? '留空则不更新密码，输入新密码则更新' : '如果代理需要认证，请输入密码'}
           >
-            <Input.Password placeholder={currentProxyConfig ? (t('proxySettings.passwordPlaceholderUpdate') || '留空则不更新密码') : (t('proxySettings.passwordPlaceholder') || '如果代理需要认证，请输入密码')} />
+            <Input.Password placeholder={currentProxyConfig ? '留空则不更新密码' : '如果代理需要认证，请输入密码'} />
           </Form.Item>
 
           <Form.Item>

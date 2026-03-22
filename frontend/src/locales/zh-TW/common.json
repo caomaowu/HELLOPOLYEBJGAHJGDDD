@@ -344,6 +344,8 @@
   },
   "apiHealthStatus": {
     "title": "API 健康狀態",
+    "startupTitle": "啟動前健康檢查",
+    "startupDescription": "統一檢查外部依賴、監聽鏈路與啟用中的跟單賬戶執行前狀態。",
     "checkFailed": "檢查失敗",
     "status": "狀態",
     "responseTime": "響應時間",
@@ -353,7 +355,22 @@
     "unknown": "未知",
     "normal": "正常",
     "notConfigured": "未配置",
-    "abnormal": "異常"
+    "abnormal": "異常",
+    "warning": "告警",
+    "fixSuggestion": "修復建議",
+    "topActions": "優先處理",
+    "totalChecks": "檢查項總數",
+    "errorCount": "阻斷項",
+    "warningCount": "告警項",
+    "enabledCopyTradingCount": "異常跟單配置",
+    "problemSuffix": "異常",
+    "accountSectionTitle": "異常賬戶",
+    "accountSectionCount": "{{count}} 個賬戶待處理",
+    "noAccountIssues": "當前沒有異常賬戶",
+    "copyTradingCount": "{{count}} 個啟用配置",
+    "errorCountSimple": "錯誤 {{count}}",
+    "warningCountSimple": "告警 {{count}}",
+    "apiSectionTitle": "基礎服務與監聽鏈路"
   },
   "proxySettings": {
     "title": "代理設置",

@@ -9,12 +9,14 @@ import com.wrbug.polymarketbot.entity.Leader
 import com.wrbug.polymarketbot.service.copytrading.leaders.TraderCandidatePoolService
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingMonitorExecutionEventService
 import com.wrbug.polymarketbot.service.copytrading.statistics.CopyOrderTrackingService
+import com.wrbug.polymarketbot.service.copytrading.statistics.TradeProcessingLatencyContext
 import com.wrbug.polymarketbot.util.fromJson
 import com.wrbug.polymarketbot.constants.PolymarketConstants
 import com.wrbug.polymarketbot.websocket.PolymarketWebSocketClient
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.*
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
@@ -29,7 +31,11 @@ import java.util.concurrent.TimeUnit
 class PolymarketActivityWsService(
     private val copyOrderTrackingService: CopyOrderTrackingService,
     private val traderCandidatePoolService: TraderCandidatePoolService,
-    private val monitorExecutionEventService: CopyTradingMonitorExecutionEventService
+    private val monitorExecutionEventService: CopyTradingMonitorExecutionEventService,
+    @Value("\${copy.trading.activity.timeout-check-interval-ms:30000}")
+    private val timeoutCheckIntervalMs: Long,
+    @Value("\${copy.trading.activity.silence-timeout-ms:30000}")
+    private val activitySilenceTimeoutMs: Long
 ) {
 
     private val logger = LoggerFactory.getLogger(PolymarketActivityWsService::class.java)
@@ -71,6 +77,16 @@ class PolymarketActivityWsService(
     private data class ActivityTradeParseResult(
         val trade: TradeResponse? = null,
         val failureMessage: String? = null
+    )
+
+    data class HealthSnapshot(
+        val connected: Boolean,
+        val subscribed: Boolean,
+        val monitoredCount: Int,
+        val lastActivityTime: Long,
+        val idleMillis: Long?,
+        val timeoutCheckIntervalMs: Long,
+        val silenceTimeoutMs: Long
     )
 
     /**
@@ -116,15 +132,13 @@ class PolymarketActivityWsService(
         }
 
         val leaderId = leader.id
-        if (leaderId != null) {
-            monitoredAddresses[address] = leaderId
-            logger.info("添加 Leader 到 Activity WS 监听: ${leader.leaderName} (${address})")
+        monitoredAddresses[address] = leaderId
+        logger.info("添加 Leader 到 Activity WS 监听: ${leader.leaderName} (${address})")
 
-            // 如果 WebSocket 未连接，连接
-            val client = wsClient
-            if (client == null || !client.isConnected()) {
-                connectAndSubscribe()
-            }
+        // 如果 WebSocket 未连接，连接
+        val client = wsClient
+        if (client == null || !client.isConnected()) {
+            connectAndSubscribe()
         }
     }
 
@@ -225,7 +239,7 @@ class PolymarketActivityWsService(
             // 重置最后一次收到 activity 消息的时间
             lastActivityTime = System.currentTimeMillis()
             // 启动 Activity 消息超时检测
-//            startActivityTimeoutCheck()
+            startActivityTimeoutCheck()
             logger.info("Activity WebSocket 订阅成功（全局交易流: trades + orders_matched）")
         } catch (e: Exception) {
             logger.error("订阅 Activity WebSocket 失败", e)
@@ -235,7 +249,7 @@ class PolymarketActivityWsService(
 
     /**
      * 启动 Activity 消息超时检测
-     * 每30秒检查一次，如果超过30秒没有收到activity消息，则重连
+     * 定期检查，如果超过阈值没有收到 activity 消息，则重连
      */
     private fun startActivityTimeoutCheck() {
         // 先停止之前的检测任务
@@ -243,7 +257,7 @@ class PolymarketActivityWsService(
 
         activityTimeoutJob = scope.launch {
             while (isActive && isSubscribed) {
-                delay(30000)  // 每30秒检查一次
+                delay(timeoutCheckIntervalMs)
 
                 // 如果已经取消订阅，停止检测
                 if (!isSubscribed) {
@@ -258,9 +272,28 @@ class PolymarketActivityWsService(
                 val currentTime = System.currentTimeMillis()
                 val timeSinceLastActivity = currentTime - lastActivityTime
 
-                // 如果超过30秒没有收到activity消息，触发重连
-                if (timeSinceLastActivity >= 30000) {
-                    logger.warn("超过30秒未收到 Activity 消息，触发重连。距离上次消息: ${timeSinceLastActivity}ms")
+                // 如果超过阈值没有收到 activity 消息，触发重连
+                if (timeSinceLastActivity >= activitySilenceTimeoutMs) {
+                    logger.warn(
+                        "超过阈值未收到 Activity 消息，触发重连。距离上次消息: {}ms, 阈值: {}ms",
+                        timeSinceLastActivity,
+                        activitySilenceTimeoutMs
+                    )
+                    val leaderIds = monitoredAddresses.values.toSet()
+                    if (leaderIds.isNotEmpty()) {
+                        monitorExecutionEventService.recordForLeaders(
+                            leaderIds = leaderIds,
+                            source = "activity-ws",
+                            eventType = "ACTIVITY_WS_IDLE_TIMEOUT",
+                            status = "warning",
+                            message = "Activity WS 长时间静默，已触发自动重连",
+                            detailData = mapOf(
+                                "idleMillis" to timeSinceLastActivity,
+                                "silenceTimeoutMs" to activitySilenceTimeoutMs,
+                                "timeoutCheckIntervalMs" to timeoutCheckIntervalMs
+                            )
+                        )
+                    }
                     // 关闭当前连接并重连
                     wsClient?.closeConnection()
                     wsClient = null
@@ -416,6 +449,7 @@ class PolymarketActivityWsService(
             val trade = parseResult.trade
             if (trade != null) {
                 logger.info("✅ 检测到 Leader 交易: leaderId=$leaderId, address=$traderAddress, side=${trade.side}, market=${trade.market}, size=${trade.size}")
+                val receivedAt = System.currentTimeMillis()
 
                 // 异步处理交易（避免阻塞消息处理）
                 scope.launch {
@@ -423,7 +457,10 @@ class PolymarketActivityWsService(
                         val result = copyOrderTrackingService.processTrade(
                             leaderId = leaderId,
                             trade = trade,
-                            source = "activity-ws"
+                            source = "activity-ws",
+                            latencyContext = TradeProcessingLatencyContext(
+                                sourceReceivedAt = receivedAt
+                            )
                         )
                         if (result.isFailure) {
                             val exception = result.exceptionOrNull()
@@ -576,13 +613,13 @@ class PolymarketActivityWsService(
             val timestamp = when {
                 payload.timestamp == null -> System.currentTimeMillis().toString()
                 payload.timestamp is Number -> {
-                    val ts = (payload.timestamp as Number).toLong()
+                    val ts = payload.timestamp.toLong()
                     // 如果时间戳小于 1e12（秒级），转换为毫秒
                     if (ts < 1e12) (ts * 1000).toString() else ts.toString()
                 }
 
                 payload.timestamp is String -> {
-                    val tsStr = payload.timestamp as String
+                    val tsStr = payload.timestamp
                     val ts = tsStr.toLongOrNull() ?: System.currentTimeMillis()
                     if (ts < 1e12) (ts * 1000).toString() else tsStr
                 }
@@ -705,6 +742,19 @@ class PolymarketActivityWsService(
             } else {
                 0
             }
+        )
+    }
+
+    fun getHealthSnapshot(): HealthSnapshot {
+        val lastSeen = lastActivityTime
+        return HealthSnapshot(
+            connected = isConnected(),
+            subscribed = isSubscribed,
+            monitoredCount = monitoredAddresses.size,
+            lastActivityTime = lastSeen,
+            idleMillis = lastSeen.takeIf { it > 0 }?.let { System.currentTimeMillis() - it },
+            timeoutCheckIntervalMs = timeoutCheckIntervalMs,
+            silenceTimeoutMs = activitySilenceTimeoutMs
         )
     }
 

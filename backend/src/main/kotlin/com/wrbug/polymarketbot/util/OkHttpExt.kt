@@ -2,7 +2,6 @@ package com.wrbug.polymarketbot.util
 
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
-import java.net.InetSocketAddress
 import java.net.Proxy
 import java.security.SecureRandom
 import java.security.cert.CertificateException
@@ -36,10 +35,10 @@ fun createClient(): OkHttpClient.Builder {
         builder.proxy(dbProxy)
         builder.createSSLSocketFactory()
 
-        // 如果配置了用户名和密码，添加代理认证
+        // HTTP/HTTPS 代理使用 Proxy-Authorization；SOCKS5 认证由 JVM Authenticator 处理
         val username = ProxyConfigProvider.getProxyUsername()
         val password = ProxyConfigProvider.getProxyPassword()
-        if (username != null && password != null) {
+        if (dbProxy.type() == java.net.Proxy.Type.HTTP && username != null && password != null) {
             builder.proxyAuthenticator { _, response ->
                 val credential = Credentials.basic(username, password)
                 response.request.newBuilder()

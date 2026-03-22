@@ -41,7 +41,7 @@ polyhermes/
 │   │   ├── types/              # TypeScript 类型定义
 │   │   ├── utils/              # 工具函数
 │   │   ├── hooks/              # React Hooks
-│   │   ├── locales/            # 多语言资源
+│   │   ├── locales/            # 文案资源（当前仅 zh-CN）
 │   │   └── styles/             # 样式文件
 │   └── public/                 # 静态资源
 ├── docs/                       # 文档
@@ -170,7 +170,7 @@ npm run dev
 - 使用 TypeScript 类型定义
 - 使用函数式组件和 Hooks
 - **禁止**使用 `any` 类型
-- **必须**使用多语言（i18n）进行所有文本显示
+- **必须**使用统一文案键（i18n），当前仅维护 `zh-CN` 文案
 - **必须**使用 `formatUSDC` 函数格式化 USDC 金额
 - **必须**支持移动端和桌面端
 - **禁止**在代码中添加 TODO 注释
@@ -324,19 +324,17 @@ frontend/src/
 │   ├── auth.ts        # 认证相关工具
 │   └── version.ts     # 版本号工具
 ├── hooks/             # React Hooks
-├── locales/           # 多语言资源
-│   ├── zh-CN/
-│   ├── zh-TW/
-│   └── en/
+├── locales/           # 文案资源（当前仅启用 zh-CN）
+│   └── zh-CN/
 └── styles/            # 样式文件
 ```
 
-### 多语言支持
+### 文案管理（当前仅中文）
 
-项目支持多语言（中文简体、中文繁体、英文），使用 `react-i18next`。
+项目使用 `react-i18next` 统一管理文案，但当前仅启用简体中文（`zh-CN`）。
 
-**添加新翻译**：
-1. 在 `src/locales/{locale}/common.json` 中添加翻译
+**新增文案**：
+1. 在 `src/locales/zh-CN/common.json` 中添加文案键值
 2. 在组件中使用 `useTranslation` Hook：
 
 ```typescript

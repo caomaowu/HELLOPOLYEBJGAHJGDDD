@@ -53,6 +53,26 @@ class ProxyConfigController(
     }
     
     /**
+     * 保存代理配置
+     */
+    @PostMapping("/save")
+    fun saveProxyConfig(@RequestBody request: ProxyConfigSaveRequest): ResponseEntity<ApiResponse<ProxyConfigDto>> {
+        return try {
+            val result = proxyConfigService.saveProxyConfig(request)
+            if (result.isSuccess) {
+                ResponseEntity.ok(ApiResponse.success(result.getOrNull()))
+            } else {
+                val error = result.exceptionOrNull()
+                logger.error("保存代理配置失败", error)
+                ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, error?.message ?: "保存失败", messageSource))
+            }
+        } catch (e: Exception) {
+            logger.error("保存代理配置异常", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, "保存代理配置失败：${e.message}", messageSource))
+        }
+    }
+
+    /**
      * 保存 HTTP 代理配置
      */
     @PostMapping("/http/save")

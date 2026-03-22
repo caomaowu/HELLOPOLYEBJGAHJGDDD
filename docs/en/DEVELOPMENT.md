@@ -43,7 +43,7 @@ polyhermes/
 │   │   ├── types/              # TypeScript type definitions
 │   │   ├── utils/              # Utility functions
 │   │   ├── hooks/              # React Hooks
-│   │   ├── locales/            # Internationalization resources
+│   │   ├── locales/            # Text resources (currently zh-CN only)
 │   │   └── styles/             # Style files
 │   └── public/                 # Static resources
 ├── docs/                       # Documentation
@@ -166,7 +166,7 @@ For detailed standards, please refer to: [Frontend Development Standards](.curso
 - Use TypeScript type definitions
 - Use functional components and Hooks
 - **Do not** use `any` type
-- **Must** use internationalization (i18n) for all text display
+- **Must** use unified text keys (i18n); currently maintain `zh-CN` only
 - **Must** use `formatUSDC` function to format USDC amounts
 - **Must** support mobile and desktop
 - **Do not** add TODO comments in code
@@ -320,19 +320,17 @@ frontend/src/
 │   ├── auth.ts        # Authentication related utilities
 │   └── version.ts     # Version number utilities
 ├── hooks/             # React Hooks
-├── locales/           # Internationalization resources
-│   ├── zh-CN/
-│   ├── zh-TW/
-│   └── en/
+├── locales/           # Text resources (currently zh-CN only)
+│   └── zh-CN/
 └── styles/            # Style files
 ```
 
-### Internationalization Support
+### Text Management (Chinese-only for now)
 
-The project supports multiple languages (Simplified Chinese, Traditional Chinese, English), using `react-i18next`.
+The project uses `react-i18next` for centralized text management, but currently only enables Simplified Chinese (`zh-CN`).
 
-**Adding New Translations**:
-1. Add translations in `src/locales/{locale}/common.json`
+**Adding New Text**:
+1. Add text entries in `src/locales/zh-CN/common.json`
 2. Use `useTranslation` Hook in components:
 
 ```typescript

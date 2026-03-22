@@ -124,7 +124,7 @@ A powerful copy trading system for Polymarket prediction markets, supporting aut
 - **Responsive Design**: Perfect support for mobile and desktop, providing a consistent user experience
 - **High Performance**: Asynchronous processing, concurrency optimization, support for large-scale order processing
 - **Risk Control**: Multiple risk control mechanisms including daily loss limits, order count limits, price tolerance, etc.
-- **Multi-Language Support**: Support for Chinese (Simplified/Traditional) and English
+- **Language Policy**: Frontend UI is currently fixed to Simplified Chinese (`zh-CN`)
 - **Version Management**: Automatic version number display and management, support for GitHub Releases auto-build
 
 ### 🏗️ Tech Stack
@@ -146,7 +146,7 @@ A powerful copy trading system for Polymarket prediction markets, supporting aut
 - **State Management**: Zustand
 - **Routing**: React Router 6
 - **Ethereum Library**: ethers.js 6.9.0
-- **Internationalization**: react-i18next
+- **Text Management**: react-i18next (`zh-CN` only for now)
 
 ---
 

@@ -5,7 +5,7 @@ package com.wrbug.polymarketbot.dto
  */
 data class ProxyConfigDto(
     val id: Long?,
-    val type: String,  // HTTP, CLASH, SS
+    val type: String,  // HTTP, HTTPS, SOCKS5
     val enabled: Boolean,
     val host: String?,
     val port: Int?,
@@ -17,14 +17,26 @@ data class ProxyConfigDto(
 )
 
 /**
- * 创建/更新 HTTP 代理配置请求
+ * 创建/更新代理配置请求
+ */
+data class ProxyConfigSaveRequest(
+    val type: String = "HTTP",
+    val enabled: Boolean,
+    val host: String,
+    val port: Int,
+    val username: String? = null,
+    val password: String? = null  // 更新时如果为空则不更新密码
+)
+
+/**
+ * 创建/更新 HTTP 代理配置请求（兼容旧接口）
  */
 data class HttpProxyConfigRequest(
     val enabled: Boolean,
     val host: String,
     val port: Int,
     val username: String? = null,
-    val password: String? = null  // 更新时如果为空则不更新密码
+    val password: String? = null
 )
 
 /**

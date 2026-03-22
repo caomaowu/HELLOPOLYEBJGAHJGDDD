@@ -31,6 +31,8 @@ class PolymarketWebSocketClient(
     private var reconnectJob: Job? = null
     private var shouldReconnect = true  // 是否应该自动重连
     private var reconnectDelay = 3000L  // 重连延迟（毫秒），初始 3 秒
+    @Volatile
+    private var reconnecting = false
     
     private val okHttpClient: OkHttpClient by lazy {
         val proxy = getProxyConfig()
@@ -60,6 +62,8 @@ class PolymarketWebSocketClient(
             webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
                     isConnected = true
+                    val wasReconnecting = reconnecting
+                    reconnecting = false
                     
                     // 重置重连延迟（连接成功后重置为初始值）
                     reconnectDelay = 3000L
@@ -69,7 +73,7 @@ class PolymarketWebSocketClient(
                     
                     // 连接建立后立即调用回调（用于发送订阅消息）
                     // 如果是重连，调用 onReconnect；否则调用 onOpen
-                    if (reconnectJob != null) {
+                    if (wasReconnecting) {
                         // 这是重连，调用 onReconnect
                         onReconnect?.invoke()
                     } else {
@@ -191,7 +195,8 @@ class PolymarketWebSocketClient(
                 if (isConnected) {
                     return@launch
                 }
-                
+
+                reconnecting = true
                 
                 // 清理旧的连接
                 webSocket = null
@@ -202,6 +207,7 @@ class PolymarketWebSocketClient(
                 // 增加重连延迟（指数退避，最大 60 秒）
                 reconnectDelay = (reconnectDelay * 2).coerceAtMost(60000L)
             } catch (e: Exception) {
+                reconnecting = false
                 logger.error("重连失败: $sessionId, ${e.message}", e)
                 // 重连失败，继续安排下一次重连
                 scheduleReconnect()
@@ -223,6 +229,7 @@ class PolymarketWebSocketClient(
     fun closeConnection() {
         try {
             shouldReconnect = false  // 禁用自动重连
+            reconnecting = false
             stopReconnect()  // 停止重连任务
             stopPing()
             webSocket?.close(1000, "正常关闭")

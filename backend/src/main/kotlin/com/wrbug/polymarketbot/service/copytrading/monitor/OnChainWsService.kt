@@ -8,6 +8,7 @@ import com.wrbug.polymarketbot.entity.Leader
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingMonitorExecutionEventService
 import com.wrbug.polymarketbot.service.copytrading.statistics.CopyOrderTrackingService
+import com.wrbug.polymarketbot.service.copytrading.statistics.TradeProcessingLatencyContext
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.*
@@ -69,7 +70,7 @@ class OnChainWsService(
             return
         }
 
-        val leaderId = leader.id!!
+        val leaderId = leader.id
 
         // 如果已经在监听列表中，不重复添加
         if (monitoredLeaders.containsKey(leaderId)) {
@@ -97,6 +98,7 @@ class OnChainWsService(
     /**
      * 处理 Leader 的交易
      */
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun handleLeaderTransaction(
         leaderId: Long,
         txHash: String,
@@ -206,11 +208,15 @@ class OnChainWsService(
 
             if (trade != null) {
                 logger.info("成功解析交易: leaderId=$leaderId, txHash=$txHash, side=${trade.side}, market=${trade.market}, size=${trade.size}")
+                val receivedAt = System.currentTimeMillis()
                 // 调用 processTrade 处理交易
                 val result = copyOrderTrackingService.processTrade(
                     leaderId = leaderId,
                     trade = trade,
-                    source = "onchain-ws"
+                    source = "onchain-ws",
+                    latencyContext = TradeProcessingLatencyContext(
+                        sourceReceivedAt = receivedAt
+                    )
                 )
                 if (result.isFailure) {
                     val exception = result.exceptionOrNull()

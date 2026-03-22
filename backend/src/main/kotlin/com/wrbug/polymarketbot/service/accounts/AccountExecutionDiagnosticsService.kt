@@ -48,6 +48,13 @@ class AccountExecutionDiagnosticsService(
         val unhealthyAccountCount: Int = 0
     )
 
+    data class EnabledAccountDiagnostics(
+        val accountId: Long,
+        val accountName: String,
+        val enabledCopyTradingCount: Int,
+        val setupStatus: AccountSetupStatusDto
+    )
+
     private data class CachedDiagnostics(
         val value: AccountSetupStatusDto,
         val cachedAt: Long
@@ -89,43 +96,50 @@ class AccountExecutionDiagnosticsService(
         }
     }
 
-    suspend fun summarizeEnabledCopyTradingReadiness(): ExecutionReadinessSummary {
+    suspend fun diagnoseEnabledCopyTradingAccounts(forceRefresh: Boolean = false): List<EnabledAccountDiagnostics> {
         val enabledCopyTradings = copyTradingRepository.findByEnabledTrue()
         if (enabledCopyTradings.isEmpty()) {
+            return emptyList()
+        }
+
+        return enabledCopyTradings
+            .groupBy { it.accountId }
+            .mapNotNull { (accountId, copyTradings) ->
+                val account = accountRepository.findById(accountId).orElse(null) ?: return@mapNotNull null
+                EnabledAccountDiagnostics(
+                    accountId = accountId,
+                    accountName = account.accountName ?: "账户#$accountId",
+                    enabledCopyTradingCount = copyTradings.size,
+                    setupStatus = diagnoseAccount(account, forceRefresh = forceRefresh)
+                )
+            }
+    }
+
+    suspend fun summarizeEnabledCopyTradingReadiness(): ExecutionReadinessSummary {
+        val diagnostics = diagnoseEnabledCopyTradingAccounts(forceRefresh = false)
+        if (diagnostics.isEmpty()) {
             return ExecutionReadinessSummary(
                 status = "skipped",
                 message = "当前没有启用的跟单配置"
             )
         }
 
-        val accountIds = enabledCopyTradings.map { it.accountId }.distinct()
-        val diagnosticsByAccountId = mutableMapOf<Long, AccountSetupStatusDto>()
-        for (accountId in accountIds) {
-            val account = accountRepository.findById(accountId).orElse(null)
-            if (account != null) {
-                diagnosticsByAccountId[accountId] = diagnoseAccount(account, forceRefresh = false)
-            }
-        }
-
-        val unhealthyAccounts = diagnosticsByAccountId
-            .filterValues { !it.executionReady }
-            .keys
-        val unhealthyCopyTradings = enabledCopyTradings.count { unhealthyAccounts.contains(it.accountId) }
+        val unhealthyAccounts = diagnostics.filter { !it.setupStatus.executionReady }
+        val unhealthyCopyTradings = unhealthyAccounts.sumOf { it.enabledCopyTradingCount }
+        val enabledCopyTradingCount = diagnostics.sumOf { it.enabledCopyTradingCount }
 
         return if (unhealthyAccounts.isEmpty()) {
             ExecutionReadinessSummary(
                 status = "success",
                 message = "所有启用的跟单配置都通过执行前诊断",
-                enabledCopyTradingCount = enabledCopyTradings.size
+                enabledCopyTradingCount = enabledCopyTradingCount
             )
         } else {
-            val sampleNames = unhealthyAccounts.take(3).mapNotNull { accountId ->
-                accountRepository.findById(accountId).orElse(null)?.accountName ?: "账户#$accountId"
-            }
+            val sampleNames = unhealthyAccounts.take(3).map { it.accountName }
             ExecutionReadinessSummary(
                 status = "error",
                 message = "发现 ${unhealthyAccounts.size} 个账户、${unhealthyCopyTradings} 个启用配置存在执行前风险：${sampleNames.joinToString("、")}",
-                enabledCopyTradingCount = enabledCopyTradings.size,
+                enabledCopyTradingCount = enabledCopyTradingCount,
                 unhealthyCopyTradingCount = unhealthyCopyTradings,
                 unhealthyAccountCount = unhealthyAccounts.size
             )
@@ -141,14 +155,16 @@ class AccountExecutionDiagnosticsService(
             title: String,
             status: String,
             message: String,
-            detail: String? = null
+            detail: String? = null,
+            suggestion: String? = null
         ) {
             checks += AccountExecutionCheckDto(
                 code = code,
                 title = title,
                 status = status,
                 message = message,
-                detail = detail
+                detail = detail,
+                suggestion = suggestion
             )
             if (status == "error") {
                 errors += message
@@ -161,7 +177,8 @@ class AccountExecutionDiagnosticsService(
             code = "WALLET_ADDRESS",
             title = "钱包地址",
             status = if (walletAddressValid) "success" else "error",
-            message = if (walletAddressValid) "钱包地址格式正确" else "钱包地址格式不合法"
+            message = if (walletAddressValid) "钱包地址格式正确" else "钱包地址格式不合法",
+            suggestion = if (walletAddressValid) null else "检查账户钱包地址是否为 0x 开头的 42 位 EVM 地址，并与导入私钥对应。"
         )
 
         val proxyAddressValid = isValidEthereumAddress(account.proxyAddress)
@@ -169,14 +186,16 @@ class AccountExecutionDiagnosticsService(
             code = "PROXY_ADDRESS",
             title = "代理钱包地址",
             status = if (proxyAddressValid) "success" else "error",
-            message = if (proxyAddressValid) "代理钱包地址格式正确" else "代理钱包地址格式不合法"
+            message = if (proxyAddressValid) "代理钱包地址格式正确" else "代理钱包地址格式不合法",
+            suggestion = if (proxyAddressValid) null else "重新执行代理地址检查，确认钱包类型选择正确，并保存链上推导得到的代理地址。"
         )
 
         addCheck(
             code = "ACCOUNT_ENABLED",
             title = "账户启用状态",
             status = if (account.isEnabled) "success" else "error",
-            message = if (account.isEnabled) "账户已启用" else "账户已禁用，无法执行跟单"
+            message = if (account.isEnabled) "账户已启用" else "账户已禁用，无法执行跟单",
+            suggestion = if (account.isEnabled) null else "先启用账户，再启动或启用关联的跟单配置。"
         )
 
         var decryptedPrivateKey: String? = null
@@ -194,7 +213,8 @@ class AccountExecutionDiagnosticsService(
                 } else {
                     "私钥与钱包地址不匹配"
                 },
-                detail = if (privateKeyMatchesWallet) null else "推导地址: $derivedAddress"
+                detail = if (privateKeyMatchesWallet) null else "推导地址: $derivedAddress",
+                suggestion = if (privateKeyMatchesWallet) null else "重新导入正确私钥，或修正账户钱包地址为私钥实际推导出的地址。"
             )
         } catch (e: Exception) {
             logger.warn("解密账户私钥失败: accountId={}", account.id, e)
@@ -202,7 +222,8 @@ class AccountExecutionDiagnosticsService(
                 code = "PRIVATE_KEY_MATCH",
                 title = "私钥与钱包地址",
                 status = "error",
-                message = "账户私钥无法解密或格式不合法"
+                message = "账户私钥无法解密或格式不合法",
+                suggestion = "重新保存账户私钥，确认密钥格式正确且未被截断。"
             )
         }
 
@@ -213,7 +234,8 @@ class AccountExecutionDiagnosticsService(
             code = "API_CREDENTIALS_CONFIGURED",
             title = "API 凭证完整性",
             status = if (apiCredentialsConfigured) "success" else "error",
-            message = if (apiCredentialsConfigured) "API Key / Secret / Passphrase 已配置" else "API 凭证不完整"
+            message = if (apiCredentialsConfigured) "API Key / Secret / Passphrase 已配置" else "API 凭证不完整",
+            suggestion = if (apiCredentialsConfigured) null else "补齐 Polymarket API Key、Secret、Passphrase 三项配置后再启用跟单。"
         )
 
         val apiCredentialsDecryptable = if (apiCredentialsConfigured) {
@@ -240,6 +262,11 @@ class AccountExecutionDiagnosticsService(
                 !apiCredentialsConfigured -> "未配置完整 API 凭证，跳过解密检查"
                 apiCredentialsDecryptable -> "API Secret / Passphrase 解密成功"
                 else -> "API Secret / Passphrase 解密失败"
+            },
+            suggestion = when {
+                !apiCredentialsConfigured -> null
+                apiCredentialsDecryptable -> null
+                else -> "重新录入并保存 API Secret / Passphrase，确认密文字段未被旧数据污染。"
             }
         )
 
@@ -262,7 +289,12 @@ class AccountExecutionDiagnosticsService(
                 proxyAddressMatched == true -> "代理钱包与链上推导结果一致"
                 else -> "代理钱包与链上推导结果不一致"
             },
-            detail = expectedProxyAddress?.let { "预期代理地址: $it" }
+            detail = expectedProxyAddress?.let { "预期代理地址: $it" },
+            suggestion = when {
+                expectedProxyAddress == null -> "确认当前 RPC 可用，并检查钱包类型配置是否正确。"
+                proxyAddressMatched == true -> null
+                else -> "将账户中的代理地址修正为链上推导结果，避免下单时使用错误代理。"
+            }
         )
 
         val proxyDeployed = if (proxyAddressValid) {
@@ -287,6 +319,11 @@ class AccountExecutionDiagnosticsService(
                 !proxyAddressValid -> "代理地址无效，跳过部署检查"
                 proxyDeployed -> "代理钱包已部署"
                 else -> "代理钱包未部署"
+            },
+            suggestion = when {
+                !proxyAddressValid -> null
+                proxyDeployed -> null
+                else -> "先完成代理钱包部署，再进行授权和跟单启动。"
             }
         )
 
@@ -300,7 +337,8 @@ class AccountExecutionDiagnosticsService(
             code = "SIGNATURE_TYPE",
             title = "签名类型",
             status = if (signatureType != null) "success" else "warning",
-            message = signatureType?.let { "签名类型=$it" } ?: "未能计算签名类型"
+            message = signatureType?.let { "签名类型=$it" } ?: "未能计算签名类型",
+            suggestion = if (signatureType != null) null else "检查钱包类型配置，并确认签名服务依赖的账户字段完整。"
         )
 
         val approvalDetails = linkedMapOf<String, String>()
@@ -325,7 +363,8 @@ class AccountExecutionDiagnosticsService(
                         title = "USDC 授权 / $name",
                         status = if (approved) "success" else "error",
                         message = if (approved) "授权正常: $displayAmount" else "未授权或授权额度为 0",
-                        detail = spender
+                        detail = spender,
+                        suggestion = if (approved) null else "为代理钱包补充 USDC allowance，确保对 $name 合约的授权额度大于 0。"
                     )
                 } catch (e: Exception) {
                     logger.warn("读取 allowance 失败: accountId={}, spender={}", account.id, spender, e)
@@ -336,7 +375,8 @@ class AccountExecutionDiagnosticsService(
                         title = "USDC 授权 / $name",
                         status = "error",
                         message = "读取 allowance 失败",
-                        detail = spender
+                        detail = spender,
+                        suggestion = "检查 RPC 可用性与代理钱包状态，确认链上授权查询可以正常返回。"
                     )
                 }
             }
@@ -346,7 +386,8 @@ class AccountExecutionDiagnosticsService(
                 code = "ALLOWANCE_CHECK",
                 title = "USDC 授权检查",
                 status = "skipped",
-                message = "代理地址不可用或尚未部署，跳过 allowance 检查"
+                message = "代理地址不可用或尚未部署，跳过 allowance 检查",
+                suggestion = "先修复代理地址和部署状态，再执行授权检查。"
             )
         }
 

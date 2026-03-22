@@ -18,7 +18,6 @@ import type {
 } from '../types/backtest'
 import { getToken, setToken, removeToken } from '../utils'
 import { wsManager } from './websocket'
-import i18n from '../i18n/config'
 
 /**
  * API 基础配置
@@ -47,29 +46,8 @@ const apiClient: AxiosInstance = axios.create({
  * 获取当前语言设置（优先从 localStorage 读取，确保获取最新值）
  */
 const getCurrentLanguage = (): string => {
-  // 优先从 localStorage 读取用户设置的语言（统一使用 i18n_language）
-  let savedLanguage = localStorage.getItem('i18n_language')
-  
-  // 如果 i18n_language 不存在，尝试从 i18nextLng 读取（i18next 默认使用的 key）
-  if (!savedLanguage) {
-    savedLanguage = localStorage.getItem('i18nextLng')
-  }
-  
-  // 如果设置了具体语言，使用设置的语言
-  if (savedLanguage && savedLanguage !== 'auto' && ['zh-CN', 'zh-TW', 'en'].includes(savedLanguage)) {
-    return savedLanguage
-  }
-  
-  // 如果设置为 auto 或未设置，使用 i18n 的当前语言
-  // 如果 i18n.language 也没有，使用默认值 'en'
-  const currentLang = i18n.language || 'en'
-  
-  // 确保返回的语言格式正确（移除可能的区域代码，如 'en-US' -> 'en'）
-  if (currentLang.startsWith('zh-CN')) return 'zh-CN'
-  if (currentLang.startsWith('zh-TW') || currentLang.startsWith('zh-HK')) return 'zh-TW'
-  if (currentLang.startsWith('en')) return 'en'
-  
-  return 'en'
+  // 项目固定中文，API 统一发送简体中文头。
+  return 'zh-CN'
 }
 
 /**
@@ -668,6 +646,19 @@ export const apiService = {
      */
     list: () =>
       apiClient.post<ApiResponse<any[]>>('/system/proxy/list', {}),
+
+    /**
+     * 保存代理配置
+     */
+    save: (data: {
+      type: 'HTTP' | 'HTTPS' | 'SOCKS5'
+      enabled: boolean
+      host: string
+      port: number
+      username?: string
+      password?: string
+    }) =>
+      apiClient.post<ApiResponse<any>>('/system/proxy/save', data),
     
     /**
      * 保存 HTTP 代理配置

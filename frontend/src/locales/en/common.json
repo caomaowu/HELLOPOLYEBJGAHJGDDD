@@ -344,6 +344,8 @@
   },
   "apiHealthStatus": {
     "title": "API Health Status",
+    "startupTitle": "Startup Health Check",
+    "startupDescription": "Run a unified preflight check for external dependencies, monitor links, and execution readiness of enabled copy trading accounts.",
     "checkFailed": "Check Failed",
     "status": "Status",
     "responseTime": "Response Time",
@@ -353,7 +355,22 @@
     "unknown": "Unknown",
     "normal": "Normal",
     "notConfigured": "Not Configured",
-    "abnormal": "Abnormal"
+    "abnormal": "Abnormal",
+    "warning": "Warning",
+    "fixSuggestion": "Fix Suggestion",
+    "topActions": "Top Actions",
+    "totalChecks": "Total Checks",
+    "errorCount": "Blocking Items",
+    "warningCount": "Warnings",
+    "enabledCopyTradingCount": "Problematic Copy Trades",
+    "problemSuffix": "problematic",
+    "accountSectionTitle": "Unhealthy Accounts",
+    "accountSectionCount": "{{count}} accounts need attention",
+    "noAccountIssues": "No unhealthy accounts",
+    "copyTradingCount": "{{count}} enabled configs",
+    "errorCountSimple": "Errors {{count}}",
+    "warningCountSimple": "Warnings {{count}}",
+    "apiSectionTitle": "Base Services And Monitor Links"
   },
   "proxySettings": {
     "title": "Proxy Settings",

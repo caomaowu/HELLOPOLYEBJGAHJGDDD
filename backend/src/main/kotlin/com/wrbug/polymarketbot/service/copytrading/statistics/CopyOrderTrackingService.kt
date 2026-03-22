@@ -45,6 +45,12 @@ import com.wrbug.polymarketbot.service.copytrading.configs.SizingRejectionType
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventRecordRequest
 import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExecutionEventService
 
+data class TradeProcessingLatencyContext(
+    val sourceReceivedAt: Long? = null,
+    val processTradeStartedAt: Long = System.currentTimeMillis(),
+    val leaderTradeTimestamp: Long? = null
+)
+
 /**
  * 订单跟踪服务
  * 处理买入订单跟踪和卖出订单匹配
@@ -95,6 +101,7 @@ open class CopyOrderTrackingService(
 
     // 使用 Mutex 保证线程安全（按交易ID锁定）
     private val tradeMutexMap = ConcurrentHashMap<String, Mutex>()
+    private val tradeLatencyContextMap = ConcurrentHashMap<String, TradeProcessingLatencyContext>()
 
     // 订单创建重试配置
     companion object {
@@ -203,11 +210,24 @@ open class CopyOrderTrackingService(
      * 小额聚合缓冲为进程内内存态，重启会丢失待释放批次；多实例下不保证严格聚合一致性。
      */
     @Transactional
-    suspend fun processTrade(leaderId: Long, trade: TradeResponse, source: String): Result<Unit> {
+    suspend fun processTrade(
+        leaderId: Long,
+        trade: TradeResponse,
+        source: String,
+        latencyContext: TradeProcessingLatencyContext? = null
+    ): Result<Unit> {
         // 获取该交易的 Mutex（按交易ID锁定，不同交易可以并行处理）
         val mutex = getMutex(leaderId, trade.id)
         logger.debug("processTrade: ${trade.id}, $source")
         return mutex.withLock {
+            val effectiveLatencyContext = latencyContext?.copy(
+                leaderTradeTimestamp = latencyContext.leaderTradeTimestamp ?: parseTradeTimestampMillis(trade.timestamp)
+            ) ?: TradeProcessingLatencyContext(
+                sourceReceivedAt = null,
+                processTradeStartedAt = System.currentTimeMillis(),
+                leaderTradeTimestamp = parseTradeTimestampMillis(trade.timestamp)
+            )
+            tradeLatencyContextMap[buildTradeLatencyKey(leaderId, trade.id, source)] = effectiveLatencyContext
             try {
                 // 1. 检查是否已处理（去重，包括失败状态）
                 val existingProcessed = processedTradeRepository.findByLeaderIdAndLeaderTradeId(leaderId, trade.id)
@@ -224,7 +244,7 @@ open class CopyOrderTrackingService(
                 val self = getSelf()
                 val result = when (trade.side.uppercase()) {
                     "BUY" -> self.processBuyTrade(leaderId, trade, source)
-                    "SELL" -> self.processSellTrade(leaderId, trade)
+                    "SELL" -> self.processSellTrade(leaderId, trade, source)
                     else -> {
                         logger.warn("未知的交易方向: ${trade.side}")
                         Result.failure(IllegalArgumentException("未知的交易方向: ${trade.side}"))
@@ -288,6 +308,8 @@ open class CopyOrderTrackingService(
             } catch (e: Exception) {
                 logger.error("处理交易异常: leaderId=$leaderId, tradeId=${trade.id}", e)
                 Result.failure(e)
+            } finally {
+                tradeLatencyContextMap.remove(buildTradeLatencyKey(leaderId, trade.id, source))
             }
         }
     }
@@ -596,6 +618,7 @@ open class CopyOrderTrackingService(
                 matchSellOrder(
                     copyTrading = copyTrading,
                     leaderSellTrade = aggregatedTrade,
+                    source = "aggregated",
                     allowAggregation = false,
                     aggregationReleaseReason = release.reason,
                     aggregationKey = batch.key,
@@ -655,6 +678,7 @@ open class CopyOrderTrackingService(
         matchSellOrder(
             copyTrading = copyTrading,
             leaderSellTrade = aggregatedTrade,
+            source = "aggregated",
             allowAggregation = false,
             aggregationReleaseReason = release.reason,
             aggregationKey = release.batch.key,
@@ -1101,6 +1125,7 @@ open class CopyOrderTrackingService(
             feeRateBps,
             payload.trades.size > 1
         )
+        val orderCreateRequestedAt = System.currentTimeMillis()
         recordExecutionEvent(
             copyTrading = copyTrading,
             account = account,
@@ -1111,7 +1136,8 @@ open class CopyOrderTrackingService(
             message = "准备提交买入订单",
             calculatedQuantity = finalBuyQuantity,
             orderPrice = buyPrice,
-            orderQuantity = finalBuyQuantity
+            orderQuantity = finalBuyQuantity,
+            orderCreateRequestedAt = orderCreateRequestedAt
         )
 
         val negRisk = marketService.getNegRiskByConditionId(payload.marketId) == true
@@ -1134,6 +1160,7 @@ open class CopyOrderTrackingService(
             feeRateBps = feeRateBps,
             signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
         )
+        val orderCreateCompletedAt = System.currentTimeMillis()
         if (createOrderResult.isFailure) {
             val exception = createOrderResult.exceptionOrNull()
             logger.error("创建买入订单失败: copyTradingId=${copyTrading.id}, tradeId=${payload.representativeTradeId}, leaderPrice=${payload.tradePrice}, myPrice=$buyPrice, error=${exception?.message}")
@@ -1147,7 +1174,9 @@ open class CopyOrderTrackingService(
                 message = exception?.message ?: "创建买入订单失败",
                 calculatedQuantity = finalBuyQuantity,
                 orderPrice = buyPrice,
-                orderQuantity = finalBuyQuantity
+                orderQuantity = finalBuyQuantity,
+                orderCreateRequestedAt = orderCreateRequestedAt,
+                orderCreateCompletedAt = orderCreateCompletedAt
             )
             if (copyTrading.pushFailedOrders) {
                 notificationScope.launch {
@@ -1230,7 +1259,9 @@ open class CopyOrderTrackingService(
             calculatedQuantity = finalBuyQuantity,
             orderPrice = buyPrice,
             orderQuantity = finalBuyQuantity,
-            orderId = realOrderId
+            orderId = realOrderId,
+            orderCreateRequestedAt = orderCreateRequestedAt,
+            orderCreateCompletedAt = orderCreateCompletedAt
         )
         return Result.success(Unit)
     }
@@ -1240,7 +1271,7 @@ open class CopyOrderTrackingService(
      * 查找未匹配的买入订单并进行匹配
      */
     @Transactional
-    suspend fun processSellTrade(leaderId: Long, trade: TradeResponse): Result<Unit> {
+    suspend fun processSellTrade(leaderId: Long, trade: TradeResponse, source: String): Result<Unit> {
         return try {
             // 1. 查找所有启用且支持该Leader的跟单关系
             val copyTradings = copyTradingRepository.findByLeaderIdAndEnabledTrue(leaderId)
@@ -1267,7 +1298,7 @@ open class CopyOrderTrackingService(
                     }
 
                     // 执行卖出匹配
-                    matchSellOrder(copyTrading, trade)
+                    matchSellOrder(copyTrading, trade, source = source)
                 } catch (e: Exception) {
                     logger.error("处理卖出交易失败: copyTradingId=${copyTrading.id}, tradeId=${trade.id}", e)
                     // 继续处理下一个跟单关系
@@ -1401,8 +1432,17 @@ open class CopyOrderTrackingService(
         orderId: String? = null,
         aggregationKey: String? = null,
         aggregationTradeCount: Int? = null,
-        detailJson: String? = null
+        detailJson: String? = null,
+        orderCreateRequestedAt: Long? = null,
+        orderCreateCompletedAt: Long? = null
     ) {
+        val latencyDetailJson = buildLatencyDetailJson(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            orderCreateRequestedAt = orderCreateRequestedAt,
+            orderCreateCompletedAt = orderCreateCompletedAt
+        )
         executionEventService.recordEvent(
             CopyTradingExecutionEventRecordRequest(
                 copyTradingId = copyTrading.id ?: return,
@@ -1427,7 +1467,7 @@ open class CopyOrderTrackingService(
                 aggregationKey = aggregationKey,
                 aggregationTradeCount = aggregationTradeCount ?: payload.trades.size,
                 message = message,
-                detailJson = detailJson
+                detailJson = detailJson ?: latencyDetailJson
             )
         )
     }
@@ -1446,10 +1486,20 @@ open class CopyOrderTrackingService(
         orderId: String? = null,
         aggregationKey: String? = null,
         aggregationTradeCount: Int? = null,
-        detailJson: String? = null
+        detailJson: String? = null,
+        source: String? = null,
+        orderCreateRequestedAt: Long? = null,
+        orderCreateCompletedAt: Long? = null
     ) {
         val leaderPrice = trade.price.toSafeBigDecimal()
         val leaderQuantity = trade.size.toSafeBigDecimal()
+        val latencyDetailJson = buildLatencyDetailJson(
+            leaderId = copyTrading.leaderId,
+            tradeId = trade.id,
+            source = source,
+            orderCreateRequestedAt = orderCreateRequestedAt,
+            orderCreateCompletedAt = orderCreateCompletedAt
+        )
         executionEventService.recordEvent(
             CopyTradingExecutionEventRecordRequest(
                 copyTradingId = copyTrading.id ?: return,
@@ -1460,6 +1510,7 @@ open class CopyOrderTrackingService(
                 side = trade.side.uppercase(),
                 outcomeIndex = trade.outcomeIndex,
                 outcome = trade.outcome,
+                source = source,
                 stage = stage,
                 eventType = eventType,
                 status = status,
@@ -1473,9 +1524,56 @@ open class CopyOrderTrackingService(
                 aggregationKey = aggregationKey,
                 aggregationTradeCount = aggregationTradeCount,
                 message = message,
-                detailJson = detailJson
+                detailJson = detailJson ?: latencyDetailJson
             )
         )
+    }
+
+    private fun buildTradeLatencyKey(leaderId: Long, tradeId: String, source: String): String {
+        return "$leaderId::$tradeId::$source"
+    }
+
+    private fun parseTradeTimestampMillis(rawTimestamp: String?): Long? {
+        val value = rawTimestamp?.toLongOrNull() ?: return null
+        return if (value < 1_000_000_000_000L) value * 1000 else value
+    }
+
+    private fun buildLatencyDetailJson(
+        leaderId: Long,
+        tradeId: String,
+        source: String?,
+        orderCreateRequestedAt: Long? = null,
+        orderCreateCompletedAt: Long? = null
+    ): String? {
+        if (source.isNullOrBlank()) {
+            return null
+        }
+        val context = tradeLatencyContextMap[buildTradeLatencyKey(leaderId, tradeId, source)] ?: return null
+        val detail = linkedMapOf<String, Any>()
+        detail["source"] = source
+        context.leaderTradeTimestamp?.let { detail["leaderTradeTimestamp"] = it }
+        context.sourceReceivedAt?.let {
+            detail[if (source == "activity-ws") "activityWsReceivedAt" else "onChainWsReceivedAt"] = it
+        }
+        detail["processTradeStartedAt"] = context.processTradeStartedAt
+        context.sourceReceivedAt?.let { detail["sourceToProcessMs"] = context.processTradeStartedAt - it }
+        orderCreateRequestedAt?.let {
+            detail["orderCreateRequestedAt"] = it
+            detail["processToOrderRequestMs"] = it - context.processTradeStartedAt
+        }
+        orderCreateCompletedAt?.let {
+            detail["orderCreateCompletedAt"] = it
+            orderCreateRequestedAt?.let { requestedAt ->
+                detail["orderCreateDurationMs"] = it - requestedAt
+            }
+            context.sourceReceivedAt?.let { receivedAt ->
+                detail["sourceToOrderCompleteMs"] = it - receivedAt
+            }
+            context.leaderTradeTimestamp?.let { leaderTradeAt ->
+                detail["leaderTradeToOrderCompleteMs"] = it - leaderTradeAt
+            }
+        }
+        return detail.takeIf { it.isNotEmpty() }?.toJson()
     }
 
     private suspend fun resolveSellTokenId(
@@ -1647,6 +1745,7 @@ open class CopyOrderTrackingService(
     private suspend fun matchSellOrder(
         copyTrading: CopyTrading,
         leaderSellTrade: TradeResponse,
+        source: String,
         allowAggregation: Boolean = true,
         aggregationReleaseReason: SmallOrderAggregationReleaseReason? = null,
         aggregationKey: String? = null,
@@ -1679,7 +1778,8 @@ open class CopyOrderTrackingService(
                 orderId = orderId,
                 aggregationKey = eventAggregationKey,
                 aggregationTradeCount = eventAggregationTradeCount,
-                detailJson = detailJson
+                detailJson = detailJson,
+                source = source
             )
         }
 
@@ -1899,7 +1999,8 @@ open class CopyOrderTrackingService(
                 eventType = "EXECUTION_PRECHECK_REJECTED",
                 status = "error",
                 message = buildDiagnosticsFailureReason(diagnostics),
-                calculatedQuantity = totalMatched
+                calculatedQuantity = totalMatched,
+                source = source
             )
             return
         }
@@ -1917,7 +2018,8 @@ open class CopyOrderTrackingService(
                 eventType = "API_SECRET_DECRYPT_FAILED",
                 status = "error",
                 message = "API Secret 解密失败: ${e.message}",
-                calculatedQuantity = totalMatched
+                calculatedQuantity = totalMatched,
+                source = source
             )
             return
         }
@@ -1933,7 +2035,8 @@ open class CopyOrderTrackingService(
                 eventType = "API_PASSPHRASE_DECRYPT_FAILED",
                 status = "error",
                 message = "API Passphrase 解密失败: ${e.message}",
-                calculatedQuantity = totalMatched
+                calculatedQuantity = totalMatched,
+                source = source
             )
             return
         }
@@ -1982,7 +2085,8 @@ open class CopyOrderTrackingService(
                 message = "创建并签名卖出订单失败: ${e.message}",
                 calculatedQuantity = totalMatched,
                 orderPrice = sellPrice,
-                orderQuantity = totalMatched
+                orderQuantity = totalMatched,
+                source = source
             )
             return
         }
@@ -2005,6 +2109,7 @@ open class CopyOrderTrackingService(
             account.walletAddress
         )
 
+        val sellOrderCreateRequestedAt = System.currentTimeMillis()
         recordTradeExecutionEvent(
             copyTrading = copyTrading,
             accountId = account.id ?: copyTrading.accountId,
@@ -2015,7 +2120,9 @@ open class CopyOrderTrackingService(
             message = "准备提交卖出订单",
             calculatedQuantity = totalMatched,
             orderPrice = sellPrice,
-            orderQuantity = totalMatched
+            orderQuantity = totalMatched,
+            source = source,
+            orderCreateRequestedAt = sellOrderCreateRequestedAt
         )
 
         // 13. 调用API创建卖出订单（带重试机制，重试时会重新生成salt并重新签名）
@@ -2035,6 +2142,7 @@ open class CopyOrderTrackingService(
             feeRateBps = feeRateBps,
             signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
         )
+        val sellOrderCreateCompletedAt = System.currentTimeMillis()
 
         if (createOrderResult.isFailure) {
             // 创建订单失败，记录错误日志
@@ -2050,7 +2158,10 @@ open class CopyOrderTrackingService(
                 message = exception?.message ?: "创建卖出订单失败",
                 calculatedQuantity = totalMatched,
                 orderPrice = sellPrice,
-                orderQuantity = totalMatched
+                orderQuantity = totalMatched,
+                source = source,
+                orderCreateRequestedAt = sellOrderCreateRequestedAt,
+                orderCreateCompletedAt = sellOrderCreateCompletedAt
             )
             return
         }
@@ -2127,7 +2238,10 @@ open class CopyOrderTrackingService(
             calculatedQuantity = totalMatched,
             orderPrice = sellPrice,
             orderQuantity = totalMatched,
-            orderId = realSellOrderId
+            orderId = realSellOrderId,
+            source = source,
+            orderCreateRequestedAt = sellOrderCreateRequestedAt,
+            orderCreateCompletedAt = sellOrderCreateCompletedAt
         )
 
     }
