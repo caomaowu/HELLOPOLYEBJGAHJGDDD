@@ -4,25 +4,263 @@
 [![Twitter](https://img.shields.io/badge/Twitter-@polyhermes-blue?logo=twitter)](https://x.com/polyhermes)
 [![Docker](https://img.shields.io/docker/v/wrbug/polyhermes?label=Docker&logo=docker)](https://hub.docker.com/r/wrbug/polyhermes)
 
-> 🌐 **Language**: [English](README_EN.md) | 中文
+> 中文文档
 
-一个功能强大的 Polymarket 预测市场跟单交易系统，支持自动化跟单、多账户管理、实时订单推送和统计分析。
+PolyHermes 是一个面向实盘使用的 Polymarket 平台型交易系统，不只是“跟单脚本”。  
+它把多账户管理、Leader 发现、自动跟单、回测审计、加密尾盘策略、仓位处理、系统诊断和运行配置收口到统一的 Web UI 与后端服务中。
 
----
-
-## 📋 目录
-
-- [第一部分：产品功能说明](#第一部分产品功能说明)
-- [第二部分：如何部署](#第二部分如何部署)
-- [第三部分：开发文档](#第三部分开发文档)
+当前主项目为 `PolyHermes`，所有正式开发、验证和发布均以它为准。
 
 ---
 
-## 第一部分：产品功能说明
+## 目录
 
-### 📸 界面预览
+- [产品定位](#产品定位)
+- [当前能力总览](#当前能力总览)
+- [界面预览](#界面预览)
+- [技术亮点](#技术亮点)
+- [部署方式](#部署方式)
+- [环境配置](#环境配置)
+- [文档入口](#文档入口)
+- [免责声明](#免责声明)
 
-#### 🖥️ 桌面端
+---
+
+## 产品定位
+
+PolyHermes 当前的定位是：
+
+- 面向 Polymarket 的多账户交易与跟单平台
+- 强调配置化、可观测、可运营，而不是一次性脚本
+- 同时覆盖实盘执行、策略评估、运行诊断和系统维护
+
+适用场景：
+
+- 需要同时管理多个账户、多个 Leader、多个跟单关系
+- 需要在 Web UI 中完成配置、监控、诊断与排障
+- 需要保留执行事件、过滤原因、回测审计链，便于复盘
+- 需要把代理、RPC、通知、Builder API、自动赎回等运行参数纳入统一管理
+
+---
+
+## 当前能力总览
+
+下面列的是当前代码中已经存在、并已接入前后端主链路的能力。
+
+### 1. 账户与安全
+
+- 支持私钥和助记词导入账户
+- 导入时自动推导地址并校验格式
+- 导入时自动识别代理钱包类型，支持选择 `Safe / Magic` 路径
+- 导入后可检查账户初始化状态：
+  - 代理钱包是否已部署
+  - 交易是否已启用
+  - Token 授权是否完成
+- 支持多账户统一管理、编辑、删除、余额查看
+- 私钥和敏感凭证采用加密存储
+- 支持登录鉴权、首次使用重置密码、用户管理
+
+### 2. Leader 管理与 Discovery
+
+- 支持手动添加、编辑、删除 Leader
+- 支持查看 Leader 详情、余额、持仓和关联统计
+- 支持按 Leader 跳转查看关联的跟单配置和回测任务
+- 已接入 Leader Discovery 能力：
+  - 扫描近期活跃 Trader
+  - 推荐候选 Leader
+  - 按市场反查活跃 Trader
+- 已具备候选池运营能力：
+  - 收藏
+  - 黑名单
+  - 标签
+  - 备注
+  - 批量标注
+  - 评分历史
+  - activity 历史事件沉淀
+
+### 3. 跟单模板与跟单配置
+
+- 支持模板化管理跟单参数
+- 支持账户、Leader、模板三者组合为独立跟单关系
+- 支持启用、停用、编辑、删除跟单配置
+- 支持以下下单模式：
+  - `RATIO`
+  - `FIXED`
+  - `ADAPTIVE`
+- 支持倍率模式：
+  - `NONE`
+  - `SINGLE`
+  - `TIERED`
+- 支持风险控制与限制项，包括但不限于：
+  - 最大单笔金额
+  - 最小单笔金额
+  - 最大日亏损
+  - 最大日交易量
+  - 最大订单数
+  - 价格容忍度
+  - 市场截止时间限制
+  - 关键字过滤
+  - 是否跟卖
+- 支持小额订单聚合：
+  - BUY / SELL 双链路
+  - 聚合窗口释放
+  - 阈值释放
+  - `leaderTradeId` 去重
+  - 配置停用/删除后的缓冲清理
+
+### 4. 实盘监听、执行与可观测性
+
+- 采用双路监听架构，而不是单一轮询：
+  - Polymarket `activity` WebSocket
+  - Polygon on-chain WebSocket 日志监听
+- 两路信号统一汇总到主执行链路处理
+- 已接入执行前诊断：
+  - 私钥
+  - 地址
+  - 代理钱包关系
+  - API 凭证
+  - allowance
+  - 签名类型
+- 已接入执行事件体系：
+  - 执行阶段
+  - 决策结果
+  - 过滤/跳过原因
+  - monitor 失败原因
+  - 结构化 `detailJson`
+- 已接入链路延迟埋点：
+  - `leaderTradeTimestamp`
+  - `sourceReceivedAt`
+  - `processTradeStartedAt`
+  - `orderCreateRequestedAt`
+  - `orderCreateCompletedAt`
+- `Activity WS` 已具备静默超时自愈与自动重连能力
+
+### 5. 订单、仓位与执行结果查看
+
+- 跟单订单支持统一查看：
+  - 买入订单
+  - 卖出订单
+  - 匹配关系
+  - 已过滤订单
+  - 执行事件
+- 支持按账户、Leader、状态、时间等维度筛选
+- 仓位页面完全依赖 WebSocket 推送：
+  - 首次连接接收全量仓位
+  - 后续接收增量更新
+- 支持仓位卖出：
+  - 市价
+  - 限价
+- 支持批量赎回已结算仓位
+- 支持查看可赎回仓位汇总
+
+### 6. 统计与运营分析
+
+- 提供全局统计
+- 提供 Leader 统计
+- 提供分类统计
+- 提供单个跟单关系的详细统计
+- 支持查看收益、胜率、订单数、持仓等关键指标
+
+### 7. 回测、Compare 与 Audit
+
+- 支持创建回测任务
+- 支持查看回测任务列表、详情、交易记录、资金曲线
+- 支持对同一 Leader 进行多任务对比
+- 支持回测审计摘要
+- 支持审计事件分页查询
+- 支持按阶段、事件类型、决策结果查看 why-chain
+- 支持从回测配置直接创建跟单配置
+- 支持停止、删除、重试、按当前配置重新测试
+
+### 8. 加密尾盘策略
+
+PolyHermes 当前除了 Leader 跟单，还内置一套独立的加密尾盘策略能力：
+
+- 支持 `BTC / ETH / SOL / XRP` 的 Up/Down 周期市场
+- 支持 5 分钟与 15 分钟周期
+- 支持按时间窗口触发
+- 支持价格区间过滤
+- 支持投入方式：
+  - 比例
+  - 固定金额
+- 支持价差条件：
+  - 无
+  - 固定价差
+  - 自动价差
+- 支持最小/最大价差方向配置
+- 支持触发记录查询
+- 支持实时监控页
+- 自动依赖系统级自动赎回能力与 Builder API
+- 运行前会结合健康检查判断币安 API / WebSocket 可用性
+
+### 9. 系统管理与运维能力
+
+系统设置页当前不是单一“参数页”，而是一个运维入口，包含：
+
+- Builder API Key 配置
+- 自动赎回开关
+- Telegram 消息通知配置
+- 代理配置
+- 在线更新
+- 语言框架入口
+
+已接入的系统能力包括：
+
+#### 代理配置
+
+- 支持通过 Web UI 配置并即时生效
+- 支持协议：
+  - `HTTP`
+  - `HTTPS`
+  - `SOCKS5`
+- 支持：
+  - 主机 / IP
+  - 端口
+  - 用户名
+  - 密码
+  - 启用 / 关闭
+- 支持代理连通性检查
+- 配置变更后自动刷新运行态代理
+- 配置变更后自动触发相关 WebSocket 重连
+
+#### 统一启动前健康检查
+
+- 统一检查外部 API、WebSocket 链路、Builder、跟单账户执行前状态
+- 支持显示阻断项、告警项、异常账户、修复建议
+- 已成为第二阶段的主诊断入口
+
+#### RPC 节点管理
+
+- 支持添加、删除、启用、禁用 RPC 节点
+- 支持优先级排序
+- 支持健康检查与响应时间记录
+- 支持常见提供商快捷配置：
+  - Alchemy
+  - Infura
+  - QuickNode
+  - Chainstack
+  - GetBlock
+  - Custom
+
+#### 通知
+
+- 当前已接入 Telegram 通知配置
+- 支持新增、编辑、启停、删除、测试发送
+
+#### 公告与版本更新
+
+- 首页提供公告中心
+- 支持读取公告详情与 Markdown 内容展示
+- 支持在线检查新版本
+- 支持在线更新系统版本
+- 前端可显示当前版本和更新状态
+
+---
+
+## 界面预览
+
+### 桌面端
+
 <div align="center">
   <table>
     <tr>
@@ -44,7 +282,8 @@
   </table>
 </div>
 
-#### 📱 移动端
+### 移动端
+
 <div align="center">
   <table>
     <tr>
@@ -66,229 +305,81 @@
   </table>
 </div>
 
-### ✨ 核心功能
+---
 
-#### 🔐 账户管理
-- **多账户支持**：通过私钥导入多个钱包账户，统一管理
-- **安全存储**：私钥和 API 凭证加密存储，确保数据安全
-- **账户信息**：查看账户余额、持仓、交易记录等详细信息
-- **账户编辑**：支持修改账户名称、设置默认账户等
+## 技术亮点
 
-#### 👥 Leader 管理
-- **添加 Leader**：添加被跟单者（Leader）的钱包地址
-- **分类筛选**：支持按分类筛选（sports/crypto）
-- **Leader 信息**：查看 Leader 的交易历史、统计信息
-- **备注管理**：为 Leader 添加备注，方便识别和管理
+### 架构
 
-#### 📊 跟单模板
-- **灵活配置**：创建跟单模板，配置跟单参数
-- **跟单方式**：支持比例跟单和固定金额跟单
-- **风险控制**：配置每日亏损限制、订单数限制、价格容忍度等
-- **模板复用**：一个模板可以用于多个跟单关系
+- 后端：Spring Boot 3 + Kotlin + JPA + Flyway + MySQL
+- 前端：React 18 + TypeScript + Vite + Ant Design
+- 通信：REST + WebSocket
+- HTTP 客户端：Retrofit + OkHttp
 
-#### 🔄 跟单配置
-- **关系管理**：将账户、模板和 Leader 关联，创建跟单关系
-- **启用/禁用**：灵活控制跟单关系的启用状态
-- **自动跟单**：实时监控 Leader 交易，自动复制订单（支持买入和卖出）
-- **订单跟踪**：完整的订单生命周期跟踪，包括买入、卖出和匹配记录
+### 工程特性
 
-#### 📈 订单管理
-- **买入订单**：查看所有买入订单的详细信息
-- **卖出订单**：查看所有卖出订单的详细信息
-- **匹配订单**：查看已匹配的订单记录
-- **订单筛选**：支持按账户、Leader、时间范围等条件筛选
-
-#### 💼 仓位管理
-- **实时持仓**：实时查看和管理所有账户的持仓
-- **仓位推送**：通过 WebSocket 实时推送仓位变化
-- **卖出仓位**：支持市价和限价卖出仓位
-- **赎回仓位**：支持批量赎回已结算的仓位
-
-#### 📊 统计分析
-- **全局统计**：查看所有跟单关系的汇总统计
-- **Leader 统计**：查看特定 Leader 的统计信息
-- **分类统计**：按分类（sports/crypto）查看统计
-- **跟单关系统计**：查看单个跟单关系的详细统计
-- **时间筛选**：支持按时间范围筛选统计数据
-
-#### ⚙️ 系统管理
-- **代理配置**：通过 Web UI 配置 HTTP 代理，无需修改环境变量
-- **API 健康检查**：实时监控 Polymarket API 的健康状态
-- **用户管理**：管理系统用户，支持添加、编辑、删除用户
-- **公告管理**：查看系统公告和更新信息
-- **动态更新**：支持在线更新系统版本，无需重新部署容器
-
-### 🚀 技术特性
-
-- **WebSocket 实时推送**：订单和仓位数据实时推送，无需手动刷新
-- **安全存储**：私钥和 API 凭证使用 AES 加密存储
-- **响应式设计**：完美支持移动端和桌面端，提供一致的用户体验
-- **高性能**：异步处理、并发优化，支持大量订单处理
-- **风险控制**：每日亏损限制、订单数限制、价格容忍度等多重风险控制机制
-- **语言策略**：前端界面当前固定为简体中文（`zh-CN`）
-- **版本管理**：自动版本号显示和管理，支持 GitHub Releases 自动构建
-
-### 🏗️ 技术栈
-
-#### 后端
-- **框架**: Spring Boot 3.2.0
-- **语言**: Kotlin 1.9.20
-- **数据库**: MySQL 8.2.0
-- **ORM**: Spring Data JPA
-- **数据库迁移**: Flyway
-- **HTTP 客户端**: Retrofit 2.9.0 + OkHttp 4.12.0
-- **WebSocket**: Spring WebSocket
-
-#### 前端
-- **框架**: React 18 + TypeScript
-- **构建工具**: Vite
-- **UI 库**: Ant Design 5.12.0
-- **HTTP 客户端**: axios
-- **状态管理**: Zustand
-- **路由**: React Router 6
-- **以太坊库**: ethers.js 6.9.0
-- **文案管理**: react-i18next（当前仅启用 `zh-CN`）
+- 实盘执行、回测评估、系统运维在同一产品内闭环
+- 双路监听替代单一 polling
+- 执行事件与审计链可用于定位“为什么没下单 / 为什么下单”
+- 支持多账户、多 Leader、多配置、多策略并存
+- 敏感数据加密存储
+- 桌面端与移动端统一支持
+- 前端当前默认以简体中文为主界面
 
 ---
 
-## 第二部分：如何部署
+## 部署方式
 
-### 🚀 快速部署
+### 一体化部署（推荐）
 
-#### 一体化部署（推荐）
+推荐使用 Docker 一体化部署，前后端一起运行。
 
-将前后端一起部署到一个 Docker 容器中，使用 Nginx 提供前端静态文件并代理后端 API。
+前置要求：
 
-**前置要求**：
 - Docker 20.10+
 - Docker Compose 2.0+
 
-**部署步骤**：
+### 一键安装
 
-#### ⚡ 一键安装（最快，推荐新用户）
+使用 `curl`：
 
-**使用 curl（推荐）：**
 ```bash
 mkdir -p ~/polyhermes && cd ~/polyhermes && curl -fsSL https://raw.githubusercontent.com/WrBug/PolyHermes/main/deploy-interactive.sh -o deploy.sh && chmod +x deploy.sh && ./deploy.sh
 ```
 
-**使用 wget：**
+使用 `wget`：
+
 ```bash
 mkdir -p ~/polyhermes && cd ~/polyhermes && wget -O deploy.sh https://raw.githubusercontent.com/WrBug/PolyHermes/main/deploy-interactive.sh && chmod +x deploy.sh && ./deploy.sh
 ```
 
-这个命令会自动：
-- 📁 创建专用工作目录 `~/polyhermes`
-- ✅ 自动检查 Docker 环境
-- ⚙️ 交互式配置所有参数（支持回车使用默认值）
-- 🔐 自动生成安全的随机密钥
-- 🚀 自动下载最新镜像并部署
+这个脚本会自动：
 
----
+- 创建工作目录
+- 检查 Docker 环境
+- 交互式生成配置
+- 生成随机密钥
+- 拉取或构建镜像并启动服务
 
-#### 📋 其他部署方式
-
-1. **使用 Docker Hub 镜像（推荐，生产环境首选）**
-
-**方式 1：独立部署（无需 clone 代码，推荐）**
-
-适用于生产环境，无需下载项目代码，只需两个文件即可部署：
+### 使用 Docker Hub 镜像
 
 ```bash
-# 1. 创建部署目录
 mkdir polyhermes && cd polyhermes
-
-# 2. 下载生产环境配置文件
-# 从 GitHub 下载 docker-compose.prod.yml 和 docker-compose.prod.env.example
 curl -O https://raw.githubusercontent.com/WrBug/PolyHermes/main/docker-compose.prod.yml
 curl -O https://raw.githubusercontent.com/WrBug/PolyHermes/main/docker-compose.prod.env.example
-
-# 3. 创建配置文件
 cp docker-compose.prod.env.example .env
-
-# 4. 编辑 .env 文件，修改以下必需配置：
-#    - DB_PASSWORD: 数据库密码
-#    - JWT_SECRET: 使用 openssl rand -hex 64 生成
-#    - ADMIN_RESET_PASSWORD_KEY: 使用 openssl rand -hex 32 生成
-
-# 5. 启动服务
 docker-compose -f docker-compose.prod.yml up -d
-
-# 6. 查看日志
-docker-compose -f docker-compose.prod.yml logs -f
-
-# 7. 停止服务
-docker-compose -f docker-compose.prod.yml down
 ```
 
-**方式 2：使用部署脚本（需要 clone 代码）**
+### 本地构建部署
 
 ```bash
-# 如果已经 clone 了代码
-./deploy.sh --use-docker-hub
-```
-
-**方式 3：修改现有 docker-compose.yml**
-
-```bash
-# 1. 修改 docker-compose.yml，取消注释：
-#    image: wrbug/polyhermes:latest
-#    并注释掉 build 部分
-# 2. 创建 .env 文件（见下方）
-# 3. 启动服务
-docker-compose up -d
-```
-
-**优势**：
-- ✅ 无需本地构建，快速部署
-- ✅ 无需 clone 代码，只需配置文件即可部署
-- ✅ 使用官方构建的镜像，包含正确的版本号
-- ✅ 支持多架构（amd64、arm64），自动选择匹配的架构
-- ✅ 生产环境推荐方式
-
-**拉取特定版本**：
-
-```bash
-# 修改 docker-compose.prod.yml 中的镜像标签
-# image: wrbug/polyhermes:v1.0.0
-```
-
-**更新 Docker 版本**：
-
-```bash
-# 1. 停止当前容器
-docker-compose -f docker-compose.prod.yml down
-
-# 2. 拉取最新镜像
-docker pull wrbug/polyhermes:latest
-
-# 3. 重新启动服务
-docker-compose -f docker-compose.prod.yml up -d
-
-# 或更新到特定版本（例如 v1.0.1）
-# 修改 docker-compose.prod.yml 中的镜像标签为: image: wrbug/polyhermes:v1.0.1
-# 然后执行: docker-compose -f docker-compose.prod.yml up -d
-```
-
-详细更新说明请参考：[部署文档 - 更新 Docker 版本](docs/zh/DEPLOYMENT.md#更新-docker-版本)
-
-2. **本地构建部署（开发环境）**
-
-```bash
-# 使用部署脚本
 ./deploy.sh
 ```
 
-脚本会自动：
-- 检查 Docker 环境
-- 创建 `.env` 配置文件（如果不存在）
-- 构建 Docker 镜像（包含前后端）
-- 启动服务（应用 + MySQL）
-
-3. **手动部署**
+### 手动部署
 
 ```bash
-# 创建 .env 文件
 cat > .env <<EOF
 DB_URL=jdbc:mysql://mysql:3306/polyhermes?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowPublicKeyRetrieval=true
 DB_USERNAME=root
@@ -299,162 +390,101 @@ JWT_SECRET=your-jwt-secret-key-change-in-production
 ADMIN_RESET_PASSWORD_KEY=your-admin-reset-key-change-in-production
 EOF
 
-# 构建并启动
 docker-compose build
 docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-
-# 停止服务
-docker-compose down
 ```
 
-**访问应用**：
-- 前端和后端统一访问：`http://localhost:80`
-- Nginx 自动处理：
-  - `/api/*` → 后端 API（`localhost:8000`）
-  - `/ws` → 后端 WebSocket（`localhost:8000`）
-  - 其他路径 → 前端静态文件
+访问方式：
 
-**使用外部 Nginx 反向代理（生产环境推荐）**：
+- 统一入口：`http://localhost:80`
+- `/api/*` 自动代理到后端
+- `/ws` 自动代理到 WebSocket
 
-在生产环境中，建议在 Docker 容器外部部署 Nginx 作为反向代理，用于 SSL/TLS 终止、域名绑定等。
+更多部署细节见：
 
-详细配置请参考：[部署文档 - Nginx 反向代理](docs/zh/DEPLOYMENT.md#使用外部-nginx-反向代理生产环境推荐)
+- [部署文档](docs/zh/DEPLOYMENT.md)
 
-### 📦 分别部署
+---
 
-#### 后端部署
+## 环境配置
 
-**Java 直接部署**：
-
-```bash
-cd backend
-./deploy.sh java
-```
-
-**Docker 部署**：
-
-```bash
-cd backend
-./deploy.sh docker
-```
-
-#### 前端部署
-
-```bash
-cd frontend
-# 使用默认后端地址（相对路径）
-./build.sh
-
-# 或指定自定义后端地址（跨域场景）
-./build.sh --api-url http://your-backend-server.com:8000
-```
-
-### ⚙️ 环境配置
-
-#### 必需的环境变量
+### 必需环境变量
 
 | 变量名 | 说明 | 默认值 |
-|--------|------|--------|
+| --- | --- | --- |
 | `DB_USERNAME` | 数据库用户名 | `root` |
 | `DB_PASSWORD` | 数据库密码 | - |
-| `SERVER_PORT` | 后端服务端口 | `8000` |
+| `SERVER_PORT` | 后端端口 | `8000` |
 | `JWT_SECRET` | JWT 密钥 | - |
-| `ADMIN_RESET_PASSWORD_KEY` | 管理员密码重置密钥 | - |
-| `CRYPTO_SECRET_KEY` | 加密密钥（用于加密存储私钥和 API Key） | - |
+| `ADMIN_RESET_PASSWORD_KEY` | 管理员重置密码密钥 | - |
+| `CRYPTO_SECRET_KEY` | 敏感数据加密密钥 | - |
 
-#### 代理配置
+### 运行配置说明
 
-系统支持通过 Web UI 配置 HTTP 代理，无需修改环境变量：
+#### 1. Builder API Key
 
-1. 进入"系统管理"页面
-2. 配置代理主机、端口、用户名和密码
-3. 启用代理并测试连接
-4. 配置实时生效，无需重启服务
+用于系统级 Gasless 操作，例如：
 
-### 📚 详细部署文档
+- 创建订单
+- 赎回仓位
+- 自动赎回
+- 加密尾盘策略相关执行
 
-更多部署选项和详细说明，请参考：[部署文档](docs/zh/DEPLOYMENT.md)
+#### 2. 自动赎回
 
-包括：
-- 一体化部署详细步骤
-- 后端部署（Java/Docker）
-- 前端部署
-- 环境配置说明
-- 常见问题解答
+- 可在系统设置中开启
+- 加密尾盘策略依赖该能力
 
-### 🔄 版本管理
+#### 3. 代理
 
-项目支持自动版本号管理和 Docker 镜像构建：
+当前支持通过 Web UI 配置：
 
-- **自动构建**：通过 GitHub Releases 页面创建 release 时自动构建 Docker 镜像
-- **自动删除**：删除 release 时自动删除对应的 Docker 镜像标签
-- **版本号显示**：前端自动显示当前版本号
+- `HTTP`
+- `HTTPS`
+- `SOCKS5`
 
-详细说明请参考：[版本号管理文档](docs/zh/VERSION_MANAGEMENT.md)
+配置后即时生效，不需要重启服务。
 
----
+#### 4. RPC 节点
 
-## 第三部分：开发文档
-
-详细的开发指南、API 接口文档、代码规范等，请参考：
-
-### 📖 [开发文档](docs/zh/DEVELOPMENT.md)
-
-开发文档包含以下内容：
-
-- **项目结构**：详细的目录结构说明
-- **开发环境配置**：如何搭建开发环境
-- **代码规范**：后端和前端开发规范
-- **API 接口文档**：所有 API 接口的详细说明
-- **数据库设计**：数据库表结构说明
-- **前端开发指南**：前端开发最佳实践
-- **后端开发指南**：后端开发最佳实践
-- **常见问题**：开发过程中常见问题的解答
-
-### 📚 其他文档
-
-- [部署文档](docs/zh/DEPLOYMENT.md) - 详细的部署指南（Java/Docker）
-- [版本号管理文档](docs/zh/VERSION_MANAGEMENT.md) - 版本号管理和自动构建
-- [开发文档](docs/zh/DEVELOPMENT.md) - 开发指南
-- [跟单系统需求文档](docs/zh/copy-trading-requirements.md) - 后端 API 接口文档
-- [前端需求文档](docs/zh/copy-trading-frontend-requirements.md) - 前端功能文档
-- [动态更新文档](docs/zh/DYNAMIC_UPDATE.md) - 动态更新功能说明
-
-### 🤝 贡献指南
-
-欢迎贡献代码！请遵循以下步骤：
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 遵循代码规范（参考开发文档）
-4. 提交更改 (`git commit -m 'feat: Add some AmazingFeature'`)
-5. 推送到分支 (`git push origin feature/AmazingFeature`)
-6. 开启 Pull Request
-
-### 📝 开发规范
-
-- **后端**: 遵循 Kotlin 编码规范，使用 Spring Boot 最佳实践
-- **前端**: 遵循 TypeScript 和 React 最佳实践
-- **提交信息**: 使用清晰的提交信息，遵循 [Conventional Commits](https://www.conventionalcommits.org/)
-
-详细开发规范请参考：
-- [后端开发规范](.cursor/rules/backend.mdc)
-- [前端开发规范](.cursor/rules/frontend.mdc)
+建议为生产环境配置稳定的 Polygon RPC，并定期做健康检查。
 
 ---
 
-## ⚠️ 免责声明
+## 文档入口
 
-本软件仅供学习和研究使用。使用本软件进行交易的风险由用户自行承担。作者不对任何交易损失负责。
+### 中文文档
 
-## 📄 许可证
+- [部署文档](docs/zh/DEPLOYMENT.md)
+- [开发文档](docs/zh/DEVELOPMENT.md)
+- [动态更新文档](docs/zh/DYNAMIC_UPDATE.md)
+- [版本管理文档](docs/zh/VERSION_MANAGEMENT.md)
+- [跟单系统需求文档](docs/zh/copy-trading-requirements.md)
+- [前端需求文档](docs/zh/copy-trading-frontend-requirements.md)
 
-本项目采用 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+### 当前状态文档
 
-## 🔗 相关链接
+如果你关心当前迁移与增强状态，可以继续看：
+
+- [CONTEXT.md](../CONTEXT.md)
+- [MIGRATION_PLAN.md](../MIGRATION_PLAN.md)
+
+---
+
+## 免责声明
+
+本软件仅供学习、研究和系统开发使用。  
+任何实盘交易风险、策略风险、代理与网络风险、第三方服务风险均由使用者自行承担。
+
+---
+
+## 许可证
+
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE)。
+
+---
+
+## 相关链接
 
 - [GitHub 仓库](https://github.com/WrBug/PolyHermes)
 - [Twitter](https://x.com/polyhermes)
@@ -462,10 +492,6 @@ cd frontend
 - [Polymarket 官网](https://polymarket.com)
 - [Polymarket API 文档](https://docs.polymarket.com)
 
-## 🙏 致谢
-
-感谢所有为本项目做出贡献的开发者和用户！
-
 ---
 
-**⭐ 如果这个项目对你有帮助，请给个 Star！**
+如果这个项目对你有帮助，欢迎 Star。
