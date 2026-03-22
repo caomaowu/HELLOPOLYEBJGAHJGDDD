@@ -27,6 +27,7 @@ import {
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import type { ReactNode } from 'react'
+import { isSystemUpdateEnabled } from '../config/runtime'
 import { removeToken, getVersionText, getVersionInfo } from '../utils'
 import { wsManager } from '../services/websocket'
 import { apiClient } from '../services/api'
@@ -64,6 +65,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [hasUpdate, setHasUpdate] = useState(false)
+  const systemUpdateEnabled = isSystemUpdateEnabled()
   
   // 获取当前选中的菜单项
   const getSelectedKeys = (): string[] => {
@@ -106,6 +108,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // 检查是否有新版本
   useEffect(() => {
+    if (!systemUpdateEnabled) {
+      setHasUpdate(false)
+      return
+    }
+
     const checkUpdate = async () => {
       try {
         const response = await apiClient.get('/update/check')
@@ -125,7 +132,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     const interval = setInterval(checkUpdate, 5 * 60 * 1000)
     
     return () => clearInterval(interval)
-  }, [])
+  }, [systemUpdateEnabled])
+
+  const versionTagInteractive = systemUpdateEnabled && hasUpdate
+  const versionTagColor = !systemUpdateEnabled ? '#8c8c8c' : hasUpdate ? '#faad14' : '#52c41a'
+  const versionTagTitle = !systemUpdateEnabled
+    ? t('systemUpdate.versionTooltipDisabled')
+    : hasUpdate
+      ? t('systemUpdate.versionTooltipNew')
+      : t('systemUpdate.versionTooltipLatest')
   
   const menuItems: MenuProps['items'] = [
     {
@@ -287,28 +302,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               darkMode={true}
             />
             <Tag
-              color={hasUpdate ? 'warning' : 'success'}
+              color={!systemUpdateEnabled ? 'default' : hasUpdate ? 'warning' : 'success'}
               onClick={() => {
-                if (hasUpdate) {
+                if (versionTagInteractive) {
                   navigate('/system-settings')
                 }
               }}
               bordered={false}
               style={{
-                cursor: hasUpdate ? 'pointer' : 'default',
+                cursor: versionTagInteractive ? 'pointer' : 'default',
                 fontSize: '8px',
                 padding: '1px 6px',
                 margin: 0,
                 background: 'transparent',
-                border: `1px solid ${hasUpdate ? '#faad14' : '#52c41a'}`,
+                border: `1px solid ${versionTagColor}`,
                 borderRadius: '4px',
-                color: hasUpdate ? '#faad14' : '#52c41a',
+                color: versionTagColor,
                 lineHeight: '1.4',
                 display: 'inline-flex',
                 alignItems: 'center',
                 verticalAlign: 'middle'
               }}
-              title={hasUpdate ? t('systemUpdate.versionTooltipNew') : t('systemUpdate.versionTooltipLatest')}
+              title={versionTagTitle}
             >
               {getVersionInfo().gitTag || `v${getVersionText()}`}
             </Tag>
@@ -409,28 +424,28 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           }}>
             <span>PolyHermes</span>
             <Tag
-              color={hasUpdate ? 'warning' : 'success'}
+              color={!systemUpdateEnabled ? 'default' : hasUpdate ? 'warning' : 'success'}
               onClick={() => {
-                if (hasUpdate) {
+                if (versionTagInteractive) {
                   navigate('/system-settings')
                 }
               }}
               bordered={false}
               style={{
-                cursor: hasUpdate ? 'pointer' : 'default',
+                cursor: versionTagInteractive ? 'pointer' : 'default',
                 fontSize: '8px',
                 padding: '1px 6px',
                 margin: 0,
                 background: 'transparent',
-                border: `1px solid ${hasUpdate ? '#faad14' : '#52c41a'}`,
+                border: `1px solid ${versionTagColor}`,
                 borderRadius: '4px',
-                color: hasUpdate ? '#faad14' : '#52c41a',
+                color: versionTagColor,
                 lineHeight: '1.4',
                 display: 'inline-flex',
                 alignItems: 'center',
                 verticalAlign: 'middle'
               }}
-              title={hasUpdate ? t('systemUpdate.versionTooltipNew') : t('systemUpdate.versionTooltipLatest')}
+              title={versionTagTitle}
             >
               {getVersionInfo().gitTag || `v${getVersionText()}`}
             </Tag>

@@ -469,6 +469,9 @@
     "usage4": "如果更新失败，系统会自动回滚到当前版本",
     "versionTooltipNew": "有新版本可用，点击前往系统更新",
     "versionTooltipLatest": "当前已是最新版本",
+    "versionTooltipDisabled": "当前部署未启用在线更新",
+    "disabledTitle": "在线更新未启用",
+    "disabledDescription": "当前运行方式未启动更新服务。非 Docker 部署建议通过构建前端产物、重新发布后端 JAR 和重启进程来升级系统。",
     "prerelease": "预发布"
   },
   "builderApiKey": {

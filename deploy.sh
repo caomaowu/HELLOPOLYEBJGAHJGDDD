@@ -1,239 +1,140 @@
 #!/bin/bash
 
-# PolyHermes 一体化部署脚本
-# 将前后端一起部署到一个 Docker 容器中
+# PolyHermes 非 Docker 部署产物打包脚本
 
-set -e
+set -euo pipefail
 
-# 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# 打印信息
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$PROJECT_ROOT/backend"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
+OUTPUT_DIR="$PROJECT_ROOT/deploy/package"
+VERSION="${VERSION:-$(git -C "$PROJECT_ROOT" describe --tags --always 2>/dev/null || echo dev)}"
+
 info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+    echo -e "${CYAN}[INFO]${NC} $1"
+}
+
+ok() {
+    echo -e "${GREEN}[OK]${NC} $1"
 }
 
 warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
-error() {
+fail() {
     echo -e "${RED}[ERROR]${NC} $1"
+    exit 1
 }
 
-# 检查 Docker 环境
-check_docker() {
-    if ! command -v docker &> /dev/null; then
-        error "Docker 未安装，请先安装 Docker"
-        exit 1
+check_requirements() {
+    command -v java >/dev/null 2>&1 || fail "未找到 Java，请安装 JDK 17+"
+    command -v node >/dev/null 2>&1 || fail "未找到 Node.js，请安装 Node.js 18+"
+    ok "运行环境检查通过"
+}
+
+build_backend() {
+    info "构建后端 JAR"
+    (cd "$BACKEND_DIR" && ./gradlew clean bootJar)
+    ok "后端构建完成"
+}
+
+build_frontend() {
+    info "构建前端静态资源"
+    if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
+        (cd "$FRONTEND_DIR" && npm install)
     fi
-    
-    if ! command -v docker-compose &> /dev/null; then
-        error "Docker Compose 未安装，请先安装 Docker Compose"
-        exit 1
-    fi
-    
-    info "Docker 环境检查通过"
+    (cd "$FRONTEND_DIR" && npm run build)
+    ok "前端构建完成"
 }
 
-# 生成随机字符串
-generate_random_string() {
-    local length=${1:-32}
-    openssl rand -hex $length 2>/dev/null || \
-    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w $length | head -n 1
-}
+stage_artifacts() {
+    info "整理部署产物到 $OUTPUT_DIR"
+    rm -rf "$OUTPUT_DIR"
+    mkdir -p "$OUTPUT_DIR/backend" "$OUTPUT_DIR/frontend"
 
-# 创建 .env 文件（如果不存在）
-create_env_file() {
-    if [ ! -f ".env" ]; then
-        warn ".env 文件不存在，创建示例文件..."
-        
-        # 生成随机值
-        DB_PASSWORD=$(generate_random_string 32)
-        JWT_SECRET=$(generate_random_string 64)
-        ADMIN_RESET_KEY=$(generate_random_string 32)
-        
-        cat > .env <<EOF
-# 数据库配置
-DB_URL=jdbc:mysql://mysql:3306/polyhermes?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowPublicKeyRetrieval=true
+    local jar_path
+    jar_path="$(find "$BACKEND_DIR/build/libs" -maxdepth 1 -type f -name '*.jar' | head -n 1)"
+    [ -n "$jar_path" ] || fail "未找到后端 JAR 产物"
+
+    cp "$jar_path" "$OUTPUT_DIR/backend/app.jar"
+    cp "$PROJECT_ROOT/docs/zh/nginx-nodocker.conf" "$OUTPUT_DIR/nginx.conf"
+    cp -R "$FRONTEND_DIR/dist" "$OUTPUT_DIR/frontend/dist"
+
+    cat > "$OUTPUT_DIR/backend/.env.example" <<EOF
+DB_URL=jdbc:mysql://127.0.0.1:3306/polyhermes?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowPublicKeyRetrieval=true
 DB_USERNAME=root
-DB_PASSWORD=${DB_PASSWORD}
-
-# Spring Profile
+DB_PASSWORD=your_password_here
+SERVER_PORT=8000
 SPRING_PROFILES_ACTIVE=prod
-
-# 服务器端口（对外暴露的端口）
-SERVER_PORT=80
-
-# MySQL 端口（可选，用于外部连接，默认 3307 避免与本地 MySQL 冲突）
-MYSQL_PORT=3307
-
-# JWT 密钥（已自动生成随机值，生产环境建议修改）
-JWT_SECRET=${JWT_SECRET}
-
-# 管理员密码重置密钥（已自动生成随机值，生产环境建议修改）
-ADMIN_RESET_PASSWORD_KEY=${ADMIN_RESET_KEY}
-
-# 日志级别配置（可选，默认值：root=WARN, app=INFO）
-# 可选值：TRACE, DEBUG, INFO, WARN, ERROR, OFF
-# LOG_LEVEL_ROOT=WARN
-# LOG_LEVEL_APP=INFO
+JWT_SECRET=replace-with-random-secret
+ADMIN_RESET_PASSWORD_KEY=replace-with-random-secret
+ENCRYPTION_KEY=replace-with-random-secret
+LOG_LEVEL_ROOT=WARN
+LOG_LEVEL_APP=INFO
 EOF
-        info ".env 文件已创建，已自动生成随机密码和密钥"
-        warn "生产环境建议修改以下参数："
-        warn "  - DB_PASSWORD: 数据库密码（当前: ${DB_PASSWORD:0:8}...）"
-        warn "  - JWT_SECRET: JWT 密钥（当前: ${JWT_SECRET:0:8}...）"
-        warn "  - ADMIN_RESET_PASSWORD_KEY: 管理员密码重置密钥（当前: ${ADMIN_RESET_KEY:0:8}...）"
-        exit 1
-    fi
+
+    cat > "$OUTPUT_DIR/backend/start.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+exec java -Xms512m -Xmx1024m -XX:+UseG1GC -jar app.jar
+EOF
+    chmod +x "$OUTPUT_DIR/backend/start.sh"
+
+    cat > "$OUTPUT_DIR/backend/polyhermes-backend.service.example" <<'EOF'
+[Unit]
+Description=PolyHermes Backend
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=polyhermes
+WorkingDirectory=/opt/polyhermes/backend
+EnvironmentFile=/opt/polyhermes/backend/.env
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -XX:+UseG1GC -jar /opt/polyhermes/backend/app.jar
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    cat > "$OUTPUT_DIR/README.txt" <<EOF
+PolyHermes 非 Docker 部署产物
+版本: $VERSION
+
+目录说明:
+- backend/app.jar                 后端可执行 JAR
+- backend/.env.example           后端环境变量示例
+- backend/start.sh               后端启动脚本
+- backend/polyhermes-backend.service.example  systemd 示例
+- frontend/dist/                 前端静态资源
+- nginx.conf                     Nginx 反向代理示例
+
+详细部署说明:
+- docs/zh/NON_DOCKER_DEPLOYMENT.md
+EOF
+
+    ok "部署产物已生成"
 }
 
-# 检查安全配置
-check_security_config() {
-    # 默认值常量
-    DEFAULT_JWT_SECRET="change-me-in-production"
-    DEFAULT_ADMIN_RESET_KEY="change-me-in-production"
-    
-    # 从 .env 文件读取配置（如果存在）
-    local jwt_secret=""
-    local admin_reset_key=""
-    
-    if [ -f ".env" ]; then
-        # 从 .env 文件读取（使用 grep 和 sed 避免 source 可能的问题）
-        jwt_secret=$(grep "^JWT_SECRET=" .env 2>/dev/null | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
-        admin_reset_key=$(grep "^ADMIN_RESET_PASSWORD_KEY=" .env 2>/dev/null | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
-    fi
-    
-    # 如果环境变量已设置，优先使用环境变量
-    if [ -n "$JWT_SECRET" ]; then
-        jwt_secret="$JWT_SECRET"
-    fi
-    if [ -n "$ADMIN_RESET_PASSWORD_KEY" ]; then
-        admin_reset_key="$ADMIN_RESET_PASSWORD_KEY"
-    fi
-    
-    local errors=0
-    
-    # 检查 JWT_SECRET
-    if [ -z "$jwt_secret" ] || [ "$jwt_secret" = "$DEFAULT_JWT_SECRET" ]; then
-        error "JWT_SECRET 不能使用默认值 '${DEFAULT_JWT_SECRET}'"
-        error "请在 .env 文件中设置 JWT_SECRET 为安全的随机字符串"
-        errors=$((errors + 1))
-    fi
-    
-    # 检查 ADMIN_RESET_PASSWORD_KEY
-    if [ -z "$admin_reset_key" ] || [ "$admin_reset_key" = "$DEFAULT_ADMIN_RESET_KEY" ]; then
-        error "ADMIN_RESET_PASSWORD_KEY 不能使用默认值 '${DEFAULT_ADMIN_RESET_KEY}'"
-        error "请在 .env 文件中设置 ADMIN_RESET_PASSWORD_KEY 为安全的随机字符串"
-        errors=$((errors + 1))
-    fi
-    
-    if [ $errors -gt 0 ]; then
-        echo ""
-        error "安全配置检查失败，部署已取消"
-        echo ""
-        info "提示：可以使用以下命令生成随机密钥："
-        info "  openssl rand -hex 32  # 生成 32 字节的随机字符串（用于 ADMIN_RESET_PASSWORD_KEY）"
-        info "  openssl rand -hex 64  # 生成 64 字节的随机字符串（用于 JWT_SECRET）"
-        exit 1
-    fi
-    
-    info "安全配置检查通过"
-}
-
-# 构建并启动
-deploy() {
-    # 检查安全配置
-    check_security_config
-    
-    # 检查是否使用 Docker Hub 镜像
-    USE_DOCKER_HUB="${USE_DOCKER_HUB:-false}"
-    
-    if [ "$USE_DOCKER_HUB" = "true" ]; then
-        info "使用 Docker Hub 镜像（推荐生产环境）..."
-        info "拉取最新镜像..."
-        docker pull wrbug/polyhermes:latest || warn "拉取镜像失败，将使用本地构建"
-        
-        # 修改 docker-compose.yml 使用镜像而不是构建
-        # 注意：这里需要手动修改 docker-compose.yml，或者使用环境变量
-        warn "请确保 docker-compose.yml 中已配置使用 image: wrbug/polyhermes:latest"
-    else
-        # 版本号：优先环境变量 DOCKER_VERSION，其次 .env 中的 DOCKER_VERSION，否则用当前分支名
-        if [ -z "${DOCKER_VERSION}" ] && [ -f ".env" ]; then
-            DOCKER_VERSION=$(grep "^DOCKER_VERSION=" .env 2>/dev/null | cut -d'=' -f2- | sed 's/^["'\'']//;s/["'\'']$//' | tr -d '\r')
-        fi
-        if [ -z "${DOCKER_VERSION}" ]; then
-            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "dev")
-            DOCKER_VERSION=$(echo "$CURRENT_BRANCH" | tr '/' '-')
-        fi
-        export DOCKER_VERSION
-        
-        info "构建 Docker 镜像（本地构建，版本号: ${DOCKER_VERSION}）..."
-        
-        # 创建占位符目录（如果不存在），避免 Dockerfile COPY 失败
-        # 当 BUILD_IN_DOCKER=true 时，backend/build 可能不存在
-        mkdir -p backend/build/libs
-        
-        # 设置构建参数（通过环境变量传递给 docker-compose.yml）
-        export VERSION=${DOCKER_VERSION}
-        export GIT_TAG=${DOCKER_VERSION}
-        export GITHUB_REPO_URL=https://github.com/WrBug/PolyHermes
-        
-        docker-compose build
-    fi
-    
-    info "启动服务..."
-    docker-compose up -d
-    
-    info "等待服务启动..."
-    sleep 5
-    
-    info "检查服务状态..."
-    docker-compose ps
-    
-    info "查看日志: docker-compose logs -f"
-    info "停止服务: docker-compose down"
-}
-
-# 主函数
 main() {
     echo "=========================================="
-    echo "  PolyHermes 一体化部署脚本"
+    echo "  PolyHermes 非 Docker 部署打包"
     echo "=========================================="
-    echo ""
-    
-    # 解析参数
-    if [ "$1" = "--use-docker-hub" ] || [ "$1" = "-d" ]; then
-        export USE_DOCKER_HUB=true
-        info "将使用 Docker Hub 镜像（生产环境推荐）"
-        echo ""
-    fi
-    
-    check_docker
-    create_env_file
-    deploy
-    
-    echo ""
-    info "部署完成！"
-    info "访问地址: http://localhost:${SERVER_PORT:-80}"
-    echo ""
-    if [ "$USE_DOCKER_HUB" != "true" ]; then
-        if [ -z "${DOCKER_VERSION}" ] && [ -f ".env" ]; then
-            DOCKER_VERSION=$(grep "^DOCKER_VERSION=" .env 2>/dev/null | cut -d'=' -f2- | sed 's/^["'\'']//;s/["'\'']$//' | tr -d '\r')
-        fi
-        if [ -z "${DOCKER_VERSION}" ]; then
-            CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "dev")
-            DOCKER_VERSION=$(echo "$CURRENT_BRANCH" | tr '/' '-')
-        fi
-        info "提示：本地构建的版本号: ${DOCKER_VERSION}（可在 .env 或环境变量中设置 DOCKER_VERSION）"
-        info "生产环境推荐使用 Docker Hub 镜像："
-        info "  ./deploy.sh --use-docker-hub"
-        info "  或修改 docker-compose.yml 使用 image: wrbug/polyhermes:latest"
-    fi
+    check_requirements
+    build_backend
+    build_frontend
+    stage_artifacts
+    info "完成。产物目录: $OUTPUT_DIR"
 }
 
 main "$@"
-

@@ -61,7 +61,6 @@ polyhermes/
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Gradle**: 7.5+（或使用 Gradle Wrapper）
-- **Docker**: 20.10+（可选，用于容器化部署）
 
 ### 后端开发环境
 

@@ -106,6 +106,7 @@ SERVER_PORT=$(get_env_value "SERVER_PORT" "8000")
 JWT_SECRET=$(get_env_value "JWT_SECRET" "change-me-in-production")
 VITE_API_URL=$(get_env_value "VITE_API_URL" "http://localhost:8000")
 VITE_WS_URL=$(get_env_value "VITE_WS_URL" "ws://localhost:8000")
+VITE_ENABLE_SYSTEM_UPDATE=$(get_env_value "VITE_ENABLE_SYSTEM_UPDATE" "false")
 
 if [[ -z "$DB_PASSWORD" ]] || [[ "$DB_PASSWORD" == "your_password_here" ]]; then
     print_err "DB_PASSWORD is not set in .env file"
@@ -196,6 +197,7 @@ print_step "6. Creating frontend environment file"
 cat > "$FRONTEND_ENV_FILE" << EOF
 VITE_API_URL=$VITE_API_URL
 VITE_WS_URL=$VITE_WS_URL
+VITE_ENABLE_SYSTEM_UPDATE=$VITE_ENABLE_SYSTEM_UPDATE
 EOF
 print_ok "Frontend environment file created"
 

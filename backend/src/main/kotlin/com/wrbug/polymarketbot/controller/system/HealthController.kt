@@ -8,7 +8,7 @@ import java.util.*
 
 /**
  * 健康检查控制器
- * 用于 Docker 健康检查和监控
+ * 用于运行时监控与探活
  */
 @RestController
 @RequestMapping("/api/system/health")

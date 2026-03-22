@@ -92,6 +92,7 @@ $SERVER_PORT = Get-EnvValue "SERVER_PORT" "8000"
 $JWT_SECRET = Get-EnvValue "JWT_SECRET" "change-me-in-production"
 $VITE_API_URL = Get-EnvValue "VITE_API_URL" "http://localhost:8000"
 $VITE_WS_URL = Get-EnvValue "VITE_WS_URL" "ws://localhost:8000"
+$VITE_ENABLE_SYSTEM_UPDATE = Get-EnvValue "VITE_ENABLE_SYSTEM_UPDATE" "false"
 
 if ([string]::IsNullOrEmpty($DB_PASSWORD) -or $DB_PASSWORD -eq "your_password_here") {
     Write-Err "DB_PASSWORD is not set in .env file"
@@ -193,6 +194,7 @@ Write-Step "6. Creating frontend environment file"
 $frontendEnvContent = @"
 VITE_API_URL=$VITE_API_URL
 VITE_WS_URL=$VITE_WS_URL
+VITE_ENABLE_SYSTEM_UPDATE=$VITE_ENABLE_SYSTEM_UPDATE
 "@
 Set-Content -Path $FrontendEnvFile -Value $frontendEnvContent -NoNewline
 Write-Success "Frontend environment file created"

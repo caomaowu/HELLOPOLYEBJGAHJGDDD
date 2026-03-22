@@ -127,7 +127,6 @@ body:
         **Backend Environment (for backend issues) / 后端环境（后端问题）：**
         - Node.js version: ______ / Node.js 版本：______
         - Database version: ______ / 数据库版本：______
-        - Docker version (if used): ______ / Docker 版本（如果使用）：______
         - Other relevant dependencies: ______ / 其他相关依赖版本：______
     validations:
       required: false

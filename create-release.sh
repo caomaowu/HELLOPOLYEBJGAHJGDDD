@@ -332,11 +332,7 @@ main() {
         success "URL:         $RELEASE_URL"
         success "========================================="
         echo
-        info "GitHub Actions 将自动触发构建流程"
-        
-        if [[ "$PRERELEASE" == "true" ]]; then
-            warn "这是 Pre-release，GitHub Actions 不会发送 Telegram 通知"
-        fi
+        info "Release 已创建，可继续执行 ./deploy.sh 生成非 Docker 部署产物"
     else
         error "GitHub Release 创建失败"
         error "请手动在 GitHub 上创建 Release: https://github.com/WrBug/PolyHermes/releases/new"

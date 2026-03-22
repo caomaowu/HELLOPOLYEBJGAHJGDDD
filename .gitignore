@@ -73,6 +73,7 @@ backend/src/main/resources/application-prod.properties
 # Logs
 logs/
 *.log
+.run/
 
 # OS
 Thumbs.db

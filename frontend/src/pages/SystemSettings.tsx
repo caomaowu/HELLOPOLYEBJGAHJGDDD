@@ -4,6 +4,7 @@ import { SaveOutlined, CheckCircleOutlined, ReloadOutlined, NotificationOutlined
 import { apiService } from '../services/api'
 import { useMediaQuery } from 'react-responsive'
 import { useTranslation } from 'react-i18next'
+import { isSystemUpdateEnabled } from '../config/runtime'
 import type { SystemConfig, BuilderApiKeyUpdateRequest, NotificationConfig, NotificationConfigRequest, NotificationConfigUpdateRequest } from '../types'
 import { TelegramConfigForm } from '../components/notifications'
 import SystemUpdate from './SystemUpdate'
@@ -39,6 +40,7 @@ const PROXY_TYPE_OPTIONS = [
 const SystemSettings: React.FC = () => {
   const { t } = useTranslation()
   const isMobile = useMediaQuery({ maxWidth: 768 })
+  const systemUpdateEnabled = isSystemUpdateEnabled()
 
   // 第一部分：消息推送设置
   const [notificationConfigs, setNotificationConfigs] = useState<NotificationConfig[]>([])
@@ -470,7 +472,17 @@ const SystemSettings: React.FC = () => {
       </div>
 
       {/* 系统更新 */}
-      <SystemUpdate />
+      {systemUpdateEnabled ? (
+        <SystemUpdate />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: '16px' }}
+          message={t('systemUpdate.disabledTitle')}
+          description={t('systemUpdate.disabledDescription')}
+        />
+      )}
 
       {/* 第一部分：消息推送设置 */}
       <Card

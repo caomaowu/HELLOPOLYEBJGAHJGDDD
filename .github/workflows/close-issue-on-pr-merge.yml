@@ -92,7 +92,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 与 docker-build 一致：未配置则跳过
+          # 未配置则跳过通知
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
             echo "⚠️  Telegram Bot Token 或 Chat ID 未配置，跳过通知"
             exit 0
@@ -103,7 +103,7 @@ jobs:
           ISSUE_URL="${{ steps.issue.outputs.url }}"
           PR_URL="${{ github.event.pull_request.html_url }}"
 
-          # 与 docker-build 相同的 HTML 消息格式
+          # 统一的 HTML 消息格式
           MESSAGE="✅ <b>AI 修复的 Issue 已关闭</b>"$'\n'$'\n'"🔢 <b>Issue:</b> #${ISSUE_NUM} ${ISSUE_TITLE}"$'\n'"📎 <a href=\"${ISSUE_URL}\">查看 Issue</a>"$'\n'"🔗 <a href=\"${PR_URL}\">查看 PR</a>"
 
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \

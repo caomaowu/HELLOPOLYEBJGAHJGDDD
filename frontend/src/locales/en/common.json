@@ -469,6 +469,9 @@
     "usage4": "If the update fails, the system will roll back to the current version",
     "versionTooltipNew": "New version available, click to go to System Update",
     "versionTooltipLatest": "You are on the latest version",
+    "versionTooltipDisabled": "Online update is disabled for this deployment",
+    "disabledTitle": "Online Update Disabled",
+    "disabledDescription": "This runtime does not start the update service. For non-Docker deployments, upgrade by rebuilding the frontend, replacing the backend JAR, and restarting the process.",
     "prerelease": "Pre-release"
   },
   "builderApiKey": {
