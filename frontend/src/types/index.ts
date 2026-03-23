@@ -255,6 +255,7 @@ export interface LeaderMarketScanResponse {
   durationMs?: number
   estimated?: boolean
   sources?: string[]
+  sourceBreakdown?: Record<string, number>
   list: LeaderDiscoveredTrader[]
 }
 

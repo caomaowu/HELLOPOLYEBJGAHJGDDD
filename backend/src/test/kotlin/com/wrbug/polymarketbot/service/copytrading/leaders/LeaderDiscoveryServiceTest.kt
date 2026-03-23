@@ -320,6 +320,8 @@ class LeaderDiscoveryServiceTest {
         assertEquals("AGGRESSIVE", result.discoveryMode)
         assertEquals(1, result.expandedMarketCount)
         assertEquals(1, result.expandedTraderCount)
+        assertEquals(1, result.sourceBreakdown["orderbook"])
+        assertEquals(1, result.sourceBreakdown["market-expansion"])
         assertTrue(result.sources.contains("market-expansion"))
         assertTrue(result.list.any { it.address == expandedAddress })
         assertTrue(result.list.first { it.address == expandedAddress }.sourceType?.contains("market-expansion") == true)
@@ -348,6 +350,7 @@ class LeaderDiscoveryServiceTest {
         ).getOrThrow()
 
         assertEquals(1, result.seedAddressCount)
+        assertEquals(1, result.sourceBreakdown["seed"])
         assertTrue(result.sources.contains("seed"))
         assertTrue(result.list.any { it.address == seedAddress })
     }
@@ -430,6 +433,8 @@ class LeaderDiscoveryServiceTest {
         assertEquals(1, result.seedAddressCount)
         assertEquals(1, result.expandedMarketCount)
         assertEquals(1, result.expandedTraderCount)
+        assertEquals(1, result.sourceBreakdown["seed"])
+        assertEquals(1, result.sourceBreakdown["market-expansion"])
         assertEquals(2, result.finalCandidateCount)
         assertEquals(expandedAddress, result.list.first().address)
         assertTrue(result.sources.contains("seed"))
@@ -437,6 +442,55 @@ class LeaderDiscoveryServiceTest {
         assertTrue(seedTrader.sourceType?.contains("seed") == true)
         assertTrue(expandedTrader.sourceType?.contains("market-expansion") == true)
         assertEquals(listOf("market-branch"), expandedTrader.sourceMarketIds)
+    }
+
+    @Test
+    fun `scan markets aggressive mode should report source breakdown counts`() {
+        val orderbookAddress = "0xcdddddddddddddddddddddddddddddddddddddd"
+        val seedAddress = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        val expandedAddress = "0xffffffffffffffffffffffffffffffffffffffff"
+        prepareScanMarketsApis(
+            markets = listOf(market("market-root", listOf("token-root"))),
+            orderbooks = mapOf(
+                "token-root" to success(orderbook(bidOwners = listOf(orderbookAddress), askOwners = emptyList()))
+            ),
+            activityResponses = mapOf(
+                orderbookAddress to success(
+                    listOf(
+                        activity(address = orderbookAddress, marketId = "market-root", index = 1),
+                        activity(address = orderbookAddress, marketId = "market-expand", index = 2)
+                    )
+                ),
+                seedAddress to successfulActivities(seedAddress, "market-seed", 2),
+                expandedAddress to successfulActivities(expandedAddress, "market-expand", 2)
+            ),
+            marketTradeResponses = mapOf(
+                "market-expand" to success(
+                    listOf(
+                        marketTrade(address = orderbookAddress, marketId = "market-expand", index = 1),
+                        marketTrade(address = expandedAddress, marketId = "market-expand", index = 2),
+                        marketTrade(address = expandedAddress, marketId = "market-expand", index = 3)
+                    )
+                )
+            )
+        )
+
+        val result = service.scanMarkets(
+            LeaderMarketScanRequest(
+                mode = "AGGRESSIVE",
+                traderLimit = 10,
+                seedAddresses = listOf(seedAddress),
+                expansionRounds = 1,
+                expansionSeedTraderLimit = 10,
+                expansionMarketLimit = 10,
+                expansionTradeLimitPerMarket = 20
+            )
+        ).getOrThrow()
+
+        val breakdown = result.sourceBreakdown
+        assertEquals(1, breakdown["orderbook"])
+        assertEquals(1, breakdown["seed"])
+        assertEquals(1, breakdown["market-expansion"])
     }
 
     @Test

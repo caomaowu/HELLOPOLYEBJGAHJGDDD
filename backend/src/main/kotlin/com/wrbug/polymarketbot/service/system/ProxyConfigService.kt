@@ -200,35 +200,64 @@ class ProxyConfigService(
             }
 
             val client = clientBuilder.build()
+            val startTime = System.currentTimeMillis()
+            val httpProbePassed = runCatching {
+                val httpRequest = Request.Builder()
+                    .url("http://example.com/")
+                    .get()
+                    .build()
+                client.newCall(httpRequest).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("HTTP ${response.code} ${response.message}")
+                    }
+                }
+                true
+            }.getOrDefault(false)
+
             val request = Request.Builder()
                 .url("https://data-api.polymarket.com/")
                 .get()
                 .build()
 
-            val startTime = System.currentTimeMillis()
-            val response = client.newCall(request).execute()
-            val responseTime = System.currentTimeMillis() - startTime
-            val responseBody = response.body?.string()
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: Exception) {
+                val responseTime = System.currentTimeMillis() - startTime
+                val message = buildHttpsProxyFailureMessage(
+                    type = ProxyConfigProvider.normalizeType(config.type),
+                    httpProbePassed = httpProbePassed,
+                    exception = e
+                )
+                return ProxyCheckResponse.create(
+                    success = false,
+                    message = message,
+                    responseTime = responseTime
+                )
+            }
 
-            if (response.isSuccessful && responseBody != null) {
-                if (responseBody.contains("\"data\"") && responseBody.contains("OK")) {
-                    logger.info("代理检查成功：type=${config.type}, host=${config.host}, port=${config.port}, responseTime=${responseTime}ms")
-                    ProxyCheckResponse.create(
-                        success = true,
-                        message = "${ProxyConfigProvider.normalizeType(config.type)} 代理连接成功",
-                        responseTime = responseTime
-                    )
-                } else {
-                    ProxyCheckResponse.create(
+            response.use {
+                val responseTime = System.currentTimeMillis() - startTime
+                val responseBody = it.body?.string()
+
+                if (it.isSuccessful && responseBody != null) {
+                    if (responseBody.contains("\"data\"") && responseBody.contains("OK")) {
+                        logger.info("代理检查成功：type=${config.type}, host=${config.host}, port=${config.port}, responseTime=${responseTime}ms")
+                        return ProxyCheckResponse.create(
+                            success = true,
+                            message = "${ProxyConfigProvider.normalizeType(config.type)} 代理连接成功",
+                            responseTime = responseTime
+                        )
+                    }
+                    return ProxyCheckResponse.create(
                         success = false,
                         message = "${ProxyConfigProvider.normalizeType(config.type)} 代理连接成功，但响应格式不正确：$responseBody",
                         responseTime = responseTime
                     )
                 }
-            } else {
+
                 ProxyCheckResponse.create(
                     success = false,
-                    message = "${ProxyConfigProvider.normalizeType(config.type)} 代理连接失败：HTTP ${response.code} ${response.message}",
+                    message = "${ProxyConfigProvider.normalizeType(config.type)} 代理连接失败：HTTP ${it.code} ${it.message}",
                     responseTime = responseTime
                 )
             }
@@ -354,6 +383,22 @@ class ProxyConfigService(
             throw IllegalArgumentException("不支持的代理协议类型：$type")
         }
         return normalizedType
+    }
+
+    private fun buildHttpsProxyFailureMessage(type: String, httpProbePassed: Boolean, exception: Exception): String {
+        val rawMessage = exception.message ?: exception.javaClass.simpleName
+        val lowerMessage = rawMessage.lowercase()
+        return when {
+            httpProbePassed && ("connection reset" in lowerMessage || "远程主机强迫关闭" in rawMessage) -> {
+                "$type 代理可访问普通 HTTP 站点，但建立到 data-api.polymarket.com:443 的 HTTPS 隧道时连接被重置。通常表示该代理节点不支持 HTTPS CONNECT，或屏蔽了 Polymarket 这类目标站点。"
+            }
+            httpProbePassed -> {
+                "$type 代理可访问普通 HTTP 站点，但访问 Polymarket HTTPS 接口失败：$rawMessage"
+            }
+            else -> {
+                "$type 代理检查失败：$rawMessage"
+            }
+        }
     }
 
     private fun isSupportedType(type: String?): Boolean {

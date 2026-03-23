@@ -170,6 +170,7 @@ data class LeaderMarketScanResponse(
     val persistedToPool: Boolean,
     val durationMs: Long,
     val sources: List<String> = listOf("orderbook"),
+    val sourceBreakdown: Map<String, Int> = emptyMap(),
     val list: List<LeaderDiscoveredTraderDto>
 )
 

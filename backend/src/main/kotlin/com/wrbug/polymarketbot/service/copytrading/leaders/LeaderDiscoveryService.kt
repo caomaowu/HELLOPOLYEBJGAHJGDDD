@@ -260,6 +260,7 @@ class LeaderDiscoveryService(
                 persistedToPool = normalizedRequest.persistToPool != false && filtered.isNotEmpty(),
                 durationMs = System.currentTimeMillis() - startedAt,
                 sources = buildMarketScanSources(discoveryMode, aggressiveResult),
+                sourceBreakdown = buildMarketScanSourceBreakdown(filtered),
                 list = filtered
             )
         }
@@ -755,6 +756,26 @@ class LeaderDiscoveryService(
             }
         }
         return sources.toList()
+    }
+
+    private fun buildMarketScanSourceBreakdown(
+        traders: List<LeaderDiscoveredTraderDto>
+    ): Map<String, Int> {
+        if (traders.isEmpty()) {
+            return emptyMap()
+        }
+        val breakdown = linkedMapOf<String, Int>()
+        traders.forEach { trader ->
+            trader.sourceType
+                ?.split("+")
+                ?.map { it.trim().lowercase() }
+                ?.filter { it.isNotBlank() }
+                ?.distinct()
+                ?.forEach { source ->
+                    breakdown[source] = (breakdown[source] ?: 0) + 1
+                }
+        }
+        return breakdown
     }
 
     private suspend fun loadSeedMarkets(seedAddresses: List<String>, days: Int, maxSeedMarkets: Int): List<LeaderDiscoveryMarketDto> {

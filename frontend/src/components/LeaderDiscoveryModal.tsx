@@ -235,12 +235,28 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   const translateMarketScanMode = (mode?: string | null) =>
     mode ? t(`leaderDiscovery.scanModeOptions.${mode}`, { defaultValue: mode }) : '-'
 
-  const translateMarketScanSource = (source?: string | null) =>
-    source ? t(`leaderDiscovery.scanSourceOptions.${source}`, { defaultValue: source }) : '-'
+const translateMarketScanSource = (source?: string | null) =>
+  source ? t(`leaderDiscovery.scanSourceOptions.${source}`, { defaultValue: source }) : '-'
 
-  const renderManualLabels = (
-    record: {
-      address: string
+const formatCount = (value?: number) => (value != null ? value : '-')
+
+const extractMarketScanSources = (record: LeaderDiscoveredTrader): string[] => {
+  const parsed = (record.sourceType || '')
+    .split('+')
+    .map(item => item.trim().toLowerCase())
+    .filter(Boolean)
+  if (parsed.length > 0) {
+    return Array.from(new Set(parsed))
+  }
+  if ((record.orderbookBidCount || 0) + (record.orderbookAskCount || 0) > 0 || record.manualNote?.startsWith('orderbook-source:')) {
+    return ['orderbook']
+  }
+  return []
+}
+
+const renderManualLabels = (
+  record: {
+    address: string
       favorite?: boolean
       blacklisted?: boolean
       manualNote?: string | null
@@ -682,6 +698,12 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     }
   ]
 
+  const sourceFilterOptions = [
+    { text: t('leaderDiscovery.sourceFilterOrderbook'), value: 'orderbook' },
+    { text: t('leaderDiscovery.sourceFilterSeed'), value: 'seed' },
+    { text: t('leaderDiscovery.sourceFilterMarketExpansion'), value: 'market-expansion' }
+  ]
+
   const marketScanColumns = [
     {
       title: t('leaderDiscovery.address'),
@@ -713,11 +735,24 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     {
       title: '来源线索',
       key: 'sourceHints',
+      filters: sourceFilterOptions,
+      onFilter: (value, record) => extractMarketScanSources(record).includes(String(value)),
+      defaultSortOrder: 'descend',
+      sorter: (left: LeaderDiscoveredTrader, right: LeaderDiscoveredTrader) => {
+        const confidenceDiff = (left.discoveryConfidence || 0) - (right.discoveryConfidence || 0)
+        if (confidenceDiff !== 0) return confidenceDiff
+        const sourceCountDiff = extractMarketScanSources(left).length - extractMarketScanSources(right).length
+        if (sourceCountDiff !== 0) return sourceCountDiff
+        return left.recentTradeCount - right.recentTradeCount
+      },
       render: (_: unknown, record: LeaderDiscoveredTrader) => {
         const hint = parseOrderbookHint(record.manualNote, record.orderbookBidCount, record.orderbookAskCount)
         const marketCount = record.sourceMarketIds?.length || hint?.markets || 0
         const tokenCount = record.sourceTokenIds?.length || hint?.tokens || 0
-        const sourceLabel = record.sourceType || (hint ? 'orderbook-owner' : '-')
+        const sources = extractMarketScanSources(record)
+        const sourceLabel = sources.length > 0
+          ? sources.map(translateMarketScanSource).join(' + ')
+          : '-'
         return (
           <Space direction="vertical" size={2}>
             <Space wrap size={[4, 4]}>
@@ -761,7 +796,20 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
           </Button>
         )
       )
-    }
+    },
+    {
+      title: t('leaderDiscovery.sourceFilter'),
+      dataIndex: 'sourceType',
+      key: 'sourceType',
+      filters: sourceFilterOptions,
+      onFilter: (value: string, record: LeaderDiscoveredTrader) =>
+        Boolean(record.sourceType?.split('+').includes(value)),
+      render: (value?: string | null, record?: LeaderDiscoveredTrader) => (
+        <Tag color={record?.sourceType?.includes('market-expansion') ? 'purple' : 'geekblue'}>
+          {value || '-'}
+        </Tag>
+      )
+    },
   ]
 
   const recommendationColumns = [
@@ -1356,6 +1404,11 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                             <Tag>{`${t('leaderDiscovery.scanSummaryDiscoveryMode')} ${translateMarketScanMode(marketScanResult.discoveryMode)}`}</Tag>
                             <Tag>{`${t('leaderDiscovery.scanSummarySource')} ${translateMarketScanSource(marketScanResult.source)}`}</Tag>
                             <Tag>{`${t('leaderDiscovery.scanSummarySources')} ${(marketScanResult.sources || []).length > 0 ? marketScanResult.sources!.map(translateMarketScanSource).join(', ') : '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryOrderbookCount')} ${formatCount(marketScanResult.sourceBreakdown?.orderbook)}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummarySeedCount')} ${formatCount(marketScanResult.sourceBreakdown?.seed)}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryMarketExpansionCount')} ${formatCount(
+                              marketScanResult.sourceBreakdown?.['market-expansion']
+                            )}`}</Tag>
                             <Tag>{`${t('leaderDiscovery.scanSummaryMarketCount')} ${marketScanResult.marketCount}`}</Tag>
                             <Tag>{`${t('leaderDiscovery.scanSummaryTokenCount')} ${marketScanResult.tokenCount ?? '-'}`}</Tag>
                             <Tag>{`${t('leaderDiscovery.scanSummaryRawAddressCount')} ${marketScanResult.rawAddressCount ?? '-'}`}</Tag>
