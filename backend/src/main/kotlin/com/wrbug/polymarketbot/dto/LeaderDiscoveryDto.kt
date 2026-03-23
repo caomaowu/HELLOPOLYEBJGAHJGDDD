@@ -32,6 +32,34 @@ data class LeaderTraderScanRequest(
 )
 
 /**
+ * 全市场扫描请求
+ */
+data class LeaderMarketScanRequest(
+    val mode: String? = "ORDERBOOK",
+    val marketLimit: Int? = 100,
+    val tokenPerMarketLimit: Int? = 2,
+    val maxCandidateAddresses: Int? = 500,
+    val validationSampleSize: Int? = 200,
+    val validationBatchSize: Int? = 20,
+    val days: Int? = 7,
+    val activityLimit: Int? = 80,
+    val positionLimit: Int? = 50,
+    val traderLimit: Int? = 50,
+    val excludeExistingLeaders: Boolean? = true,
+    val excludeBlacklistedTraders: Boolean? = true,
+    val persistToPool: Boolean? = true,
+    val seedAddresses: List<String>? = null,
+    val includeSeedAddresses: Boolean? = true,
+    val expansionRounds: Int? = 1,
+    val expansionSeedTraderLimit: Int? = 30,
+    val expansionMarketLimit: Int? = 60,
+    val expansionTradeLimitPerMarket: Int? = 40,
+    val favoriteOnly: Boolean? = false,
+    val includeTags: List<String>? = null,
+    val excludeTags: List<String>? = null
+)
+
+/**
  * 候选 Leader 推荐请求
  */
 data class LeaderCandidateRecommendRequest(
@@ -102,6 +130,12 @@ data class LeaderDiscoveredTraderDto(
     val sampleMarkets: List<LeaderDiscoveryMarketDto>,
     val firstSeenAt: Long?,
     val lastSeenAt: Long?,
+    val sourceType: String? = null,
+    val sourceMarketIds: List<String> = emptyList(),
+    val sourceTokenIds: List<String> = emptyList(),
+    val orderbookBidCount: Int = 0,
+    val orderbookAskCount: Int = 0,
+    val discoveryConfidence: Int? = null,
     val favorite: Boolean = false,
     val blacklisted: Boolean = false,
     val manualNote: String? = null,
@@ -115,6 +149,27 @@ data class LeaderTraderScanResponse(
     val seedAddresses: List<String>,
     val seedMarketCount: Int,
     val estimated: Boolean = true,
+    val list: List<LeaderDiscoveredTraderDto>
+)
+
+/**
+ * 全市场扫描响应
+ */
+data class LeaderMarketScanResponse(
+    val estimated: Boolean = true,
+    val source: String = "gamma+clob+data-api",
+    val discoveryMode: String = "ORDERBOOK",
+    val marketCount: Int,
+    val tokenCount: Int,
+    val rawAddressCount: Int,
+    val validatedAddressCount: Int,
+    val seedAddressCount: Int = 0,
+    val expandedMarketCount: Int = 0,
+    val expandedTraderCount: Int = 0,
+    val finalCandidateCount: Int,
+    val persistedToPool: Boolean,
+    val durationMs: Long,
+    val sources: List<String> = listOf("orderbook"),
     val list: List<LeaderDiscoveredTraderDto>
 )
 

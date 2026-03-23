@@ -255,7 +255,8 @@ data class OrderbookResponse(
 
 data class OrderbookEntry(
     val price: String,
-    val size: String
+    val size: String,
+    val owner: String? = null
 )
 
 data class PriceResponse(

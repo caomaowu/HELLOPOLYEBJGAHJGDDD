@@ -343,6 +343,18 @@ export const apiService = {
       apiClient.post<ApiResponse<import('../types').LeaderTraderScanResponse>>('/copy-trading/leaders/discovery/scan', data),
 
     /**
+     * 全市场扫描活跃 Trader
+     */
+    discoveryScanMarkets: (data: import('../types').LeaderMarketScanRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderMarketScanResponse>>(
+        '/copy-trading/leaders/discovery/scan-markets',
+        data,
+        {
+          timeout: 180000
+        }
+      ),
+
+    /**
      * 推荐候选 Leader
      */
     discoveryRecommend: (data: import('../types').LeaderCandidateRecommendRequest) =>

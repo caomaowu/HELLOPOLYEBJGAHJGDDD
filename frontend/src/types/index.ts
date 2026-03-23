@@ -196,6 +196,12 @@ export interface LeaderDiscoveredTrader {
   sampleMarkets: LeaderDiscoveryMarket[]
   firstSeenAt?: number | null
   lastSeenAt?: number | null
+  sourceType?: string | null
+  sourceMarketIds?: string[]
+  sourceTokenIds?: string[]
+  orderbookBidCount?: number
+  orderbookAskCount?: number
+  discoveryConfidence?: number | null
   favorite?: boolean
   blacklisted?: boolean
   manualNote?: string | null
@@ -206,6 +212,49 @@ export interface LeaderTraderScanResponse {
   seedAddresses: string[]
   seedMarketCount: number
   estimated: boolean
+  list: LeaderDiscoveredTrader[]
+}
+
+export interface LeaderMarketScanRequest {
+  mode?: 'ORDERBOOK' | 'AGGRESSIVE'
+  marketLimit?: number
+  tokenPerMarketLimit?: number
+  maxCandidateAddresses?: number
+  validationSampleSize?: number
+  validationBatchSize?: number
+  days?: number
+  activityLimit?: number
+  positionLimit?: number
+  traderLimit?: number
+  excludeExistingLeaders?: boolean
+  excludeBlacklistedTraders?: boolean
+  seedAddresses?: string[]
+  includeSeedAddresses?: boolean
+  expansionRounds?: number
+  expansionSeedTraderLimit?: number
+  expansionMarketLimit?: number
+  expansionTradeLimitPerMarket?: number
+  favoriteOnly?: boolean
+  includeTags?: string[]
+  excludeTags?: string[]
+  persistToPool?: boolean
+}
+
+export interface LeaderMarketScanResponse {
+  source?: string
+  discoveryMode?: string
+  marketCount: number
+  tokenCount?: number
+  rawAddressCount?: number
+  validatedAddressCount?: number
+  seedAddressCount?: number
+  expandedMarketCount?: number
+  expandedTraderCount?: number
+  finalCandidateCount?: number
+  persistedToPool?: boolean
+  durationMs?: number
+  estimated?: boolean
+  sources?: string[]
   list: LeaderDiscoveredTrader[]
 }
 

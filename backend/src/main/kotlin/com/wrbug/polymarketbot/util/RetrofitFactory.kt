@@ -9,6 +9,7 @@ import com.wrbug.polymarketbot.api.PolymarketClobApi
 import com.wrbug.polymarketbot.api.PolymarketDataApi
 import com.wrbug.polymarketbot.api.PolymarketGammaApi
 import com.wrbug.polymarketbot.constants.PolymarketConstants
+import okhttp3.ConnectionPool
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
@@ -171,6 +172,15 @@ class RetrofitFactory(
     fun createClobApiWithoutAuth(): PolymarketClobApi {
         return clobApiWithoutAuth
     }
+
+    fun createIsolatedClobApiWithoutAuth(): PolymarketClobApi {
+        return Retrofit.Builder()
+            .baseUrl(PolymarketConstants.CLOB_BASE_URL)
+            .client(createIsolatedClient())
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketClobApi::class.java)
+    }
     
     /**
      * 创建 Ethereum RPC API 客户端
@@ -292,6 +302,20 @@ class RetrofitFactory(
     fun createGammaApi(): PolymarketGammaApi {
         return gammaApi
     }
+
+    fun createIsolatedGammaApi(): PolymarketGammaApi {
+        val baseUrl = if (PolymarketConstants.GAMMA_BASE_URL.endsWith("/")) {
+            PolymarketConstants.GAMMA_BASE_URL.dropLast(1)
+        } else {
+            PolymarketConstants.GAMMA_BASE_URL
+        }
+        return Retrofit.Builder()
+            .baseUrl("$baseUrl/")
+            .client(createIsolatedClient())
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketGammaApi::class.java)
+    }
     
     /**
      * 创建 Polymarket Data API 客户端
@@ -300,6 +324,22 @@ class RetrofitFactory(
      */
     fun createDataApi(): PolymarketDataApi {
         return dataApi
+    }
+
+    fun createIsolatedDataApi(): PolymarketDataApi {
+        val baseUrl = PolymarketConstants.DATA_API_BASE_URL
+        return Retrofit.Builder()
+            .baseUrl("$baseUrl/")
+            .client(
+                createIsolatedClient()
+                    .newBuilder()
+                    .followRedirects(true)
+                    .followSslRedirects(true)
+                    .build()
+            )
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketDataApi::class.java)
     }
 
     private val binanceApi: BinanceApi by lazy {
@@ -390,6 +430,13 @@ class RetrofitFactory(
         rpcApiCache.remove(actualRpcUrl)
         logger.debug("已清理 RPC API 缓存: $actualRpcUrl")
     }
+
+    private fun createIsolatedClient(): OkHttpClient {
+        return createClient()
+            .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
+            .addInterceptor(ConnectionCloseInterceptor())
+            .build()
+    }
 }
 
 /**
@@ -471,5 +518,14 @@ class ResponseLoggingInterceptor : Interceptor {
         }
         
         return response
+    }
+}
+
+class ConnectionCloseInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request().newBuilder()
+            .header("Connection", "close")
+            .build()
+        return chain.proceed(request)
     }
 }

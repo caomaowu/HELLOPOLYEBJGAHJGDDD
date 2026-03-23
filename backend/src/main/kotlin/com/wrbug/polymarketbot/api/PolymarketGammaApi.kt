@@ -25,7 +25,9 @@ interface PolymarketGammaApi {
     suspend fun listMarkets(
         @Query("condition_ids") conditionIds: List<String>? = null,
         @Query("clob_token_ids") clobTokenIds: List<String>? = null,
-        @Query("include_tag") includeTag: Boolean? = null
+        @Query("include_tag") includeTag: Boolean? = null,
+        @Query("limit") limit: Int? = null,
+        @Query("closed") closed: Boolean? = null
     ): Response<List<MarketResponse>>
 
     /**

@@ -119,6 +119,54 @@ function Test-RunningPid {
     return $null -ne $process
 }
 
+function Flush-LogIncrement {
+    param(
+        [string]$LogFile,
+        [hashtable]$Cursor,
+        [string]$Prefix
+    )
+
+    if (-not (Test-Path $LogFile)) {
+        return
+    }
+
+    $stream = $null
+    $reader = $null
+
+    try {
+        $stream = [System.IO.File]::Open($LogFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        if ($Cursor.Position -gt $stream.Length) {
+            $Cursor.Position = 0
+        }
+
+        $stream.Seek($Cursor.Position, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $reader = New-Object System.IO.StreamReader($stream)
+        $content = $reader.ReadToEnd()
+        $Cursor.Position = $stream.Position
+
+        if ([string]::IsNullOrEmpty($content)) {
+            return
+        }
+
+        $lines = $content -split "`r?`n"
+        foreach ($line in $lines) {
+            if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+            }
+
+            Write-Host "$Prefix $line"
+        }
+    } catch {
+        Write-Warn "读取日志失败：$LogFile"
+    } finally {
+        if ($null -ne $reader) {
+            $reader.Dispose()
+        } elseif ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Start-BackgroundCommand {
     param(
         [string]$Name,
@@ -151,21 +199,90 @@ function Start-BackgroundCommand {
         -RedirectStandardError $errorLogFile `
         -PassThru
 
-    $servicePid = Wait-ListeningPid -Port $Port -ExcludePid $process.Id
-    if ($null -eq $servicePid) {
-        try {
-            if (-not $process.HasExited) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            }
-        } catch {
-            Write-Warn "$Name 启动超时，已终止包装进程。"
+    return [PSCustomObject]@{
+        Name = $Name
+        WorkingDirectory = $WorkingDirectory
+        Command = $Command
+        LogFile = $LogFile
+        ErrorLogFile = $errorLogFile
+        PidFile = $PidFile
+        Port = $Port
+        WrapperProcess = $process
+        ServicePid = $null
+        Ready = $false
+    }
+}
+
+function Wait-ServicesReady {
+    param(
+        [object[]]$Services,
+        [int]$TimeoutSeconds = 90,
+        [object]$BackendService = $null
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $backendLogCursor = @{ Position = 0 }
+    $backendErrCursor = @{ Position = 0 }
+
+    do {
+        if ($null -ne $BackendService) {
+            Flush-LogIncrement -LogFile $BackendService.LogFile -Cursor $backendLogCursor -Prefix "[Backend]"
+            Flush-LogIncrement -LogFile $BackendService.ErrorLogFile -Cursor $backendErrCursor -Prefix "[Backend][err]"
         }
 
-        throw "$Name 启动失败，端口 $Port 在规定时间内未监听。请检查日志：$LogFile"
+        foreach ($service in $Services) {
+            if ($service.Ready) {
+                continue
+            }
+
+            $servicePid = Get-ListeningPid -Port $service.Port
+            if ($null -ne $servicePid) {
+                $service.ServicePid = [int]$servicePid
+                $service.Ready = $true
+                Set-Content -Path $service.PidFile -Value $service.ServicePid -NoNewline
+                Write-Ok "$($service.Name) 已启动，PID=$($service.ServicePid)，Port=$($service.Port)"
+                continue
+            }
+
+            if ($service.WrapperProcess.HasExited) {
+                if ($null -ne $BackendService) {
+                    Flush-LogIncrement -LogFile $BackendService.LogFile -Cursor $backendLogCursor -Prefix "[Backend]"
+                    Flush-LogIncrement -LogFile $BackendService.ErrorLogFile -Cursor $backendErrCursor -Prefix "[Backend][err]"
+                }
+
+                throw "$($service.Name) 启动失败，端口 $($service.Port) 未监听。请检查日志：$($service.LogFile)"
+            }
+        }
+
+        if (($Services | Where-Object { -not $_.Ready }).Count -eq 0) {
+            if ($null -ne $BackendService) {
+                Flush-LogIncrement -LogFile $BackendService.LogFile -Cursor $backendLogCursor -Prefix "[Backend]"
+                Flush-LogIncrement -LogFile $BackendService.ErrorLogFile -Cursor $backendErrCursor -Prefix "[Backend][err]"
+            }
+            return
+        }
+
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+
+    if ($null -ne $BackendService) {
+        Flush-LogIncrement -LogFile $BackendService.LogFile -Cursor $backendLogCursor -Prefix "[Backend]"
+        Flush-LogIncrement -LogFile $BackendService.ErrorLogFile -Cursor $backendErrCursor -Prefix "[Backend][err]"
     }
 
-    Set-Content -Path $PidFile -Value $servicePid -NoNewline
-    Write-Ok "$Name 已启动，PID=$servicePid，Port=$Port"
+    $failedServices = @($Services | Where-Object { -not $_.Ready })
+    foreach ($service in $failedServices) {
+        try {
+            if (-not $service.WrapperProcess.HasExited) {
+                Stop-Process -Id $service.WrapperProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Write-Warn "$($service.Name) 启动超时，已终止包装进程。"
+        }
+    }
+
+    $failedSummary = $failedServices | ForEach-Object { "$($_.Name)(Port=$($_.Port))" }
+    throw "服务启动超时：$($failedSummary -join ', ')。请检查日志。"
 }
 
 Write-Step "检查依赖"
@@ -204,8 +321,8 @@ if (-not (Test-Path (Join-Path $FrontendDir ".env"))) {
     Write-Warn "frontend/.env 不存在。建议先执行 .\dev-scripts\init-dev-env.ps1"
 }
 
-Write-Step "启动后端"
-Start-BackgroundCommand `
+Write-Step "并行启动前后端"
+$backendService = Start-BackgroundCommand `
     -Name "Backend" `
     -WorkingDirectory $BackendDir `
     -Command "gradlew.bat bootRun" `
@@ -213,16 +330,16 @@ Start-BackgroundCommand `
     -PidFile $BackendPidFile `
     -Port $BackendPort
 
-Start-Sleep -Seconds 2
-
-Write-Step "启动前端"
-Start-BackgroundCommand `
+$frontendService = Start-BackgroundCommand `
     -Name "Frontend" `
     -WorkingDirectory $FrontendDir `
     -Command "npm run dev" `
     -LogFile $FrontendLog `
     -PidFile $FrontendPidFile `
     -Port $FrontendPort
+
+Write-Step "等待服务端口就绪，并实时输出后端日志"
+Wait-ServicesReady -Services @($backendService, $frontendService) -BackendService $backendService
 
 Write-Host ""
 Write-Ok "前后端已启动"

@@ -15,10 +15,7 @@ import {
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
-  GithubOutlined,
-  TwitterOutlined,
   CheckCircleOutlined,
-  SendOutlined,
   ApiOutlined,
   NotificationOutlined,
   LineChartOutlined,
@@ -329,33 +326,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </Tag>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <a
-              href="https://github.com/WrBug/PolyHermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '16px', display: 'flex', alignItems: 'center' }}
-              title="GitHub"
-            >
-              <GithubOutlined />
-            </a>
-            <a
-              href="https://x.com/polyhermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '16px', display: 'flex', alignItems: 'center' }}
-              title="Twitter"
-            >
-              <TwitterOutlined />
-            </a>
-            <a
-              href="https://t.me/polyhermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '16px', display: 'flex', alignItems: 'center' }}
-              title="Telegram 交流群"
-            >
-              <SendOutlined />
-            </a>
             <Button
               type="text"
               icon={<MenuOutlined />}
@@ -449,40 +419,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             >
               {getVersionInfo().gitTag || `v${getVersionText()}`}
             </Tag>
-          </div>
-          <div style={{ 
-            display: 'flex', 
-            gap: '12px', 
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <a
-              href="https://github.com/WrBug/PolyHermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center' }}
-              title="GitHub"
-            >
-              <GithubOutlined />
-            </a>
-            <a
-              href="https://x.com/polyhermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center' }}
-              title="Twitter"
-            >
-              <TwitterOutlined />
-            </a>
-            <a
-              href="https://t.me/polyhermes"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center' }}
-              title="Telegram 交流群"
-            >
-              <SendOutlined />
-            </a>
           </div>
         </div>
         <Menu

@@ -28,6 +28,7 @@ import type {
   LeaderCandidateScoreHistoryItem,
   LeaderCandidateScoreHistoryResponse,
   LeaderDiscoveredTrader,
+  LeaderMarketScanResponse,
   LeaderMarketTraderLookupItem,
   LeaderTraderScanResponse
 } from '../types'
@@ -73,6 +74,50 @@ const renderMarketSummary = (markets: Array<{ marketId: string; title?: string |
   )
 }
 
+const parseOrderbookHint = (
+  manualNote?: string | null,
+  bidCount?: number,
+  askCount?: number
+): {
+  total: number
+  bids: number
+  asks: number
+  markets: number
+  tokens: number
+} | null => {
+  const matched = (manualNote || '').match(/orderbook-source:\s*total=(\d+),bids=(\d+),asks=(\d+),markets=(\d+),tokens=(\d+)/i)
+  if (matched) {
+    return {
+      total: Number(matched[1] || 0),
+      bids: Number(matched[2] || 0),
+      asks: Number(matched[3] || 0),
+      markets: Number(matched[4] || 0),
+      tokens: Number(matched[5] || 0)
+    }
+  }
+  const safeBids = Math.max(0, bidCount || 0)
+  const safeAsks = Math.max(0, askCount || 0)
+  if (safeBids > 0 || safeAsks > 0) {
+    return {
+      total: safeBids + safeAsks,
+      bids: safeBids,
+      asks: safeAsks,
+      markets: 0,
+      tokens: 0
+    }
+  }
+  return null
+}
+
+const formatDuration = (durationMs?: number): string => {
+  if (durationMs == null || durationMs < 0) return '-'
+  if (durationMs < 1000) return `${durationMs} ms`
+  const seconds = durationMs / 1000
+  if (seconds < 10) return `${seconds.toFixed(2)} s`
+  if (seconds < 100) return `${seconds.toFixed(1)} s`
+  return `${Math.round(seconds)} s`
+}
+
 const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   open,
   leaders,
@@ -99,6 +144,19 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
 
   const [scanLoading, setScanLoading] = useState(false)
   const [scanResult, setScanResult] = useState<LeaderTraderScanResponse | null>(null)
+  const [marketScanLoading, setMarketScanLoading] = useState(false)
+  const [marketScanResult, setMarketScanResult] = useState<LeaderMarketScanResponse | null>(null)
+  const [scanMarketLimit, setScanMarketLimit] = useState(50)
+  const [scanTokenPerMarketLimit, setScanTokenPerMarketLimit] = useState(2)
+  const [scanMaxCandidateAddresses, setScanMaxCandidateAddresses] = useState(500)
+  const [scanValidationSampleSize, setScanValidationSampleSize] = useState(300)
+  const [scanMode, setScanMode] = useState<'ORDERBOOK' | 'AGGRESSIVE'>('ORDERBOOK')
+  const [scanIncludeSeedAddresses, setScanIncludeSeedAddresses] = useState(true)
+  const [scanExpansionRounds, setScanExpansionRounds] = useState(1)
+  const [scanExpansionSeedTraderLimit, setScanExpansionSeedTraderLimit] = useState(30)
+  const [scanExpansionMarketLimit, setScanExpansionMarketLimit] = useState(8)
+  const [scanExpansionTradeLimitPerMarket, setScanExpansionTradeLimitPerMarket] = useState(60)
+  const [scanPersistToPool, setScanPersistToPool] = useState(true)
 
   const [recommendLoading, setRecommendLoading] = useState(false)
   const [recommendResult, setRecommendResult] = useState<LeaderCandidateRecommendResponse | null>(null)
@@ -174,6 +232,12 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     excludeTags: parseMultilineValues(discoveryExcludeTagsInput)
   })
 
+  const translateMarketScanMode = (mode?: string | null) =>
+    mode ? t(`leaderDiscovery.scanModeOptions.${mode}`, { defaultValue: mode }) : '-'
+
+  const translateMarketScanSource = (source?: string | null) =>
+    source ? t(`leaderDiscovery.scanSourceOptions.${source}`, { defaultValue: source }) : '-'
+
   const renderManualLabels = (
     record: {
       address: string
@@ -199,6 +263,10 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
 
   const markAddedLeader = (address: string, leaderId: number, leaderName?: string | null) => {
     setScanResult(prev => prev ? {
+      ...prev,
+      list: prev.list.map(item => item.address === address ? { ...item, existingLeaderId: leaderId, existingLeaderName: leaderName } : item)
+    } : prev)
+    setMarketScanResult(prev => prev ? {
       ...prev,
       list: prev.list.map(item => item.address === address ? { ...item, existingLeaderId: leaderId, existingLeaderName: leaderName } : item)
     } : prev)
@@ -255,6 +323,64 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
       message.error(error.message || t('leaderDiscovery.scanFailed'))
     } finally {
       setScanLoading(false)
+    }
+  }
+
+  const handleMarketScan = async () => {
+    setMarketScanLoading(true)
+    setMarketScanResult(null)
+    try {
+      const seedAddresses = parseMultilineValues(seedAddressInput)
+      const response = await apiService.leaders.discoveryScanMarkets({
+        mode: scanMode,
+        marketLimit: scanMarketLimit,
+        tokenPerMarketLimit: scanTokenPerMarketLimit,
+        maxCandidateAddresses: scanMaxCandidateAddresses,
+        validationSampleSize: scanValidationSampleSize,
+        seedAddresses,
+        includeSeedAddresses: scanIncludeSeedAddresses,
+        expansionRounds: scanExpansionRounds,
+        expansionSeedTraderLimit: scanExpansionSeedTraderLimit,
+        expansionMarketLimit: scanExpansionMarketLimit,
+        expansionTradeLimitPerMarket: scanExpansionTradeLimitPerMarket,
+        days,
+        excludeExistingLeaders,
+        ...buildDiscoveryLabelFilters(),
+        persistToPool: scanPersistToPool
+      })
+      if (response.data.code === 0 && response.data.data) {
+        setMarketScanResult(response.data.data)
+        if (!candidateAddressInput) {
+          setCandidateAddressInput(response.data.data.list.map(item => item.address).join('\n'))
+        }
+        if (scanPersistToPool) {
+          await handleLoadPool(1, poolLowRiskOnly, poolFavoriteOnly, poolIncludeBlacklisted)
+        }
+        const candidateCount = response.data.data.finalCandidateCount ?? response.data.data.list.length
+        if (candidateCount > 0) {
+          message.success(
+            response.data.data.persistedToPool
+              ? t('leaderDiscovery.scanCompletedPersisted', { count: candidateCount })
+              : t('leaderDiscovery.scanCompleted', { count: candidateCount })
+          )
+        } else if ((response.data.data.marketCount ?? 0) === 0) {
+          message.warning(t('leaderDiscovery.scanNoMarkets'))
+        } else {
+          message.info(t('leaderDiscovery.scanNoCandidates'))
+        }
+      } else {
+        setMarketScanResult(null)
+        message.error(response.data.msg || t('leaderDiscovery.scanFailed'))
+      }
+    } catch (error: any) {
+      setMarketScanResult(null)
+      if (error?.code === 'ECONNABORTED' || String(error?.message || '').includes('timeout')) {
+        message.error(t('leaderDiscovery.scanTimeout'))
+      } else {
+        message.error(error.message || t('leaderDiscovery.scanFailed'))
+      }
+    } finally {
+      setMarketScanLoading(false)
     }
   }
 
@@ -534,6 +660,88 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
       title: t('leaderDiscovery.sampleMarkets'),
       key: 'sampleMarkets',
       render: (_: unknown, record: LeaderDiscoveredTrader) => renderMarketSummary(record.sampleMarkets)
+    },
+    {
+      title: t('leaderDiscovery.lastSeenAt'),
+      dataIndex: 'lastSeenAt',
+      key: 'lastSeenAt',
+      render: (value?: number | null) => formatTime(value, i18n.language)
+    },
+    {
+      title: t('common.actions'),
+      key: 'action',
+      render: (_: unknown, record: LeaderDiscoveredTrader) => (
+        record.existingLeaderId ? (
+          <Tag color="blue">{t('leaderDiscovery.alreadyLeader')}</Tag>
+        ) : (
+          <Button size="small" onClick={() => handleAddLeader(record.address, record.displayName)}>
+            {t('leaderDiscovery.addAsLeader')}
+          </Button>
+        )
+      )
+    }
+  ]
+
+  const marketScanColumns = [
+    {
+      title: t('leaderDiscovery.address'),
+      dataIndex: 'address',
+      key: 'address',
+      render: (_: string, record: LeaderDiscoveredTrader) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.displayName || record.address}</Text>
+          <Text type="secondary" style={{ fontFamily: 'monospace' }}>{record.address}</Text>
+          {renderManualLabels({
+            ...record,
+            // scan-markets 中 manualNote 可能是 orderbook 原始摘要，不直接展示给用户
+            manualNote: record.manualNote?.startsWith('orderbook-source:') ? null : record.manualNote
+          })}
+        </Space>
+      )
+    },
+    {
+      title: t('leaderDiscovery.activity'),
+      key: 'activity',
+      render: (_: unknown, record: LeaderDiscoveredTrader) => (
+        <Space direction="vertical" size={0}>
+          <Text>{t('leaderDiscovery.tradeCountLabel', { count: record.recentTradeCount })}</Text>
+          <Text type="secondary">{t('leaderDiscovery.buySellLabel', { buy: record.recentBuyCount, sell: record.recentSellCount })}</Text>
+          <Text type="secondary">{t('leaderDiscovery.marketCountLabel', { count: record.distinctMarkets })}</Text>
+        </Space>
+      )
+    },
+    {
+      title: '来源线索',
+      key: 'sourceHints',
+      render: (_: unknown, record: LeaderDiscoveredTrader) => {
+        const hint = parseOrderbookHint(record.manualNote, record.orderbookBidCount, record.orderbookAskCount)
+        const marketCount = record.sourceMarketIds?.length || hint?.markets || 0
+        const tokenCount = record.sourceTokenIds?.length || hint?.tokens || 0
+        const sourceLabel = record.sourceType || (hint ? 'orderbook-owner' : '-')
+        return (
+          <Space direction="vertical" size={2}>
+            <Space wrap size={[4, 4]}>
+              <Tag color="geekblue">{sourceLabel}</Tag>
+              {hint && <Tag>{`盘口总单 ${hint.total}`}</Tag>}
+              {hint && <Tag>{`买 ${hint.bids} / 卖 ${hint.asks}`}</Tag>}
+              {marketCount > 0 && <Tag>{`来源市场 ${marketCount}`}</Tag>}
+              {tokenCount > 0 && <Tag>{`来源 token ${tokenCount}`}</Tag>}
+            </Space>
+            <Text type="secondary">{record.discoveryConfidence != null ? `置信度 ${record.discoveryConfidence}` : '-'}</Text>
+          </Space>
+        )
+      }
+    },
+    {
+      title: t('leaderDiscovery.sampleMarkets'),
+      key: 'sampleMarkets',
+      render: (_: unknown, record: LeaderDiscoveredTrader) => renderMarketSummary(record.sampleMarkets)
+    },
+    {
+      title: t('leaderDiscovery.volume'),
+      dataIndex: 'recentVolume',
+      key: 'recentVolume',
+      render: (value: string) => formatUSDC(value)
     },
     {
       title: t('leaderDiscovery.lastSeenAt'),
@@ -877,6 +1085,8 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     }
   ]
 
+  const isAggressiveScanMode = scanMode === 'AGGRESSIVE'
+
   const poolRowSelection = {
     selectedRowKeys: selectedPoolAddresses,
     onChange: (keys: readonly Key[]) => setSelectedPoolAddresses(keys.map(String))
@@ -1020,6 +1230,177 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
                       {t('leaderDiscovery.scanAction')}
                     </Button>
                     <Table rowKey="address" size="small" loading={scanLoading} dataSource={scanResult?.list || []} columns={scanColumns} pagination={{ pageSize: 8 }} />
+                  </Space>
+                )
+              },
+              {
+                key: 'scan-markets',
+                label: t('leaderDiscovery.scanMarketsTab'),
+                children: (
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Select
+                        value={scanMode}
+                        onChange={value => setScanMode(value)}
+                        options={[
+                          { value: 'ORDERBOOK', label: t('leaderDiscovery.scanModeOptions.ORDERBOOK') },
+                          { value: 'AGGRESSIVE', label: t('leaderDiscovery.scanModeOptions.AGGRESSIVE') }
+                        ]}
+                        style={{ width: 200 }}
+                      />
+                      <InputNumber
+                        min={10}
+                        max={300}
+                        value={scanMarketLimit}
+                        onChange={value => setScanMarketLimit(value || 50)}
+                        addonBefore={t('leaderDiscovery.scanMarketLimit')}
+                      />
+                      <InputNumber
+                        min={1}
+                        max={5}
+                        value={scanTokenPerMarketLimit}
+                        onChange={value => setScanTokenPerMarketLimit(value || 2)}
+                        addonBefore={t('leaderDiscovery.scanTokenPerMarketLimit')}
+                      />
+                      <InputNumber
+                        min={50}
+                        max={3000}
+                        value={scanMaxCandidateAddresses}
+                        onChange={value => setScanMaxCandidateAddresses(value || 500)}
+                        addonBefore={t('leaderDiscovery.scanMaxCandidateAddresses')}
+                      />
+                      <InputNumber
+                        min={20}
+                        max={2000}
+                        value={scanValidationSampleSize}
+                        onChange={value => setScanValidationSampleSize(value || 300)}
+                        addonBefore={t('leaderDiscovery.scanValidationSampleSize')}
+                      />
+                    </Space>
+                    <Space wrap>
+                      <InputNumber
+                        min={0}
+                        max={5}
+                        value={scanExpansionRounds}
+                        onChange={value => setScanExpansionRounds(value || 0)}
+                        addonBefore={t('leaderDiscovery.scanExpansionRounds')}
+                        disabled={!isAggressiveScanMode}
+                      />
+                      <InputNumber
+                        min={1}
+                        max={500}
+                        value={scanExpansionSeedTraderLimit}
+                        onChange={value => setScanExpansionSeedTraderLimit(value || 30)}
+                        addonBefore={t('leaderDiscovery.scanExpansionSeedTraderLimit')}
+                        disabled={!isAggressiveScanMode}
+                      />
+                      <InputNumber
+                        min={1}
+                        max={200}
+                        value={scanExpansionMarketLimit}
+                        onChange={value => setScanExpansionMarketLimit(value || 8)}
+                        addonBefore={t('leaderDiscovery.scanExpansionMarketLimit')}
+                        disabled={!isAggressiveScanMode}
+                      />
+                      <InputNumber
+                        min={1}
+                        max={500}
+                        value={scanExpansionTradeLimitPerMarket}
+                        onChange={value => setScanExpansionTradeLimitPerMarket(value || 60)}
+                        addonBefore={t('leaderDiscovery.scanExpansionTradeLimitPerMarket')}
+                        disabled={!isAggressiveScanMode}
+                      />
+                    </Space>
+                    <Space wrap>
+                      <Space>
+                        <Text>{t('leaderDiscovery.excludeBlacklisted')}</Text>
+                        <Switch checked={excludeBlacklistedDiscovery} onChange={setExcludeBlacklistedDiscovery} />
+                      </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.favoriteOnly')}</Text>
+                        <Switch checked={discoveryFavoriteOnly} onChange={setDiscoveryFavoriteOnly} />
+                      </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.scanIncludeSeedAddresses')}</Text>
+                        <Switch checked={scanIncludeSeedAddresses} onChange={setScanIncludeSeedAddresses} />
+                      </Space>
+                      <Space>
+                        <Text>{t('leaderDiscovery.scanPersistToPool')}</Text>
+                        <Switch checked={scanPersistToPool} onChange={setScanPersistToPool} />
+                      </Space>
+                      <Input
+                        value={discoveryIncludeTagsInput}
+                        onChange={event => setDiscoveryIncludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.includeTags')}
+                      />
+                      <Input
+                        value={discoveryExcludeTagsInput}
+                        onChange={event => setDiscoveryExcludeTagsInput(event.target.value)}
+                        style={{ width: 220 }}
+                        placeholder={t('leaderDiscovery.excludeTags')}
+                      />
+                    </Space>
+                    <Button type="primary" loading={marketScanLoading} onClick={handleMarketScan}>
+                      {t('leaderDiscovery.scanMarketsAction')}
+                    </Button>
+                    {marketScanResult && (
+                      <Alert
+                        type={marketScanResult.list.length > 0 ? 'info' : 'warning'}
+                        showIcon
+                        message={t('leaderDiscovery.scanSummaryTitle', {
+                          count: marketScanResult.finalCandidateCount ?? marketScanResult.list.length
+                        })}
+                        description={(
+                          <Space wrap size={[8, 8]}>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryDiscoveryMode')} ${translateMarketScanMode(marketScanResult.discoveryMode)}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummarySource')} ${translateMarketScanSource(marketScanResult.source)}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummarySources')} ${(marketScanResult.sources || []).length > 0 ? marketScanResult.sources!.map(translateMarketScanSource).join(', ') : '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryMarketCount')} ${marketScanResult.marketCount}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryTokenCount')} ${marketScanResult.tokenCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryRawAddressCount')} ${marketScanResult.rawAddressCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryValidatedAddressCount')} ${marketScanResult.validatedAddressCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummarySeedAddressCount')} ${marketScanResult.seedAddressCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryExpandedMarketCount')} ${marketScanResult.expandedMarketCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryExpandedTraderCount')} ${marketScanResult.expandedTraderCount ?? '-'}`}</Tag>
+                            <Tag>{`${t('leaderDiscovery.scanSummaryDuration')} ${formatDuration(marketScanResult.durationMs)}`}</Tag>
+                            <Tag color={marketScanResult.persistedToPool ? 'green' : 'default'}>
+                              {marketScanResult.persistedToPool
+                                ? t('leaderDiscovery.scanSummaryPersisted')
+                                : t('leaderDiscovery.scanSummaryNotPersisted')}
+                            </Tag>
+                            {marketScanResult.persistedToPool && (
+                              <Button
+                                size="small"
+                                onClick={() => handleLoadPool(1, poolLowRiskOnly, poolFavoriteOnly, poolIncludeBlacklisted)}
+                              >
+                                {t('leaderDiscovery.refreshPool')}
+                              </Button>
+                            )}
+                          </Space>
+                        )}
+                      />
+                    )}
+                    {marketScanResult && marketScanResult.list.length === 0 && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={t('leaderDiscovery.scanEmptyTitle')}
+                        description={
+                          marketScanResult.marketCount > 0
+                            ? t('leaderDiscovery.scanEmptyDescription')
+                            : t('leaderDiscovery.scanEmptyNetworkDescription')
+                        }
+                      />
+                    )}
+                    <Table
+                      rowKey="address"
+                      size="small"
+                      loading={marketScanLoading}
+                      dataSource={marketScanResult?.list || []}
+                      columns={marketScanColumns}
+                      pagination={{ pageSize: 8 }}
+                    />
                   </Space>
                 )
               },

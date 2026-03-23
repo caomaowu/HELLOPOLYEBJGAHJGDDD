@@ -1,7 +1,10 @@
 package com.wrbug.polymarketbot.util
 
 import okhttp3.Credentials
+import okhttp3.Dns
 import okhttp3.OkHttpClient
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.Proxy
 import java.security.SecureRandom
 import java.security.cert.CertificateException
@@ -25,6 +28,7 @@ fun getProxyConfig(): Proxy? {
  */
 fun createClient(): OkHttpClient.Builder {
     val builder = OkHttpClient.Builder()
+        .dns(Ipv4PreferredDns())
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
@@ -88,6 +92,21 @@ class TrustAllManager : X509TrustManager {
 class TrustAllHostnameVerifier : HostnameVerifier {
     override fun verify(hostname: String?, session: SSLSession?): Boolean {
         return true
+    }
+}
+
+/**
+ * 优先使用 IPv4，避免部分代理或本地网络在 Polymarket 的 IPv6 链路上长时间超时。
+ */
+class Ipv4PreferredDns : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val addresses = Dns.SYSTEM.lookup(hostname)
+        val ipv4Addresses = addresses.filterIsInstance<Inet4Address>()
+        return if (ipv4Addresses.isNotEmpty()) {
+            ipv4Addresses + addresses.filterNot { it is Inet4Address }
+        } else {
+            addresses
+        }
     }
 }
 

@@ -218,6 +218,31 @@ class LeaderController(
     }
 
     /**
+     * 扫描开放市场并发现活跃 Trader（一期）
+     */
+    @PostMapping("/discovery/scan-markets")
+    fun scanMarkets(@RequestBody request: LeaderMarketScanRequest): ResponseEntity<ApiResponse<LeaderMarketScanResponse>> {
+        return try {
+            val result = leaderDiscoveryService.scanMarkets(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("全市场扫描 Trader 失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("全市场扫描 Trader 异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
      * 推荐候选 Leader
      */
     @PostMapping("/discovery/recommend")

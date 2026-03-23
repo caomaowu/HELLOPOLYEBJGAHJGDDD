@@ -3,8 +3,14 @@ package com.wrbug.polymarketbot.service.copytrading.leaders
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.wrbug.polymarketbot.api.MarketTradeResponse
+import com.wrbug.polymarketbot.api.MarketResponse
+import com.wrbug.polymarketbot.api.PolymarketClobApi
+import com.wrbug.polymarketbot.api.PolymarketDataApi
+import com.wrbug.polymarketbot.api.PolymarketGammaApi
 import com.wrbug.polymarketbot.api.PositionResponse
 import com.wrbug.polymarketbot.api.UserActivityResponse
+import com.wrbug.polymarketbot.dto.LeaderMarketScanRequest
+import com.wrbug.polymarketbot.dto.LeaderMarketScanResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolBatchLabelUpdateRequest
@@ -29,11 +35,15 @@ import com.wrbug.polymarketbot.dto.LeaderTraderScanResponse
 import com.wrbug.polymarketbot.entity.Leader
 import com.wrbug.polymarketbot.repository.LeaderRepository
 import com.wrbug.polymarketbot.service.common.MarketService
+import com.wrbug.polymarketbot.util.ProxyConfigProvider
 import com.wrbug.polymarketbot.util.RetrofitFactory
+import com.wrbug.polymarketbot.util.parseStringArray
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -70,6 +80,16 @@ class LeaderDiscoveryService(
         .maximumSize(300)
         .build()
 
+    private val activeAddressCache: Cache<String, Boolean> = Caffeine.newBuilder()
+        .expireAfterWrite(5, TimeUnit.MINUTES)
+        .maximumSize(2000)
+        .build()
+
+    private companion object {
+        const val DISCOVERY_MODE_ORDERBOOK = "ORDERBOOK"
+        const val DISCOVERY_MODE_AGGRESSIVE = "AGGRESSIVE"
+    }
+
     fun scanTraders(request: LeaderTraderScanRequest): Result<LeaderTraderScanResponse> = runBlocking {
         runCatching {
             val normalizedRequest = normalizeScanRequest(request)
@@ -88,6 +108,159 @@ class LeaderDiscoveryService(
                 seedAddresses = seedAddresses,
                 seedMarketCount = seedMarkets.size,
                 list = applyScanFilters(traders, normalizedRequest)
+            )
+        }
+    }
+
+    fun scanMarkets(request: LeaderMarketScanRequest): Result<LeaderMarketScanResponse> = runBlocking {
+        runCatching {
+            val startedAt = System.currentTimeMillis()
+            val normalizedRequest = normalizeMarketScanRequest(request)
+            val discoveryMode = normalizeDiscoveryMode(normalizedRequest.mode)
+            val discoveryApiContext = DiscoveryApiContext(
+                gammaApi = retrofitFactory.createIsolatedGammaApi(),
+                clobApi = retrofitFactory.createIsolatedClobApiWithoutAuth(),
+                dataApi = retrofitFactory.createIsolatedDataApi()
+            )
+            val markets = when (val marketFetch = fetchOpenMarkets(normalizedRequest.marketLimit ?: 100, discoveryApiContext.gammaApi)) {
+                is OpenMarketFetchResult.Success -> marketFetch.markets
+                is OpenMarketFetchResult.Failure -> throw IllegalStateException(marketFetch.message)
+            }
+            val tokenPerMarket = normalizedRequest.tokenPerMarketLimit ?: 2
+            val ownerMap = scanOrderbookOwners(markets, tokenPerMarket, discoveryApiContext.clobApi)
+
+            val sortedOwners = ownerMap.values
+                .sortedWith(
+                    compareByDescending<MutableOrderbookOwnerAggregate> { it.bidCount + it.askCount }
+                        .thenByDescending { it.marketIds.size }
+                )
+                .take(normalizedRequest.maxCandidateAddresses ?: 500)
+
+            val candidateAddresses = sortedOwners
+                .take(normalizedRequest.validationSampleSize ?: sortedOwners.size)
+                .map { it.address }
+            val validatedAddresses = validateActiveAddressesInBatch(
+                addresses = candidateAddresses,
+                batchSize = normalizedRequest.validationBatchSize ?: 20,
+                dataApi = discoveryApiContext.dataApi
+            )
+            val seedAddresses = if (discoveryMode == DISCOVERY_MODE_AGGRESSIVE && normalizedRequest.includeSeedAddresses != false) {
+                resolveOptionalSeedAddresses(emptyList(), normalizedRequest.seedAddresses)
+            } else {
+                emptyList()
+            }
+            val aggressiveResult = if (discoveryMode == DISCOVERY_MODE_AGGRESSIVE) {
+                discoverAggressiveCandidates(
+                    request = normalizedRequest,
+                    orderbookValidatedAddresses = validatedAddresses,
+                    seedAddresses = seedAddresses,
+                    scannedMarketIds = markets.mapNotNull { it.conditionId?.takeIf(String::isNotBlank) }.toSet(),
+                    discoveryApiContext = discoveryApiContext
+                )
+            } else {
+                AggressiveDiscoveryResult()
+            }
+
+            val existingLeaders = leaderRepository.findAll().associateBy { normalizeAddress(it.leaderAddress) }
+            val sourceMap = buildDiscoverySourceMap(
+                orderbookValidatedAddresses = validatedAddresses,
+                ownerMap = ownerMap,
+                aggressiveResult = aggressiveResult
+            )
+            val rankedAddresses = rankMarketScanAddresses(
+                discoveryMode = discoveryMode,
+                orderbookValidatedAddresses = validatedAddresses,
+                aggressiveResult = aggressiveResult,
+                sourceMap = sourceMap
+            )
+            val blacklisted = if (normalizedRequest.excludeBlacklistedTraders != false) {
+                traderCandidatePoolService.findBlacklistedAddresses(rankedAddresses)
+            } else {
+                emptySet()
+            }
+
+            val finalAddresses = rankedAddresses
+                .asSequence()
+                .filterNot { normalizedRequest.excludeExistingLeaders != false && existingLeaders.containsKey(it) }
+                .filterNot { it in blacklisted }
+                .take(normalizedRequest.traderLimit ?: 50)
+                .toList()
+
+            val enriched = enrichDiscoveredTraders(
+                addresses = finalAddresses,
+                sourceMap = sourceMap,
+                existingLeaders = existingLeaders,
+                days = normalizedRequest.days ?: 7,
+                activityLimit = normalizedRequest.activityLimit ?: 80,
+                dataApi = discoveryApiContext.dataApi
+            )
+
+            val filtered = applyScanFilters(
+                traders = enriched,
+                request = LeaderTraderScanRequest(
+                    favoriteOnly = normalizedRequest.favoriteOnly,
+                    includeTags = normalizedRequest.includeTags,
+                    excludeTags = normalizedRequest.excludeTags,
+                    excludeBlacklistedTraders = normalizedRequest.excludeBlacklistedTraders
+                )
+            )
+
+            if (normalizedRequest.persistToPool != false && filtered.isNotEmpty()) {
+                val recommendationRequest = LeaderCandidateRecommendRequest(
+                    days = normalizedRequest.days,
+                    minTrades = 1,
+                    maxOpenPositions = 30,
+                    maxMarketConcentrationRate = 1.0,
+                    maxEstimatedDrawdownRate = 1.0,
+                    maxRiskScore = 100,
+                    lowRiskOnly = false
+                )
+                val recommendations = coroutineScope {
+                    filtered.map { trader ->
+                        async {
+                            val activities = fetchUserActivities(
+                                trader.address,
+                                normalizedRequest.days ?: 7,
+                                normalizedRequest.activityLimit ?: 80,
+                                discoveryApiContext.dataApi
+                            )
+                            val positions = fetchUserPositions(
+                                trader.address,
+                                normalizedRequest.positionLimit ?: 50,
+                                discoveryApiContext.dataApi
+                            )
+                            evaluator.evaluateCandidate(
+                                address = trader.address,
+                                displayName = trader.displayName,
+                                profileImage = trader.profileImage,
+                                existingLeader = existingLeaders[trader.address],
+                                activities = activities,
+                                positions = positions,
+                                sampleMarkets = trader.sampleMarkets,
+                                request = recommendationRequest
+                            )
+                        }
+                    }.awaitAll()
+                }
+                traderCandidatePoolService.updateEvaluationSnapshots(recommendations)
+            }
+
+            val tokenCount = markets.sumOf { extractMarketTokenIds(it).take(tokenPerMarket).size }
+            LeaderMarketScanResponse(
+                source = if (discoveryMode == DISCOVERY_MODE_AGGRESSIVE) "gamma+clob+data-api+market-trades" else "gamma+clob+data-api",
+                discoveryMode = discoveryMode,
+                marketCount = markets.size,
+                tokenCount = tokenCount,
+                rawAddressCount = ownerMap.size,
+                validatedAddressCount = validatedAddresses.size,
+                seedAddressCount = aggressiveResult.seedAddresses.size,
+                expandedMarketCount = aggressiveResult.expandedMarketIds.size,
+                expandedTraderCount = aggressiveResult.expandedTraders.size,
+                finalCandidateCount = filtered.size,
+                persistedToPool = normalizedRequest.persistToPool != false && filtered.isNotEmpty(),
+                durationMs = System.currentTimeMillis() - startedAt,
+                sources = buildMarketScanSources(discoveryMode, aggressiveResult),
+                list = filtered
             )
         }
     }
@@ -305,14 +478,15 @@ class LeaderDiscoveryService(
         limitPerMarket: Int,
         traderLimit: Int,
         excludeAddresses: List<String>,
-        excludeExistingLeaders: Boolean
+        excludeExistingLeaders: Boolean,
+        dataApi: PolymarketDataApi? = null
     ): List<LeaderDiscoveredTraderDto> {
         val existingLeaderMap = leaderRepository.findAll().associateBy { normalizeAddress(it.leaderAddress) }
         val excluded = excludeAddresses.map { normalizeAddress(it) }.toSet()
         val traderMap = linkedMapOf<String, MutableTraderAggregate>()
 
         for (marketId in marketIds.distinct()) {
-            val marketTrades = fetchMarketTrades(marketId, limitPerMarket)
+            val marketTrades = fetchMarketTrades(marketId, limitPerMarket, dataApi)
             marketTrades.forEach { trade ->
                 val address = extractTraderAddress(trade) ?: return@forEach
                 if (address in excluded) return@forEach
@@ -361,6 +535,226 @@ class LeaderDiscoveryService(
                     lastSeenAt = aggregate.lastSeenAt
                 )
             }
+    }
+
+    private suspend fun discoverAggressiveCandidates(
+        request: LeaderMarketScanRequest,
+        orderbookValidatedAddresses: List<String>,
+        seedAddresses: List<String>,
+        scannedMarketIds: Set<String>,
+        discoveryApiContext: DiscoveryApiContext
+    ): AggressiveDiscoveryResult {
+        val rounds = request.expansionRounds ?: 0
+        val validatedSeedAddresses = if (seedAddresses.isEmpty()) {
+            emptyList()
+        } else {
+            validateActiveAddressesInBatch(
+                addresses = seedAddresses,
+                batchSize = request.validationBatchSize ?: 20,
+                dataApi = discoveryApiContext.dataApi
+            )
+        }
+        if (rounds <= 0 && validatedSeedAddresses.isEmpty()) {
+            return AggressiveDiscoveryResult(seedAddresses = validatedSeedAddresses)
+        }
+
+        val knownAddresses = linkedSetOf<String>()
+        knownAddresses += orderbookValidatedAddresses
+        knownAddresses += validatedSeedAddresses
+        val expandedMarketIds = linkedSetOf<String>()
+        val expandedTraders = linkedMapOf<String, LeaderDiscoveredTraderDto>()
+        var tradersToExpand = knownAddresses.toList()
+
+        repeat(rounds) {
+            if (tradersToExpand.isEmpty()) return@repeat
+
+            val candidateMarketIds = linkedSetOf<String>()
+            tradersToExpand
+                .take(request.expansionSeedTraderLimit ?: 30)
+                .forEach { address ->
+                    val activities = fetchUserActivities(
+                        address = address,
+                        days = request.days ?: 7,
+                        maxRecords = request.activityLimit ?: 80,
+                        dataApi = discoveryApiContext.dataApi
+                    )
+                    activities.forEach { activity ->
+                        val marketId = activity.conditionId.takeIf(String::isNotBlank)
+                        if (marketId != null && marketId !in scannedMarketIds && marketId !in expandedMarketIds) {
+                            candidateMarketIds += marketId
+                        }
+                    }
+                }
+
+            val roundMarketIds = candidateMarketIds
+                .take(request.expansionMarketLimit ?: 60)
+            if (roundMarketIds.isEmpty()) {
+                tradersToExpand = emptyList()
+                return@repeat
+            }
+
+            expandedMarketIds += roundMarketIds
+            val discovered = discoverTraders(
+                marketIds = roundMarketIds,
+                limitPerMarket = request.expansionTradeLimitPerMarket ?: 40,
+                traderLimit = maxOf(
+                    request.traderLimit ?: 50,
+                    (request.expansionMarketLimit ?: 60) * 4
+                ).coerceAtMost(request.maxCandidateAddresses ?: 500),
+                excludeAddresses = knownAddresses.toList(),
+                excludeExistingLeaders = request.excludeExistingLeaders ?: true,
+                dataApi = discoveryApiContext.dataApi
+            )
+            val newAddresses = mutableListOf<String>()
+            discovered.forEach { trader ->
+                if (trader.address in knownAddresses) return@forEach
+                expandedTraders.putIfAbsent(trader.address, trader)
+                knownAddresses += trader.address
+                newAddresses += trader.address
+            }
+            tradersToExpand = newAddresses
+        }
+
+        return AggressiveDiscoveryResult(
+            seedAddresses = validatedSeedAddresses,
+            expandedMarketIds = expandedMarketIds.toList(),
+            expandedTraders = expandedTraders.values.toList()
+        )
+    }
+
+    private fun buildDiscoverySourceMap(
+        orderbookValidatedAddresses: List<String>,
+        ownerMap: Map<String, MutableOrderbookOwnerAggregate>,
+        aggressiveResult: AggressiveDiscoveryResult
+    ): Map<String, MutableDiscoverySourceAggregate> {
+        val result = linkedMapOf<String, MutableDiscoverySourceAggregate>()
+
+        orderbookValidatedAddresses.forEach { address ->
+            val source = result.getOrPut(address) { MutableDiscoverySourceAggregate(address = address) }
+            source.sourceTypes += "orderbook"
+            ownerMap[address]?.let { aggregate ->
+                source.orderbookBidCount = aggregate.bidCount
+                source.orderbookAskCount = aggregate.askCount
+                source.sourceMarketIds += aggregate.marketIds
+                source.sourceTokenIds += aggregate.tokenIds
+            }
+        }
+
+        aggressiveResult.seedAddresses.forEach { address ->
+            val source = result.getOrPut(address) { MutableDiscoverySourceAggregate(address = address) }
+            source.sourceTypes += "seed"
+        }
+
+        aggressiveResult.expandedTraders.forEach { trader ->
+            val source = result.getOrPut(trader.address) { MutableDiscoverySourceAggregate(address = trader.address) }
+            source.sourceTypes += "market-expansion"
+            source.sourceMarketIds += trader.sampleMarkets.map { it.marketId }
+        }
+
+        return result
+    }
+
+    private fun rankMarketScanAddresses(
+        discoveryMode: String,
+        orderbookValidatedAddresses: List<String>,
+        aggressiveResult: AggressiveDiscoveryResult,
+        sourceMap: Map<String, MutableDiscoverySourceAggregate>
+    ): List<String> {
+        if (discoveryMode != DISCOVERY_MODE_AGGRESSIVE) {
+            return orderbookValidatedAddresses.distinct()
+        }
+        val addresses = linkedSetOf<String>()
+        addresses += orderbookValidatedAddresses
+        addresses += aggressiveResult.expandedTraders.map { it.address }
+        addresses += aggressiveResult.seedAddresses
+        return addresses.toList().sortedWith(
+            compareByDescending<String> { sourceMap[it]?.buildDiscoveryConfidence() ?: 0 }
+                .thenByDescending { sourceMap[it]?.sourceMarketIds?.size ?: 0 }
+        )
+    }
+
+    private suspend fun enrichDiscoveredTraders(
+        addresses: List<String>,
+        sourceMap: Map<String, MutableDiscoverySourceAggregate>,
+        existingLeaders: Map<String, Leader>,
+        days: Int,
+        activityLimit: Int,
+        dataApi: PolymarketDataApi
+    ): List<LeaderDiscoveredTraderDto> = coroutineScope {
+        addresses.map { address ->
+            async {
+                val activities = fetchUserActivities(
+                    address = address,
+                    days = days,
+                    maxRecords = activityLimit,
+                    dataApi = dataApi
+                )
+                val source = sourceMap[address]
+                val marketBreakdown = if (activities.isNotEmpty()) {
+                    buildMarketBreakdown(activities).take(3)
+                } else {
+                    source?.sourceMarketIds
+                        ?.take(3)
+                        ?.map { marketId ->
+                            LeaderDiscoveryMarketDto(
+                                marketId = marketId,
+                                title = null,
+                                slug = null,
+                                category = null,
+                                tradeCount = 0,
+                                totalVolume = "0",
+                                lastSeenAt = null
+                            )
+                        }
+                        ?: emptyList()
+                }
+                LeaderDiscoveredTraderDto(
+                    address = address,
+                    displayName = resolveDisplayName(activities, existingLeaders[address]),
+                    profileImage = activities.firstNotNullOfOrNull { it.profileImageOptimized ?: it.profileImage },
+                    existingLeaderId = existingLeaders[address]?.id,
+                    existingLeaderName = existingLeaders[address]?.leaderName,
+                    recentTradeCount = activities.size,
+                    recentBuyCount = activities.count { it.side.equals("BUY", ignoreCase = true) },
+                    recentSellCount = activities.count { it.side.equals("SELL", ignoreCase = true) },
+                    recentVolume = formatDecimal(activities.fold(BigDecimal.ZERO) { acc, activity ->
+                        acc + (activity.usdcSize ?: 0.0).toSafeBigDecimal()
+                    }),
+                    distinctMarkets = activities.mapNotNull { it.conditionId.takeIf(String::isNotBlank) }.distinct().size
+                        .takeIf { it > 0 } ?: source?.sourceMarketIds?.size ?: 0,
+                    sourceLeaderIds = emptyList(),
+                    sampleMarkets = marketBreakdown,
+                    firstSeenAt = activities.minOfOrNull { it.timestamp }?.times(1000),
+                    lastSeenAt = activities.maxOfOrNull { it.timestamp }?.times(1000),
+                    sourceType = source?.sourceTypes?.sorted()?.joinToString("+"),
+                    sourceMarketIds = source?.sourceMarketIds?.toList()?.sorted() ?: emptyList(),
+                    sourceTokenIds = source?.sourceTokenIds?.toList()?.sorted() ?: emptyList(),
+                    orderbookBidCount = source?.orderbookBidCount ?: 0,
+                    orderbookAskCount = source?.orderbookAskCount ?: 0,
+                    discoveryConfidence = source?.buildDiscoveryConfidence(),
+                    favorite = false,
+                    blacklisted = false,
+                    manualNote = source?.buildSourceSummary(),
+                    manualTags = emptyList()
+                )
+            }
+        }.awaitAll()
+    }
+
+    private fun buildMarketScanSources(
+        discoveryMode: String,
+        aggressiveResult: AggressiveDiscoveryResult
+    ): List<String> {
+        val sources = linkedSetOf("orderbook")
+        if (discoveryMode == DISCOVERY_MODE_AGGRESSIVE) {
+            if (aggressiveResult.seedAddresses.isNotEmpty()) {
+                sources += "seed"
+            }
+            if (aggressiveResult.expandedMarketIds.isNotEmpty() || aggressiveResult.expandedTraders.isNotEmpty()) {
+                sources += "market-expansion"
+            }
+        }
+        return sources.toList()
     }
 
     private suspend fun loadSeedMarkets(seedAddresses: List<String>, days: Int, maxSeedMarkets: Int): List<LeaderDiscoveryMarketDto> {
@@ -419,14 +813,20 @@ class LeaderDiscoveryService(
             .map { buildMarketDto(it) }
     }
 
-    private suspend fun fetchUserActivities(address: String, days: Int, maxRecords: Int): List<UserActivityResponse> {
+    private suspend fun fetchUserActivities(
+        address: String,
+        days: Int,
+        maxRecords: Int,
+        dataApi: PolymarketDataApi? = null
+    ): List<UserActivityResponse> {
         val start = (System.currentTimeMillis() - days * 24L * 60 * 60 * 1000) / 1000
         return fetchUserActivitiesInternal(
             address = address,
             startSeconds = start,
             endSeconds = null,
             maxRecords = maxRecords,
-            useCache = true
+            useCache = true,
+            dataApi = dataApi
         )
     }
 
@@ -435,7 +835,8 @@ class LeaderDiscoveryService(
         startSeconds: Long,
         endSeconds: Long?,
         maxRecords: Int,
-        useCache: Boolean
+        useCache: Boolean,
+        dataApi: PolymarketDataApi? = null
     ): List<UserActivityResponse> {
         val normalizedAddress = normalizeAddress(address)
         val cacheKey = "$normalizedAddress:$startSeconds:${endSeconds ?: "open"}:$maxRecords"
@@ -443,22 +844,26 @@ class LeaderDiscoveryService(
             activityCache.getIfPresent(cacheKey)?.let { return it }
         }
 
-        val dataApi = retrofitFactory.createDataApi()
+        val effectiveDataApi = dataApi ?: retrofitFactory.createDataApi()
         val results = mutableListOf<UserActivityResponse>()
         var offset = 0
         val pageSize = minOf(100, maxRecords)
 
         while (results.size < maxRecords) {
-            val response = dataApi.getUserActivity(
-                user = normalizedAddress,
-                limit = pageSize,
-                offset = offset,
-                type = listOf("TRADE"),
-                start = startSeconds,
-                end = endSeconds,
-                sortBy = "TIMESTAMP",
-                sortDirection = "DESC"
-            )
+            val response = executeWithRetry(
+                action = "获取 trader activity address=$normalizedAddress offset=$offset"
+            ) {
+                effectiveDataApi.getUserActivity(
+                    user = normalizedAddress,
+                    limit = pageSize,
+                    offset = offset,
+                    type = listOf("TRADE"),
+                    start = startSeconds,
+                    end = endSeconds,
+                    sortBy = "TIMESTAMP",
+                    sortDirection = "DESC"
+                )
+            } ?: break
             if (!response.isSuccessful || response.body() == null) {
                 logger.warn("获取 trader activity 失败: address={}, code={}, message={}", normalizedAddress, response.code(), response.message())
                 break
@@ -478,40 +883,62 @@ class LeaderDiscoveryService(
         return deduplicated
     }
 
-    private suspend fun fetchUserPositions(address: String, limit: Int): List<PositionResponse> {
+    private suspend fun fetchUserPositions(
+        address: String,
+        limit: Int,
+        dataApi: PolymarketDataApi? = null
+    ): List<PositionResponse> {
         val normalizedAddress = normalizeAddress(address)
         val cacheKey = "$normalizedAddress:$limit"
         positionCache.getIfPresent(cacheKey)?.let { return it }
-        val response = retrofitFactory.createDataApi().getPositions(
-            user = normalizedAddress,
-            sizeThreshold = 0.0,
-            limit = limit,
-            offset = 0
-        )
-        val positions = if (response.isSuccessful && response.body() != null) {
+        val effectiveDataApi = dataApi ?: retrofitFactory.createDataApi()
+        val response = executeWithRetry(
+            action = "获取 trader positions address=$normalizedAddress"
+        ) {
+            effectiveDataApi.getPositions(
+                user = normalizedAddress,
+                sizeThreshold = 0.0,
+                limit = limit,
+                offset = 0
+            )
+        }
+        val positions = if (response?.isSuccessful == true && response.body() != null) {
             response.body().orEmpty()
         } else {
-            logger.warn("获取 trader positions 失败: address={}, code={}, message={}", normalizedAddress, response.code(), response.message())
+            if (response != null) {
+                logger.warn("获取 trader positions 失败: address={}, code={}, message={}", normalizedAddress, response.code(), response.message())
+            }
             emptyList()
         }
         positionCache.put(cacheKey, positions)
         return positions
     }
 
-    private suspend fun fetchMarketTrades(marketId: String, limit: Int): List<MarketTradeResponse> {
+    private suspend fun fetchMarketTrades(
+        marketId: String,
+        limit: Int,
+        dataApi: PolymarketDataApi? = null
+    ): List<MarketTradeResponse> {
         val cacheKey = "$marketId:$limit"
         marketTradeCache.getIfPresent(cacheKey)?.let { return it }
-        val response = retrofitFactory.createDataApi().getMarketTrades(
-            market = marketId,
-            limit = limit,
-            offset = 0,
-            sortBy = "TIMESTAMP",
-            sortDirection = "DESC"
-        )
-        val trades = if (response.isSuccessful && response.body() != null) {
+        val effectiveDataApi = dataApi ?: retrofitFactory.createDataApi()
+        val response = executeWithRetry(
+            action = "获取 market trades marketId=$marketId"
+        ) {
+            effectiveDataApi.getMarketTrades(
+                market = marketId,
+                limit = limit,
+                offset = 0,
+                sortBy = "TIMESTAMP",
+                sortDirection = "DESC"
+            )
+        }
+        val trades = if (response?.isSuccessful == true && response.body() != null) {
             response.body().orEmpty()
         } else {
-            logger.warn("获取 market trades 失败: marketId={}, code={}, message={}", marketId, response.code(), response.message())
+            if (response != null) {
+                logger.warn("获取 market trades 失败: marketId={}, code={}, message={}", marketId, response.code(), response.message())
+            }
             emptyList()
         }
         marketTradeCache.put(cacheKey, trades)
@@ -545,6 +972,35 @@ class LeaderDiscoveryService(
             maxSeedMarkets = (request.maxSeedMarkets ?: 20).coerceIn(1, 50),
             marketTradeLimit = (request.marketTradeLimit ?: 120).coerceIn(20, 200),
             traderLimit = (request.traderLimit ?: 30).coerceIn(1, 100),
+            includeTags = normalizeTags(request.includeTags),
+            excludeTags = normalizeTags(request.excludeTags),
+            excludeBlacklistedTraders = request.excludeBlacklistedTraders ?: true
+        )
+    }
+
+    private fun normalizeMarketScanRequest(request: LeaderMarketScanRequest): LeaderMarketScanRequest {
+        return request.copy(
+            mode = normalizeDiscoveryMode(request.mode),
+            marketLimit = (request.marketLimit ?: 100).coerceIn(1, 300),
+            tokenPerMarketLimit = (request.tokenPerMarketLimit ?: 2).coerceIn(1, 4),
+            maxCandidateAddresses = (request.maxCandidateAddresses ?: 500).coerceIn(50, 5000),
+            validationSampleSize = (request.validationSampleSize ?: 200).coerceIn(1, request.maxCandidateAddresses ?: 500),
+            validationBatchSize = (request.validationBatchSize ?: 20).coerceIn(1, 100),
+            days = (request.days ?: 7).coerceIn(1, 30),
+            activityLimit = (request.activityLimit ?: 80).coerceIn(10, 200),
+            positionLimit = (request.positionLimit ?: 50).coerceIn(1, 200),
+            traderLimit = (request.traderLimit ?: 50).coerceIn(1, 500),
+            seedAddresses = request.seedAddresses.orEmpty()
+                .mapNotNull { it.trim().takeIf(String::isNotBlank) }
+                .map(::normalizeAddress)
+                .filter { it.startsWith("0x") && it.length == 42 }
+                .distinct()
+                .ifEmpty { null },
+            includeSeedAddresses = request.includeSeedAddresses ?: true,
+            expansionRounds = (request.expansionRounds ?: 1).coerceIn(0, 3),
+            expansionSeedTraderLimit = (request.expansionSeedTraderLimit ?: 30).coerceIn(1, 100),
+            expansionMarketLimit = (request.expansionMarketLimit ?: 60).coerceIn(1, 200),
+            expansionTradeLimitPerMarket = (request.expansionTradeLimitPerMarket ?: 40).coerceIn(5, 120),
             includeTags = normalizeTags(request.includeTags),
             excludeTags = normalizeTags(request.excludeTags),
             excludeBlacklistedTraders = request.excludeBlacklistedTraders ?: true
@@ -676,10 +1132,167 @@ class LeaderDiscoveryService(
         return normalized.ifEmpty { null }
     }
 
+    private fun normalizeDiscoveryMode(mode: String?): String {
+        return when (mode?.trim()?.uppercase()) {
+            DISCOVERY_MODE_AGGRESSIVE -> DISCOVERY_MODE_AGGRESSIVE
+            else -> DISCOVERY_MODE_ORDERBOOK
+        }
+    }
+
     private fun resolveDisplayName(activities: List<UserActivityResponse>, leader: Leader?): String? {
         return leader?.leaderName
             ?: activities.firstNotNullOfOrNull { it.pseudonym?.takeIf(String::isNotBlank) }
             ?: activities.firstNotNullOfOrNull { it.name?.takeIf(String::isNotBlank) }
+    }
+
+    private suspend fun fetchOpenMarkets(limit: Int, gammaApi: PolymarketGammaApi): OpenMarketFetchResult {
+        var lastFailure = "Gamma API 未返回可用响应"
+        repeat(2) { index ->
+            try {
+                val response = gammaApi.listMarkets(
+                    conditionIds = null,
+                    clobTokenIds = null,
+                    includeTag = false,
+                    limit = limit,
+                    closed = false
+                )
+                if (!response.isSuccessful) {
+                    lastFailure = "Gamma API HTTP ${response.code()} ${response.message()}"
+                    logger.warn(
+                        "获取开放市场失败: limit={}, attempt={}/{}, code={}, message={}, runtimeProxy={}",
+                        limit,
+                        index + 1,
+                        2,
+                        response.code(),
+                        response.message(),
+                        buildRuntimeProxyHint()
+                    )
+                } else {
+                    val body = response.body()
+                    if (body == null) {
+                        lastFailure = "Gamma API 响应体为空"
+                        logger.warn(
+                            "获取开放市场失败: limit={}, attempt={}/{}, emptyBody=true, runtimeProxy={}",
+                            limit,
+                            index + 1,
+                            2,
+                            buildRuntimeProxyHint()
+                        )
+                    } else {
+                        return OpenMarketFetchResult.Success(
+                            body.filter { it.closed != true && it.archived != true && it.active != false }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                lastFailure = e.message ?: e::class.java.simpleName
+                logger.warn(
+                    "获取开放市场异常: limit={}, attempt={}/{}, error={}, runtimeProxy={}",
+                    limit,
+                    index + 1,
+                    2,
+                    lastFailure,
+                    buildRuntimeProxyHint()
+                )
+            }
+            if (index < 1) {
+                delay(200)
+            }
+        }
+        return OpenMarketFetchResult.Failure(
+            "获取开放市场失败：$lastFailure。当前运行代理：${buildRuntimeProxyHint()}。这通常不是“真的没有市场”，而是 Gamma/代理网络链路失败。"
+        )
+    }
+
+    private suspend fun scanOrderbookOwners(
+        markets: List<MarketResponse>,
+        tokenPerMarketLimit: Int,
+        clobApi: PolymarketClobApi
+    ): MutableMap<String, MutableOrderbookOwnerAggregate> {
+        val ownerMap = linkedMapOf<String, MutableOrderbookOwnerAggregate>()
+
+        markets.forEach marketLoop@ { market ->
+            val marketId = market.conditionId?.takeIf(String::isNotBlank) ?: return@marketLoop
+            val marketTitle = market.question
+            val marketSlug = market.slug
+            val tokenIds = extractMarketTokenIds(market).take(tokenPerMarketLimit)
+            tokenIds.forEach tokenLoop@ { tokenId ->
+                val response = executeWithRetry(
+                    action = "获取订单簿 tokenId=$tokenId"
+                ) {
+                    clobApi.getOrderbook(tokenId = tokenId, market = null)
+                } ?: return@tokenLoop
+                if (!response.isSuccessful || response.body() == null) {
+                    logger.debug("获取订单簿失败: tokenId={}, code={}", tokenId, response.code())
+                    return@tokenLoop
+                }
+                val orderbook = response.body() ?: return@tokenLoop
+                orderbook.bids.forEach bidsLoop@ { entry ->
+                    val address = entry.owner?.takeIf { it.startsWith("0x") && it.length == 42 }?.let(::normalizeAddress) ?: return@bidsLoop
+                    val aggregate = ownerMap.getOrPut(address) { MutableOrderbookOwnerAggregate(address = address) }
+                    aggregate.bidCount += 1
+                    aggregate.marketIds += marketId
+                    aggregate.tokenIds += tokenId
+                    if (aggregate.marketTitle == null) aggregate.marketTitle = marketTitle
+                    if (aggregate.marketSlug == null) aggregate.marketSlug = marketSlug
+                }
+                orderbook.asks.forEach asksLoop@ { entry ->
+                    val address = entry.owner?.takeIf { it.startsWith("0x") && it.length == 42 }?.let(::normalizeAddress) ?: return@asksLoop
+                    val aggregate = ownerMap.getOrPut(address) { MutableOrderbookOwnerAggregate(address = address) }
+                    aggregate.askCount += 1
+                    aggregate.marketIds += marketId
+                    aggregate.tokenIds += tokenId
+                    if (aggregate.marketTitle == null) aggregate.marketTitle = marketTitle
+                    if (aggregate.marketSlug == null) aggregate.marketSlug = marketSlug
+                }
+            }
+        }
+        return ownerMap
+    }
+
+    private fun extractMarketTokenIds(market: MarketResponse): List<String> {
+        val camel = market.clobTokenIds.parseStringArray()
+        if (camel.isNotEmpty()) return camel
+        return market.clob_token_ids.parseStringArray()
+    }
+
+    private suspend fun validateActiveAddressesInBatch(
+        addresses: List<String>,
+        batchSize: Int,
+        dataApi: PolymarketDataApi
+    ): List<String> {
+        if (addresses.isEmpty()) return emptyList()
+        val active = mutableListOf<String>()
+        addresses.chunked(batchSize).forEach { batch ->
+            val batchResults = coroutineScope {
+                batch.map { address ->
+                    async {
+                        val cached = activeAddressCache.getIfPresent(address)
+                        if (cached != null) {
+                            return@async if (cached) address else null
+                        }
+                        val response = executeWithRetry(
+                            action = "校验活跃地址 address=$address"
+                        ) {
+                            dataApi.getUserActivity(
+                                user = address,
+                                limit = 1,
+                                offset = 0,
+                                type = listOf("TRADE"),
+                                sortBy = "TIMESTAMP",
+                                sortDirection = "DESC"
+                            )
+                        }
+                        val isActive = response?.isSuccessful == true && !response.body().isNullOrEmpty()
+                        activeAddressCache.put(address, isActive)
+                        if (isActive) address else null
+                    }
+                }.awaitAll()
+            }
+            active += batchResults.filterNotNull()
+        }
+        return active.distinct()
     }
 
     private fun extractTraderAddress(trade: MarketTradeResponse): String? {
@@ -720,6 +1333,48 @@ class LeaderDiscoveryService(
         return value.setScale(4, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
     }
 
+    private suspend fun <T> executeWithRetry(
+        action: String,
+        attempts: Int = 2,
+        delayMs: Long = 200,
+        block: suspend () -> T
+    ): T? {
+        repeat(attempts) { index ->
+            try {
+                return block()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logger.warn("{} 异常: attempt={}/{}, type={}, error={}", action, index + 1, attempts, e.javaClass.simpleName, e.message)
+                if (index < attempts - 1) {
+                    delay(delayMs)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun buildRuntimeProxyHint(): String {
+        val config = ProxyConfigProvider.getProxyConfig()
+        if (config == null || !config.enabled) {
+            return "未启用"
+        }
+        val host = config.host?.takeIf(String::isNotBlank) ?: "unknown-host"
+        val port = config.port?.toString() ?: "unknown-port"
+        val usernameHint = if (config.username.isNullOrBlank()) "anonymous" else "auth"
+        return "${ProxyConfigProvider.normalizeType(config.type)} $host:$port ($usernameHint)"
+    }
+
+    private sealed interface OpenMarketFetchResult {
+        data class Success(val markets: List<MarketResponse>) : OpenMarketFetchResult
+        data class Failure(val message: String) : OpenMarketFetchResult
+    }
+
+    private data class DiscoveryApiContext(
+        val gammaApi: PolymarketGammaApi,
+        val clobApi: PolymarketClobApi,
+        val dataApi: PolymarketDataApi
+    )
+
     private data class MutableTraderAggregate(
         val address: String,
         var tradeCount: Int = 0,
@@ -740,4 +1395,53 @@ class LeaderDiscoveryService(
         var totalVolume: BigDecimal = BigDecimal.ZERO,
         var lastSeenAt: Long? = null
     )
+
+    private data class MutableOrderbookOwnerAggregate(
+        val address: String,
+        var bidCount: Int = 0,
+        var askCount: Int = 0,
+        val marketIds: MutableSet<String> = linkedSetOf(),
+        val tokenIds: MutableSet<String> = linkedSetOf(),
+        var marketTitle: String? = null,
+        var marketSlug: String? = null
+    ) {
+        fun buildSourceSummary(): String {
+            val total = bidCount + askCount
+            return "orderbook-source: total=$total,bids=$bidCount,asks=$askCount,markets=${marketIds.size},tokens=${tokenIds.size}"
+        }
+    }
+
+    private data class AggressiveDiscoveryResult(
+        val seedAddresses: List<String> = emptyList(),
+        val expandedMarketIds: List<String> = emptyList(),
+        val expandedTraders: List<LeaderDiscoveredTraderDto> = emptyList()
+    )
+
+    private data class MutableDiscoverySourceAggregate(
+        val address: String,
+        val sourceTypes: MutableSet<String> = linkedSetOf(),
+        val sourceMarketIds: MutableSet<String> = linkedSetOf(),
+        val sourceTokenIds: MutableSet<String> = linkedSetOf(),
+        var orderbookBidCount: Int = 0,
+        var orderbookAskCount: Int = 0
+    ) {
+        fun buildDiscoveryConfidence(): Int {
+            var score = 0
+            if ("orderbook" in sourceTypes) {
+                score += 60 + minOf(30, orderbookBidCount + orderbookAskCount)
+            }
+            if ("market-expansion" in sourceTypes) {
+                score += 30 + minOf(20, sourceMarketIds.size)
+            }
+            if ("seed" in sourceTypes) {
+                score += 15
+            }
+            return score
+        }
+
+        fun buildSourceSummary(): String {
+            val sourceText = sourceTypes.joinToString("+")
+            return "discovery-source: type=$sourceText,markets=${sourceMarketIds.size},tokens=${sourceTokenIds.size},bids=$orderbookBidCount,asks=$orderbookAskCount"
+        }
+    }
 }
