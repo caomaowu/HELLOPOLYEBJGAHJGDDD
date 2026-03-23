@@ -33,6 +33,12 @@ data class TemplateCreateRequest(
     val maxSpread: String? = null,  // 最大价差（绝对价格），NULL表示不启用
     val minPrice: String? = null,  // 最低价格（可选），NULL表示不限制最低价
     val maxPrice: String? = null,  // 最高价格（可选），NULL表示不限制最高价
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -70,6 +76,12 @@ data class TemplateUpdateRequest(
     val maxSpread: String? = null,  // 最大价差（绝对价格），NULL表示不启用
     val minPrice: String? = null,  // 最低价格（可选），NULL表示不限制最低价
     val maxPrice: String? = null,  // 最高价格（可选），NULL表示不限制最高价
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -114,6 +126,12 @@ data class TemplateCopyRequest(
     val maxSpread: String? = null,  // 最大价差（绝对价格），NULL表示不启用
     val minPrice: String? = null,  // 最低价格（可选），NULL表示不限制最低价
     val maxPrice: String? = null,  // 最高价格（可选），NULL表示不限制最高价
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -158,6 +176,12 @@ data class TemplateDto(
     val maxSpread: String?,
     val minPrice: String?,  // 最低价格（可选），NULL表示不限制最低价
     val maxPrice: String?,  // 最高价格（可选），NULL表示不限制最高价
+    val marketCategoryMode: String,
+    val marketCategories: List<String>?,
+    val marketIntervalMode: String,
+    val marketIntervals: List<Int>?,
+    val marketSeriesMode: String,
+    val marketSeries: List<String>?,
     val pushFilteredOrders: Boolean,  // 推送已过滤订单（默认关闭）
     val createdAt: Long,
     val updatedAt: Long

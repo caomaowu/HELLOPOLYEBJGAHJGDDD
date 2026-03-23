@@ -14,6 +14,7 @@ import com.wrbug.polymarketbot.service.accounts.AccountExecutionDiagnosticsServi
 import com.google.gson.Gson
 import com.wrbug.polymarketbot.util.IllegalBigDecimal
 import com.wrbug.polymarketbot.util.JsonUtils
+import com.wrbug.polymarketbot.util.MarketFilterSupport
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationContext
@@ -119,6 +120,33 @@ class CopyTradingService(
                     maxPositionValue = request.maxPositionValue?.toSafeBigDecimal(),
                     keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                     keywords = convertKeywordsToJson(request.keywords),
+                    marketCategoryMode = MarketFilterSupport.normalizeFilterMode(
+                        request.marketCategoryMode ?: template.marketCategoryMode
+                    ),
+                    marketCategories = resolveMarketCategoriesJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(
+                            request.marketCategoryMode ?: template.marketCategoryMode
+                        ),
+                        categories = request.marketCategories ?: convertJsonToKeywords(template.marketCategories)
+                    ),
+                    marketIntervalMode = MarketFilterSupport.normalizeFilterMode(
+                        request.marketIntervalMode ?: template.marketIntervalMode
+                    ),
+                    marketIntervals = resolveMarketIntervalsJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(
+                            request.marketIntervalMode ?: template.marketIntervalMode
+                        ),
+                        intervals = request.marketIntervals ?: jsonUtils.parseIntArray(template.marketIntervals)
+                    ),
+                    marketSeriesMode = MarketFilterSupport.normalizeFilterMode(
+                        request.marketSeriesMode ?: template.marketSeriesMode
+                    ),
+                    marketSeries = resolveMarketSeriesJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(
+                            request.marketSeriesMode ?: template.marketSeriesMode
+                        ),
+                        series = request.marketSeries ?: convertJsonToKeywords(template.marketSeries)
+                    ),
                     maxMarketEndDate = request.maxMarketEndDate,
                     pushFilteredOrders = request.pushFilteredOrders ?: template.pushFilteredOrders
                 )
@@ -160,6 +188,21 @@ class CopyTradingService(
                     maxPositionValue = request.maxPositionValue?.toSafeBigDecimal(),
                     keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                     keywords = convertKeywordsToJson(request.keywords),
+                    marketCategoryMode = MarketFilterSupport.normalizeFilterMode(request.marketCategoryMode),
+                    marketCategories = resolveMarketCategoriesJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(request.marketCategoryMode),
+                        categories = request.marketCategories
+                    ),
+                    marketIntervalMode = MarketFilterSupport.normalizeFilterMode(request.marketIntervalMode),
+                    marketIntervals = resolveMarketIntervalsJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(request.marketIntervalMode),
+                        intervals = request.marketIntervals
+                    ),
+                    marketSeriesMode = MarketFilterSupport.normalizeFilterMode(request.marketSeriesMode),
+                    marketSeries = resolveMarketSeriesJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(request.marketSeriesMode),
+                        series = request.marketSeries
+                    ),
                     maxMarketEndDate = request.maxMarketEndDate,
                     pushFilteredOrders = request.pushFilteredOrders ?: false  // 手动输入时使用请求中的值，默认为 false
                 )
@@ -215,6 +258,12 @@ class CopyTradingService(
                 maxPositionValue = config.maxPositionValue,
                 keywordFilterMode = config.keywordFilterMode,
                 keywords = config.keywords,
+                marketCategoryMode = config.marketCategoryMode,
+                marketCategories = config.marketCategories,
+                marketIntervalMode = config.marketIntervalMode,
+                marketIntervals = config.marketIntervals,
+                marketSeriesMode = config.marketSeriesMode,
+                marketSeries = config.marketSeries,
                 configName = configName,
                 pushFailedOrders = request.pushFailedOrders ?: false,
                 maxMarketEndDate = config.maxMarketEndDate,
@@ -352,6 +401,27 @@ class CopyTradingService(
                 } else {
                     copyTrading.keywords
                 },
+                marketCategoryMode = request.marketCategoryMode?.let { MarketFilterSupport.normalizeFilterMode(it) }
+                    ?: copyTrading.marketCategoryMode,
+                marketCategories = when {
+                    request.marketCategoryMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
+                    request.marketCategories != null -> convertMarketCategoriesToJson(request.marketCategories)
+                    else -> copyTrading.marketCategories
+                },
+                marketIntervalMode = request.marketIntervalMode?.let { MarketFilterSupport.normalizeFilterMode(it) }
+                    ?: copyTrading.marketIntervalMode,
+                marketIntervals = when {
+                    request.marketIntervalMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
+                    request.marketIntervals != null -> convertMarketIntervalsToJson(request.marketIntervals)
+                    else -> copyTrading.marketIntervals
+                },
+                marketSeriesMode = request.marketSeriesMode?.let { MarketFilterSupport.normalizeFilterMode(it) }
+                    ?: copyTrading.marketSeriesMode,
+                marketSeries = when {
+                    request.marketSeriesMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
+                    request.marketSeries != null -> convertMarketSeriesToJson(request.marketSeries)
+                    else -> copyTrading.marketSeries
+                },
                 configName = configName,
                 pushFailedOrders = request.pushFailedOrders ?: copyTrading.pushFailedOrders,
                 pushFilteredOrders = request.pushFilteredOrders ?: copyTrading.pushFilteredOrders,
@@ -400,6 +470,12 @@ class CopyTradingService(
                     maxPositionValue = updated.maxPositionValue,
                     keywordFilterMode = updated.keywordFilterMode,
                     keywords = updated.keywords,
+                    marketCategoryMode = updated.marketCategoryMode,
+                    marketCategories = updated.marketCategories,
+                    marketIntervalMode = updated.marketIntervalMode,
+                    marketIntervals = updated.marketIntervals,
+                    marketSeriesMode = updated.marketSeriesMode,
+                    marketSeries = updated.marketSeries,
                     maxMarketEndDate = updated.maxMarketEndDate,
                     pushFilteredOrders = updated.pushFilteredOrders
                 )
@@ -639,6 +715,12 @@ class CopyTradingService(
             maxPositionValue = copyTrading.maxPositionValue?.toPlainString(),
             keywordFilterMode = copyTrading.keywordFilterMode,
             keywords = convertJsonToKeywords(copyTrading.keywords),
+            marketCategoryMode = copyTrading.marketCategoryMode,
+            marketCategories = convertJsonToKeywords(copyTrading.marketCategories),
+            marketIntervalMode = copyTrading.marketIntervalMode,
+            marketIntervals = jsonUtils.parseIntArray(copyTrading.marketIntervals).takeIf { it.isNotEmpty() },
+            marketSeriesMode = copyTrading.marketSeriesMode,
+            marketSeries = convertJsonToKeywords(copyTrading.marketSeries),
             configName = copyTrading.configName,
             pushFailedOrders = copyTrading.pushFailedOrders,
             pushFilteredOrders = copyTrading.pushFilteredOrders,
@@ -661,6 +743,33 @@ class CopyTradingService(
             logger.error("转换关键字列表为 JSON 失败", e)
             null
         }
+    }
+
+    private fun convertMarketCategoriesToJson(categories: List<String>?): String? {
+        val normalized = MarketFilterSupport.normalizeMarketCategories(categories)
+        return if (normalized.isEmpty()) null else gson.toJson(normalized)
+    }
+
+    private fun resolveMarketCategoriesJson(mode: String, categories: List<String>?): String? {
+        return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertMarketCategoriesToJson(categories)
+    }
+
+    private fun convertMarketIntervalsToJson(intervals: List<Int>?): String? {
+        val normalized = MarketFilterSupport.normalizeMarketIntervals(intervals)
+        return if (normalized.isEmpty()) null else gson.toJson(normalized)
+    }
+
+    private fun resolveMarketIntervalsJson(mode: String, intervals: List<Int>?): String? {
+        return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertMarketIntervalsToJson(intervals)
+    }
+
+    private fun convertMarketSeriesToJson(series: List<String>?): String? {
+        val normalized = MarketFilterSupport.normalizeMarketSeries(series)
+        return if (normalized.isEmpty()) null else gson.toJson(normalized)
+    }
+
+    private fun resolveMarketSeriesJson(mode: String, series: List<String>?): String? {
+        return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertMarketSeriesToJson(series)
     }
     
     /**
@@ -712,6 +821,12 @@ class CopyTradingService(
         val maxPositionValue: BigDecimal?,
         val keywordFilterMode: String,
         val keywords: String?,  // JSON 字符串
+        val marketCategoryMode: String,
+        val marketCategories: String?,  // JSON 字符串
+        val marketIntervalMode: String,
+        val marketIntervals: String?,  // JSON 字符串
+        val marketSeriesMode: String,
+        val marketSeries: String?,  // JSON 字符串
         val maxMarketEndDate: Long?,  // 市场截止时间限制（毫秒时间戳）
         val pushFilteredOrders: Boolean  // 推送已过滤订单（默认关闭）
     )
@@ -744,10 +859,36 @@ class CopyTradingService(
             maxDailyVolume = config.maxDailyVolume
         )
         CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()?.let { return it }
-        return SmallOrderAggregationSupport.validateConfig(
+        SmallOrderAggregationSupport.validateConfig(
             enabled = config.smallOrderAggregationEnabled,
             windowSeconds = config.smallOrderAggregationWindowSeconds
-        ).firstOrNull()
+        ).firstOrNull()?.let { return it }
+
+        val marketCategoryMode = MarketFilterSupport.normalizeFilterMode(config.marketCategoryMode)
+        MarketFilterSupport.validateFilterMode(marketCategoryMode, "marketCategoryMode")?.let { return it }
+        MarketFilterSupport.validateFilterValues(
+            mode = marketCategoryMode,
+            values = jsonUtils.parseStringArray(config.marketCategories),
+            fieldLabel = "市场分类过滤"
+        )?.let { return it }
+
+        val marketIntervalMode = MarketFilterSupport.normalizeFilterMode(config.marketIntervalMode)
+        MarketFilterSupport.validateFilterMode(marketIntervalMode, "marketIntervalMode")?.let { return it }
+        MarketFilterSupport.validateFilterValues(
+            mode = marketIntervalMode,
+            values = jsonUtils.parseIntArray(config.marketIntervals),
+            fieldLabel = "市场周期过滤"
+        )?.let { return it }
+
+        val marketSeriesMode = MarketFilterSupport.normalizeFilterMode(config.marketSeriesMode)
+        MarketFilterSupport.validateFilterMode(marketSeriesMode, "marketSeriesMode")?.let { return it }
+        MarketFilterSupport.validateFilterValues(
+            mode = marketSeriesMode,
+            values = jsonUtils.parseStringArray(config.marketSeries),
+            fieldLabel = "市场系列过滤"
+        )?.let { return it }
+
+        return null
     }
 
     private fun buildDiagnosticsFailureReason(diagnostics: AccountSetupStatusDto): String {

@@ -336,7 +336,9 @@ data class TradeResponse(
     val user: String?,
     val outcomeIndex: Int? = null,  // 结果索引（0=YES, 1=NO）
     val outcome: String? = null,   // 结果名称（如 "Up", "Down"）
-    val tokenId: String? = null    // CLOB tokenId（链上解析时从 ERC1155 取得，与 Gamma clobTokenIds 一致，用于下单）
+    val tokenId: String? = null,    // CLOB tokenId（链上解析时从 ERC1155 取得，与 Gamma clobTokenIds 一致，用于下单）
+    val slug: String? = null,       // 市场 slug（优先用于本地推导周期/系列）
+    val eventSlug: String? = null   // 事件 slug（当 slug 不可用时的兜底）
 )
 
 /**

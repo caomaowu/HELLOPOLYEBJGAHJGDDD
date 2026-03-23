@@ -21,6 +21,10 @@ class SmallOrderAggregationService {
         val tokenId: String,
         val marketId: String,
         val outcomeIndex: Int?,
+        var marketSlug: String?,
+        var marketEventSlug: String?,
+        var seriesSlugPrefix: String?,
+        var intervalSeconds: Int?,
         val trades: MutableList<AggregatedTradeItem>,
         val leaderTradeIds: MutableSet<String>,
         val firstBufferedAt: Long,
@@ -63,6 +67,10 @@ class SmallOrderAggregationService {
                     tokenId = request.tokenId,
                     marketId = request.marketId,
                     outcomeIndex = request.outcomeIndex,
+                    marketSlug = request.marketSlug,
+                    marketEventSlug = request.marketEventSlug,
+                    seriesSlugPrefix = request.seriesSlugPrefix,
+                    intervalSeconds = request.intervalSeconds,
                     trades = mutableListOf(tradeItem),
                     leaderTradeIds = linkedSetOf(request.leaderTradeId),
                     firstBufferedAt = request.bufferedAt,
@@ -75,6 +83,10 @@ class SmallOrderAggregationService {
                 } else {
                     existing.trades += tradeItem
                     existing.lastBufferedAt = request.bufferedAt
+                    existing.marketSlug = existing.marketSlug ?: request.marketSlug
+                    existing.marketEventSlug = existing.marketEventSlug ?: request.marketEventSlug
+                    existing.seriesSlugPrefix = existing.seriesSlugPrefix ?: request.seriesSlugPrefix
+                    existing.intervalSeconds = existing.intervalSeconds ?: request.intervalSeconds
                 }
                 existing
             }
@@ -195,6 +207,10 @@ class SmallOrderAggregationService {
                     tokenId = aggregation.tokenId,
                     marketId = aggregation.marketId,
                     outcomeIndex = aggregation.outcomeIndex,
+                    marketSlug = aggregation.marketSlug,
+                    marketEventSlug = aggregation.marketEventSlug,
+                    seriesSlugPrefix = aggregation.seriesSlugPrefix,
+                    intervalSeconds = aggregation.intervalSeconds,
                     tradeCount = batch.trades.size,
                     totalLeaderQuantity = batch.totalLeaderQuantity,
                     totalLeaderOrderAmount = batch.totalLeaderOrderAmount,
@@ -247,6 +263,10 @@ class SmallOrderAggregationService {
             tokenId = tokenId,
             marketId = marketId,
             outcomeIndex = outcomeIndex,
+            marketSlug = marketSlug,
+            marketEventSlug = marketEventSlug,
+            seriesSlugPrefix = seriesSlugPrefix,
+            intervalSeconds = intervalSeconds,
             trades = trades.toList(),
             firstBufferedAt = firstBufferedAt,
             lastBufferedAt = lastBufferedAt,

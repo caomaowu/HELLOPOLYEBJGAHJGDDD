@@ -1,15 +1,59 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Space, Tag, Popconfirm, message, Input, Modal, Form, Radio, InputNumber, Switch, Divider, Spin } from 'antd'
+import { Card, Table, Button, Space, Tag, Popconfirm, message, Input, Modal, Form, Radio, InputNumber, Switch, Divider, Spin, Select } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { CopyTradingTemplate } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
+import { formatCopyModeSummary, formatMarketFilterSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
 import MultiplierTierEditor from '../components/MultiplierTierEditor'
 
 const { Search } = Input
+
+type MarketFilterMode = 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
+
+type TemplateWithMarketFilters = CopyTradingTemplate & {
+  marketCategoryMode?: MarketFilterMode
+  marketCategories?: string[]
+  marketIntervalMode?: MarketFilterMode
+  marketIntervals?: Array<number | string>
+  marketSeriesMode?: MarketFilterMode
+  marketSeries?: string[]
+}
+
+const MARKET_CATEGORY_OPTIONS = [
+  { label: 'sports', value: 'sports' },
+  { label: 'crypto', value: 'crypto' }
+]
+
+const MARKET_INTERVAL_OPTIONS = [
+  { label: '5m', value: 300 },
+  { label: '15m', value: 900 },
+  { label: '1h', value: 3600 },
+  { label: '4h', value: 14400 },
+  { label: '1d', value: 86400 }
+]
+
+const normalizeStringList = (values: unknown): string[] => {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)))
+}
+
+const normalizeIntervalList = (values: unknown): number[] => {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+    )
+  )
+}
 
 const TemplateList: React.FC = () => {
   const { t, i18n } = useTranslation()
@@ -60,40 +104,47 @@ const TemplateList: React.FC = () => {
   }
   
   const handleCopy = (template: CopyTradingTemplate) => {
-    setSourceTemplate(template)
-    setCopyMode(template.copyMode)
-    setCopyMultiplierMode((template.multiplierMode || 'NONE') as 'NONE' | 'SINGLE' | 'TIERED')
+    const sourceTemplate = template as TemplateWithMarketFilters
+    setSourceTemplate(sourceTemplate)
+    setCopyMode(sourceTemplate.copyMode)
+    setCopyMultiplierMode((sourceTemplate.multiplierMode || 'NONE') as 'NONE' | 'SINGLE' | 'TIERED')
     
     // 填充表单数据
     copyForm.setFieldsValue({
-      templateName: `${template.templateName}-${t('templateList.copySuffix') || '副本'}`,
-      copyMode: template.copyMode,
-      copyRatio: template.copyRatio ? parseFloat(template.copyRatio) * 100 : 100,
-      fixedAmount: template.fixedAmount ? parseFloat(template.fixedAmount) : undefined,
-      adaptiveMinRatio: template.adaptiveMinRatio ? parseFloat(template.adaptiveMinRatio) * 100 : undefined,
-      adaptiveMaxRatio: template.adaptiveMaxRatio ? parseFloat(template.adaptiveMaxRatio) * 100 : undefined,
-      adaptiveThreshold: template.adaptiveThreshold ? parseFloat(template.adaptiveThreshold) : undefined,
-      multiplierMode: template.multiplierMode || 'NONE',
-      tradeMultiplier: template.tradeMultiplier ? parseFloat(template.tradeMultiplier) : undefined,
-      tieredMultipliers: template.tieredMultipliers?.map((tier) => ({
+      templateName: `${sourceTemplate.templateName}-${t('templateList.copySuffix') || '副本'}`,
+      copyMode: sourceTemplate.copyMode,
+      copyRatio: sourceTemplate.copyRatio ? parseFloat(sourceTemplate.copyRatio) * 100 : 100,
+      fixedAmount: sourceTemplate.fixedAmount ? parseFloat(sourceTemplate.fixedAmount) : undefined,
+      adaptiveMinRatio: sourceTemplate.adaptiveMinRatio ? parseFloat(sourceTemplate.adaptiveMinRatio) * 100 : undefined,
+      adaptiveMaxRatio: sourceTemplate.adaptiveMaxRatio ? parseFloat(sourceTemplate.adaptiveMaxRatio) * 100 : undefined,
+      adaptiveThreshold: sourceTemplate.adaptiveThreshold ? parseFloat(sourceTemplate.adaptiveThreshold) : undefined,
+      multiplierMode: sourceTemplate.multiplierMode || 'NONE',
+      tradeMultiplier: sourceTemplate.tradeMultiplier ? parseFloat(sourceTemplate.tradeMultiplier) : undefined,
+      tieredMultipliers: sourceTemplate.tieredMultipliers?.map((tier) => ({
         min: parseFloat(tier.min),
         max: tier.max != null ? parseFloat(tier.max) : undefined,
         multiplier: parseFloat(tier.multiplier)
       })),
-      maxOrderSize: template.maxOrderSize ? parseFloat(template.maxOrderSize) : undefined,
-      minOrderSize: template.minOrderSize ? parseFloat(template.minOrderSize) : undefined,
-      maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
-      maxDailyOrders: template.maxDailyOrders,
-      maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
-      smallOrderAggregationEnabled: template.smallOrderAggregationEnabled ?? false,
-      smallOrderAggregationWindowSeconds: template.smallOrderAggregationWindowSeconds ?? 300,
-      priceTolerance: parseFloat(template.priceTolerance),
-      supportSell: template.supportSell,
-      pushFilteredOrders: template.pushFilteredOrders ?? false,
-      minOrderDepth: template.minOrderDepth ? parseFloat(template.minOrderDepth) : undefined,
-      maxSpread: template.maxSpread ? parseFloat(template.maxSpread) : undefined,
-      minPrice: template.minPrice ? parseFloat(template.minPrice) : undefined,
-      maxPrice: template.maxPrice ? parseFloat(template.maxPrice) : undefined
+      maxOrderSize: sourceTemplate.maxOrderSize ? parseFloat(sourceTemplate.maxOrderSize) : undefined,
+      minOrderSize: sourceTemplate.minOrderSize ? parseFloat(sourceTemplate.minOrderSize) : undefined,
+      maxDailyLoss: sourceTemplate.maxDailyLoss ? parseFloat(sourceTemplate.maxDailyLoss) : undefined,
+      maxDailyOrders: sourceTemplate.maxDailyOrders,
+      maxDailyVolume: sourceTemplate.maxDailyVolume ? parseFloat(sourceTemplate.maxDailyVolume) : undefined,
+      smallOrderAggregationEnabled: sourceTemplate.smallOrderAggregationEnabled ?? false,
+      smallOrderAggregationWindowSeconds: sourceTemplate.smallOrderAggregationWindowSeconds ?? 300,
+      priceTolerance: parseFloat(sourceTemplate.priceTolerance),
+      supportSell: sourceTemplate.supportSell,
+      pushFilteredOrders: sourceTemplate.pushFilteredOrders ?? false,
+      minOrderDepth: sourceTemplate.minOrderDepth ? parseFloat(sourceTemplate.minOrderDepth) : undefined,
+      maxSpread: sourceTemplate.maxSpread ? parseFloat(sourceTemplate.maxSpread) : undefined,
+      minPrice: sourceTemplate.minPrice ? parseFloat(sourceTemplate.minPrice) : undefined,
+      maxPrice: sourceTemplate.maxPrice ? parseFloat(sourceTemplate.maxPrice) : undefined,
+      marketCategoryMode: sourceTemplate.marketCategoryMode || 'DISABLED',
+      marketCategories: normalizeStringList(sourceTemplate.marketCategories),
+      marketIntervalMode: sourceTemplate.marketIntervalMode || 'DISABLED',
+      marketIntervals: normalizeIntervalList(sourceTemplate.marketIntervals),
+      marketSeriesMode: sourceTemplate.marketSeriesMode || 'DISABLED',
+      marketSeries: normalizeStringList(sourceTemplate.marketSeries)
     })
     
     setCopyModalVisible(true)
@@ -131,6 +182,28 @@ const TemplateList: React.FC = () => {
       message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
       return
     }
+
+    const marketCategories = normalizeStringList(values.marketCategories)
+    const marketIntervals = normalizeIntervalList(values.marketIntervals)
+    const marketSeries = normalizeStringList(values.marketSeries)
+    const marketCategoryMode = (values.marketCategoryMode || 'DISABLED') as MarketFilterMode
+    const marketIntervalMode = (values.marketIntervalMode || 'DISABLED') as MarketFilterMode
+    const marketSeriesMode = (values.marketSeriesMode || 'DISABLED') as MarketFilterMode
+
+    if (marketCategoryMode !== 'DISABLED' && marketCategories.length === 0) {
+      message.error('市场分类模式已启用时，至少选择一个分类')
+      return
+    }
+
+    if (marketIntervalMode !== 'DISABLED' && marketIntervals.length === 0) {
+      message.error('市场周期模式已启用时，至少选择一个周期')
+      return
+    }
+
+    if (marketSeriesMode !== 'DISABLED' && marketSeries.length === 0) {
+      message.error('市场系列模式已启用时，至少输入一个系列')
+      return
+    }
     
     setCopyLoading(true)
     try {
@@ -162,6 +235,12 @@ const TemplateList: React.FC = () => {
         maxSpread: values.maxSpread?.toString(),
         minPrice: values.minPrice?.toString(),
         maxPrice: values.maxPrice?.toString(),
+        marketCategoryMode,
+        marketCategories: marketCategoryMode !== 'DISABLED' ? marketCategories : undefined,
+        marketIntervalMode,
+        marketIntervals: marketIntervalMode !== 'DISABLED' ? marketIntervals : undefined,
+        marketSeriesMode,
+        marketSeries: marketSeriesMode !== 'DISABLED' ? marketSeries : undefined,
         pushFilteredOrders: values.pushFilteredOrders ?? false
       })
       
@@ -190,6 +269,28 @@ const TemplateList: React.FC = () => {
   const filteredTemplates = templates.filter(template =>
     template.templateName.toLowerCase().includes(searchText.toLowerCase())
   )
+
+  const renderMarketFilterSummary = (record: CopyTradingTemplate) => {
+    const summaryItems = formatMarketFilterSummary(record)
+
+    if (summaryItems.length === 0) {
+      return (
+        <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>
+          {t('templateList.noMarketFilterSummary') || '未设置市场过滤'}
+        </div>
+      )
+    }
+
+    return (
+      <Space wrap size={[4, 4]} style={{ marginTop: 4 }}>
+        {summaryItems.map((item) => (
+          <Tag key={item} style={{ marginInlineEnd: 0 }}>
+            {item}
+          </Tag>
+        ))}
+      </Space>
+    )
+  }
   
   const columns = [
     {
@@ -229,6 +330,7 @@ const TemplateList: React.FC = () => {
                 {(t('templateList.smallOrderAggregationSummary') || '小额单聚合')}: {record.smallOrderAggregationWindowSeconds || 300}s
               </div>
             )}
+            {renderMarketFilterSummary(record)}
           </div>
         )
       }
@@ -397,6 +499,7 @@ const TemplateList: React.FC = () => {
                             {formatMultiplierSummary(template.multiplierMode, template.tradeMultiplier, template.tieredMultipliers)}
                           </div>
                         )}
+                        {renderMarketFilterSummary(template)}
                       </div>
                       
                       {/* 其他配置信息 */}
@@ -728,6 +831,96 @@ const TemplateList: React.FC = () => {
           </Form.Item>
           
           <Divider>过滤条件（可选）</Divider>
+
+          <Form.Item
+            label="分类过滤模式"
+            name="marketCategoryMode"
+            tooltip="按市场分类过滤模板可跟单的市场，支持 sports 和 crypto"
+            initialValue="DISABLED"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">不启用</Radio>
+              <Radio value="WHITELIST">白名单</Radio>
+              <Radio value="BLACKLIST">黑名单</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketCategoryMode !== currentValues.marketCategoryMode}>
+            {({ getFieldValue }) => getFieldValue('marketCategoryMode') !== 'DISABLED' ? (
+              <Form.Item
+                label="市场分类"
+                name="marketCategories"
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder="请选择市场分类"
+                  options={MARKET_CATEGORY_OPTIONS}
+                />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label="周期过滤模式"
+            name="marketIntervalMode"
+            tooltip="按市场周期过滤模板可跟单的市场"
+            initialValue="DISABLED"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">不启用</Radio>
+              <Radio value="WHITELIST">白名单</Radio>
+              <Radio value="BLACKLIST">黑名单</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketIntervalMode !== currentValues.marketIntervalMode}>
+            {({ getFieldValue }) => getFieldValue('marketIntervalMode') !== 'DISABLED' ? (
+              <Form.Item
+                label="市场周期"
+                name="marketIntervals"
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder="请选择市场周期"
+                  options={MARKET_INTERVAL_OPTIONS}
+                />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label="系列过滤模式"
+            name="marketSeriesMode"
+            tooltip="按市场系列过滤模板可跟单的市场，例如 btc-updown-15m"
+            initialValue="DISABLED"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">不启用</Radio>
+              <Radio value="WHITELIST">白名单</Radio>
+              <Radio value="BLACKLIST">黑名单</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketSeriesMode !== currentValues.marketSeriesMode}>
+            {({ getFieldValue }) => getFieldValue('marketSeriesMode') !== 'DISABLED' ? (
+              <Form.Item
+                label="市场系列"
+                name="marketSeries"
+              >
+                <Select
+                  mode="tags"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder="请输入市场系列，按回车添加"
+                  tokenSeparators={[',']}
+                />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
           
           <Form.Item
             label="最小订单深度 (USDC)"

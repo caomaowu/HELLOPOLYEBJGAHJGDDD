@@ -3,7 +3,13 @@ import { Modal, Form, Button, Switch, message, Space, Radio, InputNumber, Table,
 import { SaveOutlined, FileTextOutlined, PlusOutlined } from '@ant-design/icons'
 import { apiService } from '../../services/api'
 import { useAccountStore } from '../../store/accountStore'
-import type { Leader, CopyTradingTemplate, CopyTradingCreateRequest } from '../../types'
+import type {
+  Leader,
+  CopyTradingTemplate,
+  CopyTradingCreateRequest,
+  FilterMode,
+  MarketCategoryOption,
+} from '../../types'
 import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../../utils'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
@@ -13,6 +19,19 @@ import LeaderSelect from '../../components/LeaderSelect'
 import MultiplierTierEditor from '../../components/MultiplierTierEditor'
 
 const { Option } = Select
+
+const MARKET_CATEGORY_OPTIONS: Array<{ label: string; value: MarketCategoryOption }> = [
+  { label: 'Crypto', value: 'crypto' },
+  { label: 'Sports', value: 'sports' },
+]
+
+const MARKET_INTERVAL_OPTIONS = [
+  { label: '5m', value: 300 },
+  { label: '15m', value: 900 },
+  { label: '1h', value: 3600 },
+  { label: '4h', value: 14400 },
+  { label: '1d', value: 86400 },
+]
 
 interface AddModalProps {
   open: boolean
@@ -39,6 +58,12 @@ interface AddModalProps {
     supportSell?: boolean
     keywordFilterMode?: string
     keywords?: string[]
+    marketCategoryMode?: FilterMode
+    marketCategories?: MarketCategoryOption[]
+    marketIntervalMode?: FilterMode
+    marketIntervals?: number[]
+    marketSeriesMode?: FilterMode
+    marketSeries?: string[]
     maxPositionValue?: number
     configName?: string
   }
@@ -147,6 +172,12 @@ const AddModal: React.FC<AddModalProps> = ({
       smallOrderAggregationWindowSeconds: config.smallOrderAggregationWindowSeconds,
       supportSell: config.supportSell,
       keywordFilterMode: config.keywordFilterMode || 'DISABLED',
+      marketCategoryMode: config.marketCategoryMode || 'DISABLED',
+      marketCategories: config.marketCategories,
+      marketIntervalMode: config.marketIntervalMode || 'DISABLED',
+      marketIntervals: config.marketIntervals,
+      marketSeriesMode: config.marketSeriesMode || 'DISABLED',
+      marketSeries: config.marketSeries,
       maxPositionValue: config.maxPositionValue
     }
     console.log('[AddModal] fillPreFilledConfig: setting form values:', formValues)
@@ -198,7 +229,10 @@ const AddModal: React.FC<AddModalProps> = ({
           smallOrderAggregationEnabled: false,
           smallOrderAggregationWindowSeconds: 300,
           supportSell: true,
-          keywordFilterMode: 'DISABLED'
+          keywordFilterMode: 'DISABLED',
+          marketCategoryMode: 'DISABLED',
+          marketIntervalMode: 'DISABLED',
+          marketSeriesMode: 'DISABLED'
         })
         setCopyMode('RATIO')
         setMultiplierMode('NONE')
@@ -267,7 +301,13 @@ const AddModal: React.FC<AddModalProps> = ({
       minPrice: template.minPrice ? parseFloat(template.minPrice) : undefined,
       maxPrice: template.maxPrice ? parseFloat(template.maxPrice) : undefined,
       maxPositionValue: (template as any).maxPositionValue ? parseFloat((template as any).maxPositionValue) : undefined,
-      pushFilteredOrders: template.pushFilteredOrders ?? false
+      pushFilteredOrders: template.pushFilteredOrders ?? false,
+      marketCategoryMode: template.marketCategoryMode || 'DISABLED',
+      marketCategories: template.marketCategories,
+      marketIntervalMode: template.marketIntervalMode || 'DISABLED',
+      marketIntervals: template.marketIntervals,
+      marketSeriesMode: template.marketSeriesMode || 'DISABLED',
+      marketSeries: template.marketSeries
     })
     setCopyMode(template.copyMode)
     setMultiplierMode(template.multiplierMode || 'NONE')
@@ -369,6 +409,30 @@ const AddModal: React.FC<AddModalProps> = ({
       return
     }
 
+    if (
+      (values.marketCategoryMode === 'WHITELIST' || values.marketCategoryMode === 'BLACKLIST') &&
+      (!values.marketCategories || values.marketCategories.length === 0)
+    ) {
+      message.error('请至少选择一个市场分类')
+      return
+    }
+
+    if (
+      (values.marketIntervalMode === 'WHITELIST' || values.marketIntervalMode === 'BLACKLIST') &&
+      (!values.marketIntervals || values.marketIntervals.length === 0)
+    ) {
+      message.error('请至少选择一个市场周期')
+      return
+    }
+
+    if (
+      (values.marketSeriesMode === 'WHITELIST' || values.marketSeriesMode === 'BLACKLIST') &&
+      (!values.marketSeries || values.marketSeries.length === 0)
+    ) {
+      message.error('请至少输入一个市场系列')
+      return
+    }
+
     const normalizedTierResult = values.multiplierMode === 'TIERED'
       ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
       : null
@@ -427,6 +491,18 @@ const AddModal: React.FC<AddModalProps> = ({
         keywordFilterMode: values.keywordFilterMode || 'DISABLED',
         keywords: (values.keywordFilterMode === 'WHITELIST' || values.keywordFilterMode === 'BLACKLIST') 
           ? keywords 
+          : undefined,
+        marketCategoryMode: values.marketCategoryMode || 'DISABLED',
+        marketCategories: (values.marketCategoryMode === 'WHITELIST' || values.marketCategoryMode === 'BLACKLIST')
+          ? values.marketCategories
+          : undefined,
+        marketIntervalMode: values.marketIntervalMode || 'DISABLED',
+        marketIntervals: (values.marketIntervalMode === 'WHITELIST' || values.marketIntervalMode === 'BLACKLIST')
+          ? values.marketIntervals
+          : undefined,
+        marketSeriesMode: values.marketSeriesMode || 'DISABLED',
+        marketSeries: (values.marketSeriesMode === 'WHITELIST' || values.marketSeriesMode === 'BLACKLIST')
+          ? (values.marketSeries as string[] | undefined)?.map((item) => item.trim()).filter(Boolean)
           : undefined,
         configName: values.configName?.trim(),
         pushFailedOrders: values.pushFailedOrders ?? false,
@@ -487,7 +563,10 @@ const AddModal: React.FC<AddModalProps> = ({
             supportSell: true,
             pushFailedOrders: false,
             pushFilteredOrders: false,
-            keywordFilterMode: 'DISABLED'
+            keywordFilterMode: 'DISABLED',
+            marketCategoryMode: 'DISABLED',
+            marketIntervalMode: 'DISABLED',
+            marketSeriesMode: 'DISABLED'
           }}
         >
           {/* 基础信息 */}
@@ -1198,6 +1277,119 @@ const AddModal: React.FC<AddModalProps> = ({
             <div style={{ fontSize: 12, color: '#999' }}>
               {t('copyTradingAdd.maxMarketEndDateNote') || '💡 说明：不填写表示不启用此限制'}
             </div>
+          </Form.Item>
+
+          <Divider>市场过滤</Divider>
+
+          <Form.Item
+            label="市场分类过滤"
+            name="marketCategoryMode"
+            tooltip="按市场分类控制是否跟单，例如只跟 crypto 或 sports"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('copyTradingAdd.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('copyTradingAdd.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('copyTradingAdd.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.marketCategoryMode !== currentValues.marketCategoryMode
+          }>
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('marketCategoryMode')
+              if (mode !== 'WHITELIST' && mode !== 'BLACKLIST') {
+                return null
+              }
+
+              return (
+                <Form.Item
+                  label="市场分类"
+                  name="marketCategories"
+                  rules={[{ required: true, message: '请至少选择一个市场分类' }]}
+                >
+                  <Select
+                    mode="multiple"
+                    options={MARKET_CATEGORY_OPTIONS}
+                    placeholder="选择需要过滤的市场分类"
+                  />
+                </Form.Item>
+              )
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="市场周期过滤"
+            name="marketIntervalMode"
+            tooltip="按市场原始周期过滤，例如只跟 15m，不跟 5m 或 1h"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('copyTradingAdd.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('copyTradingAdd.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('copyTradingAdd.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.marketIntervalMode !== currentValues.marketIntervalMode
+          }>
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('marketIntervalMode')
+              if (mode !== 'WHITELIST' && mode !== 'BLACKLIST') {
+                return null
+              }
+
+              return (
+                <Form.Item
+                  label="市场周期"
+                  name="marketIntervals"
+                  rules={[{ required: true, message: '请至少选择一个市场周期' }]}
+                >
+                  <Select
+                    mode="multiple"
+                    options={MARKET_INTERVAL_OPTIONS}
+                    placeholder="选择需要过滤的市场周期"
+                  />
+                </Form.Item>
+              )
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="市场系列过滤"
+            name="marketSeriesMode"
+            tooltip="按系列 slug 前缀过滤，例如 btc-updown-15m"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('copyTradingAdd.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('copyTradingAdd.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('copyTradingAdd.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.marketSeriesMode !== currentValues.marketSeriesMode
+          }>
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('marketSeriesMode')
+              if (mode !== 'WHITELIST' && mode !== 'BLACKLIST') {
+                return null
+              }
+
+              return (
+                <Form.Item
+                  label="市场系列"
+                  name="marketSeries"
+                  rules={[{ required: true, message: '请至少输入一个市场系列' }]}
+                >
+                  <Select
+                    mode="tags"
+                    tokenSeparators={[',', ' ']}
+                    placeholder="输入系列前缀，例如 btc-updown-15m"
+                  />
+                </Form.Item>
+              )
+            }}
           </Form.Item>
           
           <Divider>{t('copyTradingAdd.advancedSettings') || '高级设置'}</Divider>

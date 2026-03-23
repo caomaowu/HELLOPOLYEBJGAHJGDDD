@@ -116,6 +116,24 @@ data class CopyTrading(
     
     @Column(name = "keywords", columnDefinition = "JSON")
     val keywords: String? = null,  // 关键字列表（JSON数组），例如：["NBA", "足球", "NBA总决赛"]，当keywordFilterMode为DISABLED时为NULL
+
+    @Column(name = "market_category_mode", nullable = false, length = 20)
+    val marketCategoryMode: String = "DISABLED",  // 市场分类过滤模式：DISABLED/WHITELIST/BLACKLIST
+
+    @Column(name = "market_categories", columnDefinition = "JSON")
+    val marketCategories: String? = null,  // 市场分类过滤列表（JSON数组）
+
+    @Column(name = "market_interval_mode", nullable = false, length = 20)
+    val marketIntervalMode: String = "DISABLED",  // 市场周期过滤模式：DISABLED/WHITELIST/BLACKLIST
+
+    @Column(name = "market_intervals", columnDefinition = "JSON")
+    val marketIntervals: String? = null,  // 市场周期过滤列表（JSON数组，单位秒）
+
+    @Column(name = "market_series_mode", nullable = false, length = 20)
+    val marketSeriesMode: String = "DISABLED",  // 市场系列过滤模式：DISABLED/WHITELIST/BLACKLIST
+
+    @Column(name = "market_series", columnDefinition = "JSON")
+    val marketSeries: String? = null,  // 市场系列过滤列表（JSON数组，如 btc-updown-15m）
     
     // 新增配置字段
     @Column(name = "config_name", length = 255)

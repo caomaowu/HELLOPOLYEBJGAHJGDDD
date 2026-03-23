@@ -489,6 +489,9 @@ export interface MultiplierTier {
   multiplier: string
 }
 
+export type FilterMode = 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
+export type MarketCategoryOption = 'sports' | 'crypto'
+
 export interface CopyTradingTemplate {
   id: number
   templateName: string
@@ -515,6 +518,12 @@ export interface CopyTradingTemplate {
   maxSpread?: string
   minPrice?: string  // 最低价格（可选），NULL表示不限制最低价
   maxPrice?: string  // 最高价格（可选），NULL表示不限制最高价
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
   pushFilteredOrders?: boolean  // 推送已过滤订单（默认关闭）
   createdAt: number
   updatedAt: number
@@ -551,6 +560,17 @@ export interface TemplateCreateRequest {
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
+  minOrderDepth?: string
+  maxSpread?: string
+  minPrice?: string
+  maxPrice?: string
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
+  pushFilteredOrders?: boolean
 }
 
 /**
@@ -577,6 +597,17 @@ export interface TemplateUpdateRequest {
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
+  minOrderDepth?: string
+  maxSpread?: string
+  minPrice?: string
+  maxPrice?: string
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
+  pushFilteredOrders?: boolean
 }
 
 /**
@@ -603,6 +634,17 @@ export interface TemplateCopyRequest {
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
   supportSell?: boolean
+  minOrderDepth?: string
+  maxSpread?: string
+  minPrice?: string
+  maxPrice?: string
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
+  pushFilteredOrders?: boolean
 }
 
 /**
@@ -649,11 +691,18 @@ export interface CopyTrading {
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
   // 关键字过滤配置
-  keywordFilterMode?: 'DISABLED' | 'WHITELIST' | 'BLACKLIST'  // 关键字过滤模式
+  keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders: boolean  // 推送失败订单（默认关闭）
+  pushFilteredOrders?: boolean  // 推送已过滤订单（默认关闭）
   maxMarketEndDate?: number  // 市场截止时间限制（毫秒时间戳），仅跟单截止时间小于此时间的订单，NULL表示不启用
   createdAt: number
   updatedAt: number
@@ -707,8 +756,14 @@ export interface CopyTradingCreateRequest {
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
   // 关键字过滤配置
-  keywordFilterMode?: 'DISABLED' | 'WHITELIST' | 'BLACKLIST'  // 关键字过滤模式
+  keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders?: boolean  // 推送失败订单（可选）
@@ -754,8 +809,14 @@ export interface CopyTradingUpdateRequest {
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
   // 关键字过滤配置
-  keywordFilterMode?: 'DISABLED' | 'WHITELIST' | 'BLACKLIST'  // 关键字过滤模式
+  keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null
+  marketCategoryMode?: FilterMode
+  marketCategories?: MarketCategoryOption[]
+  marketIntervalMode?: FilterMode
+  marketIntervals?: number[]
+  marketSeriesMode?: FilterMode
+  marketSeries?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders?: boolean  // 推送失败订单（可选）
@@ -1087,6 +1148,18 @@ export interface CopyTradingStatistics {
   totalUnrealizedPnl: string
   totalPnl: string
   totalPnlPercent: string
+  executionLatencySummary?: ExecutionLatencySummary | null
+}
+
+export interface ExecutionLatencySummary {
+  sampleSize: number
+  totalLatencyEventCount: number
+  slowEventCount: number
+  verySlowEventCount: number
+  avgTotalLatencyMs?: number | null
+  maxTotalLatencyMs?: number | null
+  maxMarketMetaResolveMs?: number | null
+  maxFilterEvaluateMs?: number | null
 }
 
 /**
@@ -1308,6 +1381,8 @@ export interface CopyTradingExecutionEventListRequest {
   stage?: string
   source?: string
   status?: string
+  latencyMetric?: string
+  minLatencyMs?: number
   page?: number
   limit?: number
   startTime?: number
@@ -1334,6 +1409,10 @@ export interface CopyTradingAggregationGroupSnapshot {
   tokenId: string
   marketId: string
   outcomeIndex?: number | null
+  marketSlug?: string | null
+  marketEventSlug?: string | null
+  seriesSlugPrefix?: string | null
+  intervalSeconds?: number | null
   tradeCount: number
   totalLeaderQuantity: string
   totalLeaderOrderAmount: string

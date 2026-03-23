@@ -648,7 +648,9 @@ class PolymarketActivityWsService(
                     user = null, // Activity WS 中不需要
                     outcomeIndex = outcomeIndex,
                     outcome = outcome,
-                    tokenId = asset
+                    tokenId = asset,
+                    slug = payload.slug,
+                    eventSlug = payload.eventSlug
                 )
             )
         } catch (e: Exception) {

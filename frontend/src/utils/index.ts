@@ -211,6 +211,102 @@ export const formatCopyModeSummary = (config: {
   return `比例 ${formatNumber(config.copyRatio || '0', 4)}x`
 }
 
+type MarketFilterSummaryConfig = {
+  marketCategoryMode?: string | null
+  marketCategories?: Array<string | null | undefined> | null
+  marketIntervalMode?: string | null
+  marketIntervals?: Array<string | number | null | undefined> | null
+  marketSeriesMode?: string | null
+  marketSeries?: Array<string | null | undefined> | null
+  maxMarketEndDate?: number | null
+}
+
+const compactSummaryValues = (values: string[], maxItems = 2): string => {
+  if (values.length <= maxItems) {
+    return values.join(', ')
+  }
+
+  return `${values.slice(0, maxItems).join(', ')} +${values.length - maxItems}`
+}
+
+export const formatMarketIntervalLabel = (seconds: string | number | null | undefined): string => {
+  const numericSeconds = typeof seconds === 'string' ? Number(seconds) : seconds
+  if (!numericSeconds || !Number.isFinite(numericSeconds)) {
+    return ''
+  }
+
+  if (numericSeconds % 86400 === 0) {
+    return `${numericSeconds / 86400}d`
+  }
+  if (numericSeconds % 3600 === 0) {
+    return `${numericSeconds / 3600}h`
+  }
+  if (numericSeconds % 60 === 0) {
+    return `${numericSeconds / 60}m`
+  }
+  return `${numericSeconds}s`
+}
+
+export const formatDurationLabel = (durationMs: number | null | undefined): string => {
+  if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) {
+    return ''
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000)
+  if (totalSeconds % 86400 === 0) {
+    return `${totalSeconds / 86400}d`
+  }
+  if (totalSeconds % 3600 === 0) {
+    return `${totalSeconds / 3600}h`
+  }
+  if (totalSeconds % 60 === 0) {
+    return `${totalSeconds / 60}m`
+  }
+  return `${totalSeconds}s`
+}
+
+export const formatMarketFilterSummary = (config: MarketFilterSummaryConfig): string[] => {
+  const summary: string[] = []
+
+  const categoryValues = Array.from(
+    new Set((config.marketCategories || []).map((value) => String(value || '').trim()).filter(Boolean))
+  )
+  if (config.marketCategoryMode === 'WHITELIST' && categoryValues.length > 0) {
+    summary.push(`分类: ${compactSummaryValues(categoryValues)}`)
+  } else if (config.marketCategoryMode === 'BLACKLIST' && categoryValues.length > 0) {
+    summary.push(`分类排除: ${compactSummaryValues(categoryValues)}`)
+  }
+
+  const intervalValues = Array.from(
+    new Set(
+      (config.marketIntervals || [])
+        .map((value) => formatMarketIntervalLabel(value))
+        .filter(Boolean)
+    )
+  )
+  if (config.marketIntervalMode === 'WHITELIST' && intervalValues.length > 0) {
+    summary.push(`周期: ${compactSummaryValues(intervalValues)}`)
+  } else if (config.marketIntervalMode === 'BLACKLIST' && intervalValues.length > 0) {
+    summary.push(`周期排除: ${compactSummaryValues(intervalValues)}`)
+  }
+
+  const seriesValues = Array.from(
+    new Set((config.marketSeries || []).map((value) => String(value || '').trim()).filter(Boolean))
+  )
+  if (config.marketSeriesMode === 'WHITELIST' && seriesValues.length > 0) {
+    summary.push(`系列: ${compactSummaryValues(seriesValues)}`)
+  } else if (config.marketSeriesMode === 'BLACKLIST' && seriesValues.length > 0) {
+    summary.push(`系列排除: ${compactSummaryValues(seriesValues)}`)
+  }
+
+  const durationLabel = formatDurationLabel(config.maxMarketEndDate)
+  if (durationLabel) {
+    summary.push(`剩余<=${durationLabel}`)
+  }
+
+  return summary
+}
+
 type MultiplierTierInput = {
   min?: string | number | null
   max?: string | number | null

@@ -252,6 +252,64 @@ const CopyTradingStatisticsPage: React.FC = () => {
           </Col>
         </Row>
       </Card>
+
+      {statistics.executionLatencySummary && (
+        <Card title="执行延迟摘要" style={{ marginTop: 16 }}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={6}>
+              <Statistic
+                title="采样事件"
+                value={statistics.executionLatencySummary.sampleSize}
+                suffix="条"
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Statistic
+                title="慢单"
+                value={statistics.executionLatencySummary.slowEventCount}
+                suffix="条"
+                valueStyle={{ color: statistics.executionLatencySummary.slowEventCount > 0 ? '#d48806' : undefined }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Statistic
+                title="超慢单"
+                value={statistics.executionLatencySummary.verySlowEventCount}
+                suffix="条"
+                valueStyle={{ color: statistics.executionLatencySummary.verySlowEventCount > 0 ? '#cf1322' : undefined }}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <Statistic
+                title="最大总耗时"
+                value={statistics.executionLatencySummary.maxTotalLatencyMs ?? 0}
+                suffix="ms"
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Statistic
+                title="平均总耗时"
+                value={statistics.executionLatencySummary.avgTotalLatencyMs ?? 0}
+                suffix="ms"
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Statistic
+                title="最大元数据耗时"
+                value={statistics.executionLatencySummary.maxMarketMetaResolveMs ?? 0}
+                suffix="ms"
+              />
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Statistic
+                title="最大过滤耗时"
+                value={statistics.executionLatencySummary.maxFilterEvaluateMs ?? 0}
+                suffix="ms"
+              />
+            </Col>
+          </Row>
+        </Card>
+      )}
     </div>
   )
 }

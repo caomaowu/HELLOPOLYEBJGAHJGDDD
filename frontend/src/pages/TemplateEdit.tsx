@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Card, Form, Input, Button, Radio, InputNumber, Switch, message, Typography, Space, Divider } from 'antd'
+import { Card, Form, Input, Button, Radio, InputNumber, Switch, Select, message, Typography, Space, Divider } from 'antd'
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
 import type { CopyTradingTemplate } from '../types'
@@ -9,6 +9,50 @@ import MultiplierTierEditor from '../components/MultiplierTierEditor'
 import { validateAndNormalizeMultiplierTiers } from '../utils'
 
 const { Title } = Typography
+
+type MarketFilterMode = 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
+
+type TemplateWithMarketFilters = CopyTradingTemplate & {
+  marketCategoryMode?: MarketFilterMode
+  marketCategories?: string[]
+  marketIntervalMode?: MarketFilterMode
+  marketIntervals?: Array<number | string>
+  marketSeriesMode?: MarketFilterMode
+  marketSeries?: string[]
+}
+
+const MARKET_CATEGORY_OPTIONS = [
+  { label: 'sports', value: 'sports' },
+  { label: 'crypto', value: 'crypto' }
+]
+
+const MARKET_INTERVAL_OPTIONS = [
+  { label: '5m', value: 300 },
+  { label: '15m', value: 900 },
+  { label: '1h', value: 3600 },
+  { label: '4h', value: 14400 },
+  { label: '1d', value: 86400 }
+]
+
+const normalizeStringList = (values: unknown): string[] => {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return Array.from(new Set(values.map((value) => String(value).trim()).filter(Boolean)))
+}
+
+const normalizeIntervalList = (values: unknown): number[] => {
+  if (!Array.isArray(values)) {
+    return []
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value))
+    )
+  )
+}
 
 const TemplateEdit: React.FC = () => {
   const { t } = useTranslation()
@@ -31,7 +75,7 @@ const TemplateEdit: React.FC = () => {
     try {
       const response = await apiService.templates.detail({ templateId })
       if (response.data.code === 0 && response.data.data) {
-        const template: CopyTradingTemplate = response.data.data
+        const template: TemplateWithMarketFilters = response.data.data
         setCopyMode(template.copyMode)
         setMultiplierMode((template.multiplierMode || 'NONE') as 'NONE' | 'SINGLE' | 'TIERED')
         form.setFieldsValue({
@@ -59,6 +103,12 @@ const TemplateEdit: React.FC = () => {
           maxSpread: template.maxSpread ? parseFloat(template.maxSpread) : undefined,
           minPrice: template.minPrice ? parseFloat(template.minPrice) : undefined,
           maxPrice: template.maxPrice ? parseFloat(template.maxPrice) : undefined,
+          marketCategoryMode: template.marketCategoryMode || 'DISABLED',
+          marketCategories: normalizeStringList(template.marketCategories),
+          marketIntervalMode: template.marketIntervalMode || 'DISABLED',
+          marketIntervals: normalizeIntervalList(template.marketIntervals),
+          marketSeriesMode: template.marketSeriesMode || 'DISABLED',
+          marketSeries: normalizeStringList(template.marketSeries),
           pushFilteredOrders: template.pushFilteredOrders ?? false
         })
       } else {
@@ -107,6 +157,28 @@ const TemplateEdit: React.FC = () => {
       message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
       return
     }
+
+    const marketCategories = normalizeStringList(values.marketCategories)
+    const marketIntervals = normalizeIntervalList(values.marketIntervals)
+    const marketSeries = normalizeStringList(values.marketSeries)
+    const marketCategoryMode = (values.marketCategoryMode || 'DISABLED') as MarketFilterMode
+    const marketIntervalMode = (values.marketIntervalMode || 'DISABLED') as MarketFilterMode
+    const marketSeriesMode = (values.marketSeriesMode || 'DISABLED') as MarketFilterMode
+
+    if (marketCategoryMode !== 'DISABLED' && marketCategories.length === 0) {
+      message.error('市场分类模式已启用时，至少选择一个分类')
+      return
+    }
+
+    if (marketIntervalMode !== 'DISABLED' && marketIntervals.length === 0) {
+      message.error('市场周期模式已启用时，至少选择一个周期')
+      return
+    }
+
+    if (marketSeriesMode !== 'DISABLED' && marketSeries.length === 0) {
+      message.error('市场系列模式已启用时，至少输入一个系列')
+      return
+    }
     
     setLoading(true)
     try {
@@ -139,6 +211,12 @@ const TemplateEdit: React.FC = () => {
         maxSpread: values.maxSpread?.toString(),
         minPrice: values.minPrice?.toString(),
         maxPrice: values.maxPrice?.toString(),
+        marketCategoryMode,
+        marketCategories: marketCategoryMode !== 'DISABLED' ? marketCategories : undefined,
+        marketIntervalMode,
+        marketIntervals: marketIntervalMode !== 'DISABLED' ? marketIntervals : undefined,
+        marketSeriesMode,
+        marketSeries: marketSeriesMode !== 'DISABLED' ? marketSeries : undefined,
         pushFilteredOrders: values.pushFilteredOrders
       })
       
@@ -408,6 +486,95 @@ const TemplateEdit: React.FC = () => {
                 return num.toString().replace(/\.0+$/, '')
               }}
             />
+          </Form.Item>
+
+          <Divider>{t('templateEdit.marketFilter') || '市场过滤'}</Divider>
+
+          <Form.Item
+            label={t('templateEdit.marketCategoryMode') || '分类过滤模式'}
+            name="marketCategoryMode"
+            tooltip={t('templateEdit.marketCategoryModeTooltip') || '按市场分类过滤模板可跟单的市场，支持 sports 和 crypto'}
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('templateEdit.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('templateEdit.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('templateEdit.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketCategoryMode !== currentValues.marketCategoryMode}>
+            {({ getFieldValue }) => getFieldValue('marketCategoryMode') !== 'DISABLED' ? (
+              <Form.Item
+                label={t('templateEdit.marketCategories') || '市场分类'}
+                name="marketCategories"
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder={t('templateEdit.marketCategoriesPlaceholder') || '请选择市场分类'}
+                  options={MARKET_CATEGORY_OPTIONS}
+                />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateEdit.marketIntervalMode') || '周期过滤模式'}
+            name="marketIntervalMode"
+            tooltip={t('templateEdit.marketIntervalModeTooltip') || '按市场周期过滤模板可跟单的市场'}
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('templateEdit.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('templateEdit.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('templateEdit.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketIntervalMode !== currentValues.marketIntervalMode}>
+            {({ getFieldValue }) => getFieldValue('marketIntervalMode') !== 'DISABLED' ? (
+              <Form.Item
+                label={t('templateEdit.marketIntervals') || '市场周期'}
+                name="marketIntervals"
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder={t('templateEdit.marketIntervalsPlaceholder') || '请选择市场周期'}
+                  options={MARKET_INTERVAL_OPTIONS}
+                />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label={t('templateEdit.marketSeriesMode') || '系列过滤模式'}
+            name="marketSeriesMode"
+            tooltip={t('templateEdit.marketSeriesModeTooltip') || '按市场系列过滤模板可跟单的市场，例如 btc-updown-15m'}
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('templateEdit.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('templateEdit.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('templateEdit.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.marketSeriesMode !== currentValues.marketSeriesMode}>
+            {({ getFieldValue }) => getFieldValue('marketSeriesMode') !== 'DISABLED' ? (
+              <Form.Item
+                label={t('templateEdit.marketSeries') || '市场系列'}
+                name="marketSeries"
+              >
+                <Select
+                  mode="tags"
+                  allowClear
+                  style={{ width: '100%' }}
+                  placeholder={t('templateEdit.marketSeriesPlaceholder') || '请输入市场系列，按回车添加'}
+                  tokenSeparators={[',']}
+                />
+              </Form.Item>
+            ) : null}
           </Form.Item>
           
           <Form.Item

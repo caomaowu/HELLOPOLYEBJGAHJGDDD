@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Divider, Modal, Select, Spin, Table, Tag } from 'antd'
+import { Button, Card, Divider, Modal, Select, Spin, Table, Tag } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
 import { apiService } from '../../services/api'
@@ -11,6 +11,19 @@ import type {
 import { formatUSDC } from '../../utils'
 
 const { Option } = Select
+
+const latencyMetricOptions = [
+  { value: 'marketMetaResolveMs', label: '元数据耗时' },
+  { value: 'filterEvaluateMs', label: '过滤耗时' },
+  { value: 'sourceToProcessMs', label: '接收到处理' },
+  { value: 'processToOrderRequestMs', label: '处理到下单' },
+  { value: 'orderCreateDurationMs', label: '下单耗时' },
+  { value: 'sourceToOrderCompleteMs', label: '总耗时' }
+]
+
+const latencyThresholdOptions = [50, 100, 300, 500, 1000, 3000]
+
+type LatencyPreset = 'all' | 'topSlow' | 'slow300' | 'slow1000' | 'metaSlow' | 'filterSlow'
 
 interface ExecutionEventsModalProps {
   open: boolean
@@ -32,8 +45,57 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
   const [limit] = useState(20)
   const [stage, setStage] = useState<string | undefined>(undefined)
   const [source, setSource] = useState<string | undefined>(undefined)
+  const [latencyMetric, setLatencyMetric] = useState<string | undefined>(undefined)
+  const [minLatencyMs, setMinLatencyMs] = useState<number | undefined>(undefined)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [aggregationSnapshot, setAggregationSnapshot] = useState<CopyTradingAggregationSnapshot | null>(null)
+
+  const applyLatencyPreset = (preset: LatencyPreset) => {
+    switch (preset) {
+      case 'all':
+        setLatencyMetric(undefined)
+        setMinLatencyMs(undefined)
+        break
+      case 'topSlow':
+        setLatencyMetric('sourceToOrderCompleteMs')
+        setMinLatencyMs(undefined)
+        break
+      case 'slow300':
+        setLatencyMetric('sourceToOrderCompleteMs')
+        setMinLatencyMs(300)
+        break
+      case 'slow1000':
+        setLatencyMetric('sourceToOrderCompleteMs')
+        setMinLatencyMs(1000)
+        break
+      case 'metaSlow':
+        setLatencyMetric('marketMetaResolveMs')
+        setMinLatencyMs(100)
+        break
+      case 'filterSlow':
+        setLatencyMetric('filterEvaluateMs')
+        setMinLatencyMs(50)
+        break
+    }
+    setPage(1)
+  }
+
+  const isLatencyPresetActive = (preset: LatencyPreset) => {
+    switch (preset) {
+      case 'all':
+        return !latencyMetric && minLatencyMs == null
+      case 'topSlow':
+        return latencyMetric === 'sourceToOrderCompleteMs' && minLatencyMs == null
+      case 'slow300':
+        return latencyMetric === 'sourceToOrderCompleteMs' && minLatencyMs === 300
+      case 'slow1000':
+        return latencyMetric === 'sourceToOrderCompleteMs' && minLatencyMs === 1000
+      case 'metaSlow':
+        return latencyMetric === 'marketMetaResolveMs' && minLatencyMs === 100
+      case 'filterSlow':
+        return latencyMetric === 'filterEvaluateMs' && minLatencyMs === 50
+    }
+  }
 
   const stageMap: Record<string, { color: string; text: string }> = {
     MONITOR: { color: 'cyan', text: t('copyTradingOrders.executionEventStages.monitor') || '监听/解析' },
@@ -83,7 +145,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     if (open && copyTradingId) {
       fetchExecutionEvents()
     }
-  }, [open, copyTradingId, page, stage, source])
+  }, [open, copyTradingId, page, stage, source, latencyMetric, minLatencyMs])
 
   useEffect(() => {
     if (open && copyTradingId) {
@@ -101,6 +163,8 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
         copyTradingId: parseInt(copyTradingId, 10),
         stage,
         source,
+        latencyMetric,
+        minLatencyMs,
         page,
         limit
       })
@@ -154,28 +218,107 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     return <Tag color={config.color}>{config.text}</Tag>
   }
 
-  const parseDetailItems = (detailJson?: string) => {
-    if (!detailJson) return []
+  const parseDetailPayload = (detailJson?: string): Record<string, unknown> | null => {
+    if (!detailJson) return null
     try {
       const parsed = JSON.parse(detailJson)
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return [{ key: 'detail', value: detailJson }]
+        return { detail: detailJson }
       }
-      return Object.entries(parsed)
-        .filter(([, value]) => value !== null && value !== undefined && value !== '')
-        .slice(0, 8)
-        .map(([key, value]) => ({
-          key,
-          value: Array.isArray(value) ? value.join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value)
-        }))
+      return parsed as Record<string, unknown>
     } catch {
-      return [{ key: 'detail', value: detailJson }]
+      return { detail: detailJson }
     }
+  }
+
+  const formatDetailValue = (value: unknown) => {
+    if (Array.isArray(value)) {
+      return value.join(', ')
+    }
+    if (value && typeof value === 'object') {
+      return JSON.stringify(value)
+    }
+    return String(value)
+  }
+
+  const toNumberValue = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+  }
+
+  const parseDetailItems = (detailJson?: string) => {
+    const detailPayload = parseDetailPayload(detailJson)
+    if (!detailPayload) return []
+
+    const hiddenKeys = new Set([
+      'marketMetaResolveMs',
+      'marketMetaSource',
+      'filterEvaluateMs',
+      'sourceToProcessMs',
+      'processToOrderRequestMs',
+      'orderCreateDurationMs',
+      'sourceToOrderCompleteMs',
+      'leaderTradeToOrderCompleteMs'
+    ])
+
+    return Object.entries(detailPayload)
+      .filter(([key, value]) => !hiddenKeys.has(key) && value !== null && value !== undefined && value !== '')
+      .slice(0, 8)
+      .map(([key, value]) => ({
+        key,
+        value: formatDetailValue(value)
+      }))
+  }
+
+  const renderLatencySummary = (event: CopyTradingExecutionEvent) => {
+    const detailPayload = parseDetailPayload(event.detailJson)
+    if (!detailPayload) {
+      return null
+    }
+
+    const marketMetaResolveMs = toNumberValue(detailPayload.marketMetaResolveMs)
+    const filterEvaluateMs = toNumberValue(detailPayload.filterEvaluateMs)
+    const sourceToProcessMs = toNumberValue(detailPayload.sourceToProcessMs)
+    const processToOrderRequestMs = toNumberValue(detailPayload.processToOrderRequestMs)
+    const orderCreateDurationMs = toNumberValue(detailPayload.orderCreateDurationMs)
+    const sourceToOrderCompleteMs = toNumberValue(detailPayload.sourceToOrderCompleteMs)
+    const marketMetaSource = typeof detailPayload.marketMetaSource === 'string' ? detailPayload.marketMetaSource : null
+
+    const items = [
+      marketMetaResolveMs != null ? `元数据 ${marketMetaResolveMs}ms` : null,
+      filterEvaluateMs != null ? `过滤 ${filterEvaluateMs}ms` : null,
+      sourceToProcessMs != null ? `接收到处理 ${sourceToProcessMs}ms` : null,
+      processToOrderRequestMs != null ? `处理到下单 ${processToOrderRequestMs}ms` : null,
+      orderCreateDurationMs != null ? `下单耗时 ${orderCreateDurationMs}ms` : null,
+      sourceToOrderCompleteMs != null ? `总耗时 ${sourceToOrderCompleteMs}ms` : null,
+      marketMetaSource ? `元数据来源 ${marketMetaSource}` : null
+    ].filter(Boolean) as string[]
+
+    if (items.length === 0) {
+      return null
+    }
+
+    return (
+      <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {items.map((item) => (
+          <Tag key={`${event.id}-${item}`} color="geekblue" style={{ marginInlineEnd: 0 }}>
+            {item}
+          </Tag>
+        ))}
+      </div>
+    )
   }
 
   const renderEventDetail = (event: CopyTradingExecutionEvent) => (
     <div>
       <div>{event.message}</div>
+      {renderLatencySummary(event)}
       <div style={{ fontSize: 12, color: '#666', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
         {event.aggregationTradeCount ? (
           <span>{`${t('copyTradingOrders.executionEventAggregationCount') || '聚合笔数'}: ${event.aggregationTradeCount}`}</span>
@@ -320,6 +463,38 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
       render: (value: string) => renderEventType(value)
     },
     {
+      title: t('copyTradingOrders.executionEventLatency') || '耗时',
+      key: 'latency',
+      width: 220,
+      render: (_: string, record: CopyTradingExecutionEvent) => {
+        const detailPayload = parseDetailPayload(record.detailJson)
+        if (!detailPayload) {
+          return '-'
+        }
+
+        const marketMetaResolveMs = toNumberValue(detailPayload.marketMetaResolveMs)
+        const filterEvaluateMs = toNumberValue(detailPayload.filterEvaluateMs)
+        const sourceToOrderCompleteMs = toNumberValue(detailPayload.sourceToOrderCompleteMs)
+        const parts = [
+          marketMetaResolveMs != null ? `元数据 ${marketMetaResolveMs}ms` : null,
+          filterEvaluateMs != null ? `过滤 ${filterEvaluateMs}ms` : null,
+          sourceToOrderCompleteMs != null ? `总 ${sourceToOrderCompleteMs}ms` : null
+        ].filter(Boolean)
+
+        if (parts.length === 0) {
+          return '-'
+        }
+
+        return (
+          <div style={{ fontSize: 12, color: '#333', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {parts.map((item) => (
+              <span key={`${record.id}-${item}`}>{item}</span>
+            ))}
+          </div>
+        )
+      }
+    },
+    {
       title: t('copyTradingOrders.executionEventMessage') || '说明',
       key: 'message',
       ellipsis: true,
@@ -358,13 +533,36 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
       </div>
 
       <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          <Button size="small" type={isLatencyPresetActive('all') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('all')}>
+            全部
+          </Button>
+          <Button size="small" type={isLatencyPresetActive('topSlow') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('topSlow')}>
+            Top 20 慢单
+          </Button>
+          <Button size="small" type={isLatencyPresetActive('slow300') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('slow300')}>
+            慢单 &gt; 300ms
+          </Button>
+          <Button size="small" type={isLatencyPresetActive('slow1000') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('slow1000')}>
+            超慢单 &gt; 1000ms
+          </Button>
+          <Button size="small" type={isLatencyPresetActive('metaSlow') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('metaSlow')}>
+            元数据慢
+          </Button>
+          <Button size="small" type={isLatencyPresetActive('filterSlow') ? 'primary' : 'default'} onClick={() => applyLatencyPreset('filterSlow')}>
+            过滤慢
+          </Button>
+        </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Select
             placeholder={t('copyTradingOrders.executionEventStageFilter') || '按阶段筛选'}
             allowClear
             style={{ width: isMobile ? '100%' : 220 }}
             value={stage}
-            onChange={(value) => setStage(value || undefined)}
+            onChange={(value) => {
+              setStage(value || undefined)
+              setPage(1)
+            }}
           >
             <Option value="MONITOR">{t('copyTradingOrders.executionEventStages.monitor') || '监听/解析'}</Option>
             <Option value="DISCOVERY">{t('copyTradingOrders.executionEventStages.discovery') || '信号发现'}</Option>
@@ -378,11 +576,51 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
             allowClear
             style={{ width: isMobile ? '100%' : 220 }}
             value={source}
-            onChange={(value) => setSource(value || undefined)}
+            onChange={(value) => {
+              setSource(value || undefined)
+              setPage(1)
+            }}
           >
             <Option value="activity-ws">activity-ws</Option>
             <Option value="onchain-ws">onchain-ws</Option>
             <Option value="aggregated">aggregated</Option>
+          </Select>
+          <Select
+            placeholder="按耗时指标筛选"
+            allowClear
+            style={{ width: isMobile ? '100%' : 220 }}
+            value={latencyMetric}
+            onChange={(value) => {
+              const nextMetric = value || undefined
+              setLatencyMetric(nextMetric)
+              if (!nextMetric) {
+                setMinLatencyMs(undefined)
+              }
+              setPage(1)
+            }}
+          >
+            {latencyMetricOptions.map((option) => (
+              <Option key={option.value} value={option.value}>
+                {option.label}
+              </Option>
+            ))}
+          </Select>
+          <Select
+            placeholder="最小耗时阈值"
+            allowClear
+            disabled={!latencyMetric}
+            style={{ width: isMobile ? '100%' : 180 }}
+            value={minLatencyMs}
+            onChange={(value) => {
+              setMinLatencyMs(value)
+              setPage(1)
+            }}
+          >
+            {latencyThresholdOptions.map((value) => (
+              <Option key={value} value={value}>
+                {value} ms
+              </Option>
+            ))}
           </Select>
         </div>
       </div>

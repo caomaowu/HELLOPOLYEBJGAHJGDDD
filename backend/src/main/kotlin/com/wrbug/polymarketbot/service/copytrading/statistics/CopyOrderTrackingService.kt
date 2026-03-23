@@ -17,6 +17,7 @@ import org.springframework.dao.DuplicateKeyException
 import java.sql.SQLException
 import java.util.concurrent.ConcurrentHashMap
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterService
+import com.wrbug.polymarketbot.service.copytrading.configs.MarketFilterInput
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
 import com.wrbug.polymarketbot.service.copytrading.configs.FilterStatus
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
@@ -48,7 +49,10 @@ import com.wrbug.polymarketbot.service.copytrading.observability.CopyTradingExec
 data class TradeProcessingLatencyContext(
     val sourceReceivedAt: Long? = null,
     val processTradeStartedAt: Long = System.currentTimeMillis(),
-    val leaderTradeTimestamp: Long? = null
+    val leaderTradeTimestamp: Long? = null,
+    val marketMetaResolveMs: Long? = null,
+    val marketMetaSource: String? = null,
+    val filterEvaluateMs: Long? = null
 )
 
 /**
@@ -124,6 +128,10 @@ open class CopyOrderTrackingService(
         val tokenId: String,
         val marketId: String,
         val outcomeIndex: Int?,
+        val marketSlug: String? = null,
+        val marketEventSlug: String? = null,
+        val marketSeriesSlugPrefix: String? = null,
+        val marketIntervalSeconds: Int? = null,
         val tradePrice: BigDecimal,
         val leaderQuantity: BigDecimal,
         val leaderOrderAmount: BigDecimal,
@@ -133,6 +141,11 @@ open class CopyOrderTrackingService(
         val trades: List<BuyTradeSegment>,
         val allowAggregation: Boolean,
         val aggregationReleaseReason: SmallOrderAggregationReleaseReason? = null
+    )
+
+    private data class ResolvedMarketFilterInput(
+        val input: MarketFilterInput,
+        val metadataSource: String
     )
 
     /**
@@ -377,6 +390,10 @@ open class CopyOrderTrackingService(
             return null
         }
 
+        val seriesMetadata = MarketFilterSupport.deriveMarketSeriesMetadata(
+            slug = trade.slug,
+            eventSlug = trade.eventSlug
+        )
         val tradePrice = trade.price.toSafeBigDecimal()
         val leaderQuantity = trade.size.toSafeBigDecimal()
         val leaderOrderAmount = leaderQuantity.multi(tradePrice)
@@ -384,6 +401,10 @@ open class CopyOrderTrackingService(
             tokenId = tokenId,
             marketId = effectiveMarketId,
             outcomeIndex = effectiveOutcomeIndex,
+            marketSlug = trade.slug,
+            marketEventSlug = trade.eventSlug,
+            marketSeriesSlugPrefix = seriesMetadata.seriesSlugPrefix,
+            marketIntervalSeconds = seriesMetadata.intervalSeconds,
             tradePrice = tradePrice,
             leaderQuantity = leaderQuantity,
             leaderOrderAmount = leaderOrderAmount,
@@ -412,6 +433,10 @@ open class CopyOrderTrackingService(
             tokenId = batch.tokenId,
             marketId = batch.marketId,
             outcomeIndex = batch.outcomeIndex,
+            marketSlug = batch.marketSlug,
+            marketEventSlug = batch.marketEventSlug,
+            marketSeriesSlugPrefix = batch.seriesSlugPrefix,
+            marketIntervalSeconds = batch.intervalSeconds,
             tradePrice = batch.averageTradePrice,
             leaderQuantity = batch.totalLeaderQuantity,
             leaderOrderAmount = batch.totalLeaderOrderAmount,
@@ -775,25 +800,33 @@ open class CopyOrderTrackingService(
             return Result.success(Unit)
         }
 
-        var marketTitle: String? = null
-        var marketEndDate: Long? = null
-        val needMarketInfo = copyTrading.keywordFilterMode != "DISABLED" || copyTrading.maxMarketEndDate != null
-        if (needMarketInfo) {
-            try {
-                val market = marketService.getMarket(payload.marketId)
-                marketTitle = market?.title
-                marketEndDate = market?.endDate
-            } catch (e: Exception) {
-                logger.warn("获取市场信息失败（关键字过滤/市场截止时间检查需要）: ${e.message}", e)
-            }
-        }
+        val marketMetaResolveStartedAt = System.currentTimeMillis()
+        val resolvedMarketFilterInput = resolveMarketFilterInput(copyTrading, payload)
+        val marketMetaResolveMs = (System.currentTimeMillis() - marketMetaResolveStartedAt).coerceAtLeast(0)
 
+        val filterEvaluateStartedAt = System.currentTimeMillis()
         val filterResult = filterService.checkFilters(
             copyTrading,
             payload.tokenId,
             tradePrice = payload.tradePrice,
-            marketTitle = marketTitle,
-            marketEndDate = marketEndDate
+            market = resolvedMarketFilterInput.input
+        )
+        val filterEvaluateMs = (System.currentTimeMillis() - filterEvaluateStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            marketMetaResolveMs = marketMetaResolveMs,
+            marketMetaSource = resolvedMarketFilterInput.metadataSource,
+            filterEvaluateMs = filterEvaluateMs
+        )
+        logger.debug(
+            "跟单过滤耗时: copyTradingId={}, tradeId={}, marketMetaResolveMs={}ms, filterEvaluateMs={}ms, marketMetaSource={}",
+            copyTrading.id,
+            payload.representativeTradeId,
+            marketMetaResolveMs,
+            filterEvaluateMs,
+            resolvedMarketFilterInput.metadataSource
         )
         val orderbook = filterResult.orderbook
         if (!filterResult.isPassed) {
@@ -831,19 +864,23 @@ open class CopyOrderTrackingService(
                 sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
             ) {
                 val bufferResult = smallOrderAggregationService.bufferTrade(
-                    SmallOrderAggregationRequest(
-                        copyTradingId = copyTrading.id!!,
-                        accountId = copyTrading.accountId,
-                        leaderId = copyTrading.leaderId,
-                        side = "BUY",
-                        tokenId = payload.tokenId,
-                        marketId = payload.marketId,
-                        outcomeIndex = payload.outcomeIndex,
-                        leaderTradeId = payload.representativeTradeId,
-                        leaderQuantity = payload.leaderQuantity,
-                        leaderOrderAmount = payload.leaderOrderAmount,
-                        tradePrice = payload.tradePrice,
-                        outcome = payload.outcome,
+                SmallOrderAggregationRequest(
+                    copyTradingId = copyTrading.id!!,
+                    accountId = copyTrading.accountId,
+                    leaderId = copyTrading.leaderId,
+                    side = "BUY",
+                    tokenId = payload.tokenId,
+                    marketId = payload.marketId,
+                    outcomeIndex = payload.outcomeIndex,
+                    marketSlug = payload.marketSlug,
+                    marketEventSlug = payload.marketEventSlug,
+                    seriesSlugPrefix = payload.marketSeriesSlugPrefix,
+                    intervalSeconds = payload.marketIntervalSeconds,
+                    leaderTradeId = payload.representativeTradeId,
+                    leaderQuantity = payload.leaderQuantity,
+                    leaderOrderAmount = payload.leaderOrderAmount,
+                    tradePrice = payload.tradePrice,
+                    outcome = payload.outcome,
                         source = payload.source
                     )
                 )
@@ -1533,6 +1570,24 @@ open class CopyOrderTrackingService(
         return "$leaderId::$tradeId::$source"
     }
 
+    private fun updateTradeLatencyContext(
+        leaderId: Long,
+        tradeId: String,
+        source: String,
+        marketMetaResolveMs: Long? = null,
+        marketMetaSource: String? = null,
+        filterEvaluateMs: Long? = null
+    ) {
+        val key = buildTradeLatencyKey(leaderId, tradeId, source)
+        tradeLatencyContextMap.computeIfPresent(key) { _, context ->
+            context.copy(
+                marketMetaResolveMs = marketMetaResolveMs ?: context.marketMetaResolveMs,
+                marketMetaSource = marketMetaSource ?: context.marketMetaSource,
+                filterEvaluateMs = filterEvaluateMs ?: context.filterEvaluateMs
+            )
+        }
+    }
+
     private fun parseTradeTimestampMillis(rawTimestamp: String?): Long? {
         val value = rawTimestamp?.toLongOrNull() ?: return null
         return if (value < 1_000_000_000_000L) value * 1000 else value
@@ -1557,6 +1612,9 @@ open class CopyOrderTrackingService(
         }
         detail["processTradeStartedAt"] = context.processTradeStartedAt
         context.sourceReceivedAt?.let { detail["sourceToProcessMs"] = context.processTradeStartedAt - it }
+        context.marketMetaResolveMs?.let { detail["marketMetaResolveMs"] = it }
+        context.marketMetaSource?.let { detail["marketMetaSource"] = it }
+        context.filterEvaluateMs?.let { detail["filterEvaluateMs"] = it }
         orderCreateRequestedAt?.let {
             detail["orderCreateRequestedAt"] = it
             detail["processToOrderRequestMs"] = it - context.processTradeStartedAt
@@ -1848,20 +1906,28 @@ open class CopyOrderTrackingService(
                     aggregationKey = aggregationKey,
                     aggregationTradeCount = aggregationTradeCount
                 ) ?: return
+                val leaderSellMetadata = MarketFilterSupport.deriveMarketSeriesMetadata(
+                    slug = leaderSellTrade.slug,
+                    eventSlug = leaderSellTrade.eventSlug
+                )
                 val bufferResult = smallOrderAggregationService.bufferTrade(
-                    SmallOrderAggregationRequest(
-                        copyTradingId = copyTrading.id!!,
-                        accountId = account.id ?: copyTrading.accountId,
-                        leaderId = copyTrading.leaderId,
-                        side = "SELL",
-                        tokenId = tokenIdForAggregation,
-                        marketId = leaderSellTrade.market,
-                        outcomeIndex = leaderSellTrade.outcomeIndex,
-                        leaderTradeId = leaderSellTrade.id,
-                        leaderQuantity = leaderSellTrade.size.toSafeBigDecimal(),
-                        leaderOrderAmount = leaderSellTrade.size.toSafeBigDecimal().multi(leaderSellTrade.price.toSafeBigDecimal()),
-                        tradePrice = leaderSellTrade.price.toSafeBigDecimal(),
-                        outcome = leaderSellTrade.outcome,
+                SmallOrderAggregationRequest(
+                    copyTradingId = copyTrading.id!!,
+                    accountId = account.id ?: copyTrading.accountId,
+                    leaderId = copyTrading.leaderId,
+                    side = "SELL",
+                    tokenId = tokenIdForAggregation,
+                    marketId = leaderSellTrade.market,
+                    outcomeIndex = leaderSellTrade.outcomeIndex,
+                    marketSlug = leaderSellTrade.slug,
+                    marketEventSlug = leaderSellTrade.eventSlug,
+                    seriesSlugPrefix = leaderSellMetadata.seriesSlugPrefix,
+                    intervalSeconds = leaderSellMetadata.intervalSeconds,
+                    leaderTradeId = leaderSellTrade.id,
+                    leaderQuantity = leaderSellTrade.size.toSafeBigDecimal(),
+                    leaderOrderAmount = leaderSellTrade.size.toSafeBigDecimal().multi(leaderSellTrade.price.toSafeBigDecimal()),
+                    tradePrice = leaderSellTrade.price.toSafeBigDecimal(),
+                    outcome = leaderSellTrade.outcome,
                         source = "single"
                     )
                 )
@@ -2575,6 +2641,63 @@ open class CopyOrderTrackingService(
             FilterStatus.FAILED_MAX_POSITION_VALUE -> "MAX_POSITION_VALUE"
             FilterStatus.FAILED_KEYWORD_FILTER -> "KEYWORD_FILTER"
             FilterStatus.FAILED_MARKET_END_DATE -> "MARKET_END_DATE"
+            FilterStatus.FAILED_MARKET_CATEGORY -> "MARKET_CATEGORY"
+            FilterStatus.FAILED_MARKET_INTERVAL -> "MARKET_INTERVAL"
+            FilterStatus.FAILED_MARKET_SERIES -> "MARKET_SERIES"
+        }
+    }
+
+    private fun resolveMarketFilterInput(
+        copyTrading: CopyTrading,
+        payload: BuyExecutionPayload
+    ): ResolvedMarketFilterInput {
+        val payloadMetadata = MarketFilterSupport.deriveMarketSeriesMetadata(
+            slug = payload.marketSlug,
+            eventSlug = payload.marketEventSlug
+        )
+        var marketFilterInput = MarketFilterInput(
+            seriesSlugPrefix = payload.marketSeriesSlugPrefix ?: payloadMetadata.seriesSlugPrefix,
+            intervalSeconds = payload.marketIntervalSeconds ?: payloadMetadata.intervalSeconds
+        )
+        val resolvedIntervalSeconds = marketFilterInput.intervalSeconds
+
+        val needStoredTitle = copyTrading.keywordFilterMode != MarketFilterSupport.FILTER_MODE_DISABLED
+        val needStoredCategory = copyTrading.marketCategoryMode != MarketFilterSupport.FILTER_MODE_DISABLED
+        val needStoredEndDate = copyTrading.maxMarketEndDate != null
+        val needStoredSeries = copyTrading.marketSeriesMode != MarketFilterSupport.FILTER_MODE_DISABLED &&
+            marketFilterInput.seriesSlugPrefix.isNullOrBlank()
+        val needStoredInterval = copyTrading.marketIntervalMode != MarketFilterSupport.FILTER_MODE_DISABLED &&
+            (resolvedIntervalSeconds == null || resolvedIntervalSeconds <= 0)
+
+        if (!needStoredTitle && !needStoredCategory && !needStoredEndDate && !needStoredSeries && !needStoredInterval) {
+            return ResolvedMarketFilterInput(
+                input = marketFilterInput,
+                metadataSource = "payload"
+            )
+        }
+
+        return try {
+            val market = marketService.getMarket(payload.marketId)
+            ResolvedMarketFilterInput(
+                input = marketFilterInput.copy(
+                    title = market?.title,
+                    category = market?.category,
+                    endDate = market?.endDate,
+                    seriesSlugPrefix = marketFilterInput.seriesSlugPrefix ?: market?.seriesSlugPrefix,
+                    intervalSeconds = marketFilterInput.intervalSeconds ?: market?.intervalSeconds
+                ),
+                metadataSource = if (market != null) {
+                    "payload+market-cache"
+                } else {
+                    "payload+market-cache-miss"
+                }
+            )
+        } catch (e: Exception) {
+            logger.warn("获取市场信息失败（过滤检查需要）: ${e.message}", e)
+            ResolvedMarketFilterInput(
+                input = marketFilterInput,
+                metadataSource = "payload+market-cache-error"
+            )
         }
     }
 

@@ -9,6 +9,7 @@ import com.wrbug.polymarketbot.repository.MarketRepository
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.getEventSlug
 import com.wrbug.polymarketbot.util.parseStringArray
+import com.wrbug.polymarketbot.util.MarketFilterSupport
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -162,6 +163,10 @@ class MarketService(
             val slug = marketResponse.slug
             // 保存跳转用的 slug（从 events[0].slug 获取）
             val eventSlug = marketResponse.getEventSlug()
+            val seriesMetadata = MarketFilterSupport.deriveMarketSeriesMetadata(
+                slug = slug,
+                eventSlug = eventSlug
+            )
             
             val market = if (existingMarket != null) {
                 // 更新现有市场信息
@@ -169,6 +174,10 @@ class MarketService(
                     title = marketResponse.question ?: existingMarket.title,
                     slug = slug ?: existingMarket.slug,
                     eventSlug = eventSlug ?: existingMarket.eventSlug,
+                    seriesSlugPrefix = seriesMetadata.seriesSlugPrefix ?: existingMarket.seriesSlugPrefix,
+                    intervalSeconds = seriesMetadata.intervalSeconds ?: existingMarket.intervalSeconds,
+                    marketSourceType = seriesMetadata.marketSourceType.takeIf { it != "GENERIC" }
+                        ?: existingMarket.marketSourceType,
                     category = marketResponse.category ?: existingMarket.category,
                     icon = marketResponse.icon ?: existingMarket.icon,
                     image = marketResponse.image ?: existingMarket.image,
@@ -186,6 +195,9 @@ class MarketService(
                     title = marketResponse.question ?: marketId,
                     slug = slug,
                     eventSlug = eventSlug,
+                    seriesSlugPrefix = seriesMetadata.seriesSlugPrefix,
+                    intervalSeconds = seriesMetadata.intervalSeconds,
+                    marketSourceType = seriesMetadata.marketSourceType,
                     category = marketResponse.category,
                     icon = marketResponse.icon,
                     image = marketResponse.image,

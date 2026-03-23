@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.service.copytrading.statistics
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.entity.*
 import com.wrbug.polymarketbot.repository.*
+import com.wrbug.polymarketbot.util.fromJson
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import com.wrbug.polymarketbot.util.multi
 import com.wrbug.polymarketbot.util.div
@@ -29,6 +30,7 @@ class CopyTradingStatisticsService(
     private val copyOrderTrackingRepository: CopyOrderTrackingRepository,
     private val sellMatchRecordRepository: SellMatchRecordRepository,
     private val sellMatchDetailRepository: SellMatchDetailRepository,
+    private val copyTradingExecutionEventRepository: CopyTradingExecutionEventRepository,
     private val accountRepository: AccountRepository,
     private val leaderRepository: LeaderRepository,
     private val marketService: com.wrbug.polymarketbot.service.common.MarketService
@@ -60,6 +62,7 @@ class CopyTradingStatisticsService(
             
             // 6. 计算统计信息
             val statistics = calculateStatistics(buyOrders, sellRecords, matchDetails)
+            val executionLatencySummary = calculateExecutionLatencySummary(copyTradingId)
             
             // 7. 不再计算未实现盈亏和持仓价值（优化性能）
             // 未实现盈亏计算需要查询链上持仓和市场价格，性能开销大
@@ -86,13 +89,78 @@ class CopyTradingStatisticsService(
                 totalRealizedPnl = statistics.totalRealizedPnl,
                 totalUnrealizedPnl = unrealizedPnl,
                 totalPnl = statistics.totalRealizedPnl,
-                totalPnlPercent = calculatePnlPercentOnlyRealized(statistics.totalBuyAmount, statistics.totalRealizedPnl)
+                totalPnlPercent = calculatePnlPercentOnlyRealized(statistics.totalBuyAmount, statistics.totalRealizedPnl),
+                executionLatencySummary = executionLatencySummary
             )
             
             Result.success(response)
         } catch (e: Exception) {
             logger.error("获取统计信息失败: copyTradingId=$copyTradingId", e)
             Result.failure(e)
+        }
+    }
+
+    private fun calculateExecutionLatencySummary(copyTradingId: Long): ExecutionLatencySummary? {
+        val events = copyTradingExecutionEventRepository.findTop100ByCopyTradingIdOrderByCreatedAtDesc(copyTradingId)
+        if (events.isEmpty()) {
+            return null
+        }
+
+        var totalLatencyEventCount = 0L
+        var slowEventCount = 0L
+        var verySlowEventCount = 0L
+        var totalLatencySum = 0L
+        var maxTotalLatencyMs: Long? = null
+        var maxMarketMetaResolveMs: Long? = null
+        var maxFilterEvaluateMs: Long? = null
+
+        events.forEach { event ->
+            val detailMap = event.detailJson.fromJson<Map<String, Any?>>() ?: emptyMap()
+            val totalLatencyMs = detailMap["sourceToOrderCompleteMs"].toLongValue()
+            val marketMetaResolveMs = detailMap["marketMetaResolveMs"].toLongValue()
+            val filterEvaluateMs = detailMap["filterEvaluateMs"].toLongValue()
+
+            if (totalLatencyMs != null) {
+                totalLatencyEventCount++
+                totalLatencySum += totalLatencyMs
+                if (totalLatencyMs >= 300) {
+                    slowEventCount++
+                }
+                if (totalLatencyMs >= 1000) {
+                    verySlowEventCount++
+                }
+                maxTotalLatencyMs = maxOfNullable(maxTotalLatencyMs, totalLatencyMs)
+            }
+
+            maxMarketMetaResolveMs = maxOfNullable(maxMarketMetaResolveMs, marketMetaResolveMs)
+            maxFilterEvaluateMs = maxOfNullable(maxFilterEvaluateMs, filterEvaluateMs)
+        }
+
+        return ExecutionLatencySummary(
+            sampleSize = events.size.toLong(),
+            totalLatencyEventCount = totalLatencyEventCount,
+            slowEventCount = slowEventCount,
+            verySlowEventCount = verySlowEventCount,
+            avgTotalLatencyMs = if (totalLatencyEventCount > 0) totalLatencySum / totalLatencyEventCount else null,
+            maxTotalLatencyMs = maxTotalLatencyMs,
+            maxMarketMetaResolveMs = maxMarketMetaResolveMs,
+            maxFilterEvaluateMs = maxFilterEvaluateMs
+        )
+    }
+
+    private fun Any?.toLongValue(): Long? {
+        return when (this) {
+            is Number -> this.toLong()
+            is String -> this.toLongOrNull()
+            else -> null
+        }
+    }
+
+    private fun maxOfNullable(current: Long?, candidate: Long?): Long? {
+        return when {
+            current == null -> candidate
+            candidate == null -> current
+            else -> maxOf(current, candidate)
         }
     }
     

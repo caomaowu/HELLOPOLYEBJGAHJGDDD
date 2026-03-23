@@ -26,6 +26,15 @@ data class Market(
     
     @Column(name = "event_slug", length = 200)
     val eventSlug: String? = null,  // 跳转用的 slug（从 events[0].slug 获取）
+
+    @Column(name = "series_slug_prefix", length = 128)
+    val seriesSlugPrefix: String? = null,  // 市场系列前缀，如 btc-updown-15m
+
+    @Column(name = "interval_seconds")
+    val intervalSeconds: Int? = null,  // 市场周期秒数，如 300/900/3600/14400/86400
+
+    @Column(name = "market_source_type", nullable = false, length = 32)
+    val marketSourceType: String = "GENERIC",  // 市场来源类型：CRYPTO_UPDOWN/TIMED_SERIES/GENERIC
     
     @Column(name = "category", length = 50)
     val category: String? = null,  // 市场分类

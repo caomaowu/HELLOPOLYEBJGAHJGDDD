@@ -8,7 +8,7 @@ import { apiService } from '../services/api'
 import { useAccountStore } from '../store/accountStore'
 import type { CopyTrading, Leader, CopyTradingStatistics } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC } from '../utils'
+import { formatCopyModeSummary, formatMarketFilterSummary, formatMultiplierSummary, formatUSDC } from '../utils'
 import CopyTradingOrdersModal from './CopyTradingOrders/index'
 import StatisticsModal from './CopyTradingOrders/StatisticsModal'
 import FilteredOrdersModal from './CopyTradingOrders/FilteredOrdersModal'
@@ -172,6 +172,57 @@ const CopyTradingList: React.FC = () => {
       </Space>
     )
   }
+
+  const renderMarketFilterSummary = (record: CopyTrading) => {
+    const summaryItems = formatMarketFilterSummary(record)
+
+    if (summaryItems.length === 0) {
+      return (
+        <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>
+          {t('copyTradingList.noMarketFilterSummary') || '未设置市场过滤'}
+        </div>
+      )
+    }
+
+    return (
+      <Space wrap size={[4, 4]} style={{ marginTop: 4 }}>
+        {summaryItems.map((item) => (
+          <Tag key={item} style={{ marginInlineEnd: 0 }}>
+            {item}
+          </Tag>
+        ))}
+      </Space>
+    )
+  }
+
+  const renderLatencyHealthSummary = (stats?: CopyTradingStatistics) => {
+    const summary = stats?.executionLatencySummary
+    if (!summary || summary.sampleSize <= 0) {
+      return null
+    }
+
+    const items = [
+      summary.verySlowEventCount > 0 ? { text: `超慢 ${summary.verySlowEventCount}`, color: 'red' } : null,
+      summary.slowEventCount > 0 ? { text: `慢单 ${summary.slowEventCount}`, color: 'orange' } : null,
+      summary.maxTotalLatencyMs != null ? { text: `最大 ${summary.maxTotalLatencyMs}ms`, color: 'geekblue' } : null,
+      summary.maxMarketMetaResolveMs != null ? { text: `元数据 ${summary.maxMarketMetaResolveMs}ms`, color: 'blue' } : null,
+      summary.maxFilterEvaluateMs != null ? { text: `过滤 ${summary.maxFilterEvaluateMs}ms`, color: 'gold' } : null
+    ].filter(Boolean) as Array<{ text: string; color: string }>
+
+    if (items.length === 0) {
+      return null
+    }
+
+    return (
+      <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+        {items.map((item) => (
+          <Tag key={item.text} color={item.color} style={{ marginInlineEnd: 0 }}>
+            {item.text}
+          </Tag>
+        ))}
+      </Space>
+    )
+  }
   
   const handleToggleStatus = async (copyTrading: CopyTrading) => {
     try {
@@ -248,6 +299,7 @@ const CopyTradingList: React.FC = () => {
             </div>
           )}
           {renderAggregationSummary(record)}
+          {renderMarketFilterSummary(record)}
         </div>
       )
     },
@@ -318,6 +370,7 @@ const CopyTradingList: React.FC = () => {
                 {formatPercent(stats.totalPnlPercent)}
               </div>
             )}
+            {renderLatencyHealthSummary(stats)}
           </div>
         )
       }
@@ -531,6 +584,9 @@ const CopyTradingList: React.FC = () => {
                         <div style={{ marginBottom: '8px' }}>
                           {renderAggregationSummary(record)}
                         </div>
+                        <div style={{ marginBottom: '8px' }}>
+                          {renderMarketFilterSummary(record)}
+                        </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', justifyContent: 'space-between' }}>
                           <Tag color={record.enabled ? 'green' : 'red'}>
                             {record.enabled ? '启用' : '禁用'}
@@ -591,6 +647,7 @@ const CopyTradingList: React.FC = () => {
                           }}>
                             {formatPercent(stats.totalPnlPercent)}
                           </div>
+                          {renderLatencyHealthSummary(stats)}
                         </div>
                       )}
                       

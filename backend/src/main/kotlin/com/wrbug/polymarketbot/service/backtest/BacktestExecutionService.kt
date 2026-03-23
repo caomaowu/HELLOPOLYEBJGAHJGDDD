@@ -351,12 +351,28 @@ class BacktestExecutionService(
                             }
 
                             // 5.3 应用过滤规则
+                            val backtestMarket = if (
+                                copyTrading.keywordFilterMode != "DISABLED" ||
+                                copyTrading.maxMarketEndDate != null ||
+                                copyTrading.marketCategoryMode != "DISABLED" ||
+                                copyTrading.marketIntervalMode != "DISABLED" ||
+                                copyTrading.marketSeriesMode != "DISABLED"
+                            ) {
+                                marketService.getMarket(leaderTrade.marketId)
+                            } else {
+                                null
+                            }
                             val filterResult = copyTradingFilterService.checkFilters(
                                 copyTrading,
                                 tokenId = "",
                                 tradePrice = leaderTrade.price,
-                                marketTitle = leaderTrade.marketTitle,
-                                marketEndDate = null
+                                market = com.wrbug.polymarketbot.service.copytrading.configs.MarketFilterInput(
+                                    title = leaderTrade.marketTitle ?: backtestMarket?.title,
+                                    category = backtestMarket?.category,
+                                    endDate = backtestMarket?.endDate,
+                                    seriesSlugPrefix = backtestMarket?.seriesSlugPrefix,
+                                    intervalSeconds = backtestMarket?.intervalSeconds
+                                )
                             )
 
                             if (!filterResult.isPassed) {

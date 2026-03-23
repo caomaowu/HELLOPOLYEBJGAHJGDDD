@@ -33,6 +33,15 @@ class JsonUtils(
     fun parseStringArray(jsonString: String?): List<String> {
         return jsonString?.parseStringArray() ?: emptyList()
     }
+
+    /**
+     * 解析 JSON 整数数组
+     * @param jsonString JSON 字符串，如 "[300, 900]"
+     * @return 整数列表，如果解析失败返回空列表
+     */
+    fun parseIntArray(jsonString: String?): List<Int> {
+        return jsonString?.parseIntArray() ?: emptyList()
+    }
 }
 
 /**
@@ -147,6 +156,24 @@ fun String?.parseStringArray(): List<String> {
     return try {
         val listType = object : TypeToken<List<String>>() {}.type
         gson.fromJson<List<String>>(this, listType) ?: emptyList()
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+/**
+ * 解析 JSON 整数数组
+ *
+ * @return 整数列表，如果解析失败返回空列表
+ */
+fun String?.parseIntArray(): List<Int> {
+    if (this.isNullOrBlank()) {
+        return emptyList()
+    }
+
+    return try {
+        val listType = object : TypeToken<List<Int>>() {}.type
+        gson.fromJson<List<Int>>(this, listType) ?: emptyList()
     } catch (e: Exception) {
         emptyList()
     }

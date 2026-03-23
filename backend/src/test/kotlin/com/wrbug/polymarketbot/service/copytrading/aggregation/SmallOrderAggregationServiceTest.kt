@@ -198,6 +198,37 @@ class SmallOrderAggregationServiceTest {
     }
 
     @Test
+    fun `buffer should preserve market metadata and backfill missing values from later trades`() {
+        service.bufferTrade(
+            request(
+                tradeId = "t1",
+                bufferedAt = 1_000L,
+                marketSlug = null,
+                marketEventSlug = "btc-updown-15m-1710000000",
+                seriesSlugPrefix = null,
+                intervalSeconds = null
+            )
+        )
+        service.bufferTrade(
+            request(
+                tradeId = "t2",
+                bufferedAt = 1_100L,
+                marketSlug = "btc-updown-15m-1710000000",
+                marketEventSlug = "btc-updown-15m-1710000000",
+                seriesSlugPrefix = "btc-updown-15m",
+                intervalSeconds = 900
+            )
+        )
+
+        val batch = service.getSnapshot().groups.first()
+
+        assertEquals("btc-updown-15m-1710000000", batch.marketSlug)
+        assertEquals("btc-updown-15m-1710000000", batch.marketEventSlug)
+        assertEquals("btc-updown-15m", batch.seriesSlugPrefix)
+        assertEquals(900, batch.intervalSeconds)
+    }
+
+    @Test
     fun `support validation should reject invalid window when enabled`() {
         val errors = SmallOrderAggregationSupport.validateConfig(enabled = true, windowSeconds = 0)
 
@@ -209,7 +240,11 @@ class SmallOrderAggregationServiceTest {
         tradeId: String,
         bufferedAt: Long,
         side: String = "BUY",
-        tokenId: String = "token-1"
+        tokenId: String = "token-1",
+        marketSlug: String? = "btc-updown-15m-1710000000",
+        marketEventSlug: String? = "btc-updown-15m-1710000000",
+        seriesSlugPrefix: String? = "btc-updown-15m",
+        intervalSeconds: Int? = 900
     ) = SmallOrderAggregationRequest(
         copyTradingId = copyTradingId,
         accountId = 10L,
@@ -224,6 +259,10 @@ class SmallOrderAggregationServiceTest {
         tradePrice = BigDecimal("0.5"),
         outcome = "YES",
         source = "activity-ws",
+        marketSlug = marketSlug,
+        marketEventSlug = marketEventSlug,
+        seriesSlugPrefix = seriesSlugPrefix,
+        intervalSeconds = intervalSeconds,
         bufferedAt = bufferedAt
     )
 

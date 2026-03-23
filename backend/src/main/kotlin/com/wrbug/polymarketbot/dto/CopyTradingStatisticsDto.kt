@@ -30,7 +30,19 @@ data class CopyTradingStatisticsResponse(
     val totalRealizedPnl: String,
     val totalUnrealizedPnl: String,
     val totalPnl: String,
-    val totalPnlPercent: String
+    val totalPnlPercent: String,
+    val executionLatencySummary: ExecutionLatencySummary? = null
+)
+
+data class ExecutionLatencySummary(
+    val sampleSize: Long,
+    val totalLatencyEventCount: Long,
+    val slowEventCount: Long,
+    val verySlowEventCount: Long,
+    val avgTotalLatencyMs: Long?,
+    val maxTotalLatencyMs: Long?,
+    val maxMarketMetaResolveMs: Long?,
+    val maxFilterEvaluateMs: Long?
 )
 
 /**

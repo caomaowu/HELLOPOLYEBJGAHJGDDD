@@ -48,6 +48,12 @@ data class CopyTradingCreateRequest(
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选）
     val pushFailedOrders: Boolean? = null,  // 推送失败订单（可选）
@@ -95,6 +101,12 @@ data class CopyTradingUpdateRequest(
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选，但提供时必须非空）
     val pushFailedOrders: Boolean? = null,  // 推送失败订单（可选）
@@ -183,6 +195,12 @@ data class CopyTradingDto(
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null
+    val marketCategoryMode: String? = null,  // 市场分类过滤模式
+    val marketCategories: List<String>? = null,  // 市场分类过滤列表
+    val marketIntervalMode: String? = null,  // 市场周期过滤模式
+    val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
+    val marketSeriesMode: String? = null,  // 市场系列过滤模式
+    val marketSeries: List<String>? = null,  // 市场系列过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选）
     val pushFailedOrders: Boolean = false,  // 推送失败订单（默认关闭）

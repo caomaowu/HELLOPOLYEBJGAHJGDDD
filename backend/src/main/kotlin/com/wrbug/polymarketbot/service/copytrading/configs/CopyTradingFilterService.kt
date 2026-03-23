@@ -8,6 +8,8 @@ import com.wrbug.polymarketbot.util.multi
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import com.wrbug.polymarketbot.util.JsonUtils
 import com.wrbug.polymarketbot.util.DateUtils
+import com.wrbug.polymarketbot.util.CategoryValidator
+import com.wrbug.polymarketbot.util.MarketFilterSupport
 import org.slf4j.LoggerFactory
 import com.wrbug.polymarketbot.service.common.PolymarketClobService
 import org.springframework.stereotype.Service
@@ -29,28 +31,47 @@ class CopyTradingFilterService(
      * @param copyTrading 跟单配置
      * @param tokenId token ID（用于获取订单簿）
      * @param tradePrice Leader 交易价格，用于价格区间检查
-     * @param marketTitle 市场标题，用于关键字过滤
-     * @param marketEndDate 市场截止时间，用于市场截止时间检查
+     * @param market 市场元数据输入，用于关键字/分类/周期/系列/截止时间过滤
      * @return 过滤结果
      */
     suspend fun checkFilters(
         copyTrading: CopyTrading,
         tokenId: String,
         tradePrice: BigDecimal? = null,  // Leader 交易价格，用于价格区间检查
-        marketTitle: String? = null,  // 市场标题，用于关键字过滤
-        marketEndDate: Long? = null  // 市场截止时间，用于市场截止时间检查
+        market: MarketFilterInput = MarketFilterInput()
     ): FilterResult {
         // 1. 关键字过滤检查（如果配置了关键字过滤）
         if (copyTrading.keywordFilterMode != null && copyTrading.keywordFilterMode != "DISABLED") {
-            val keywordCheck = checkKeywordFilter(copyTrading, marketTitle)
+            val keywordCheck = checkKeywordFilter(copyTrading, market.title)
             if (!keywordCheck.isPassed) {
                 return keywordCheck
+            }
+        }
+
+        if (copyTrading.marketCategoryMode != MarketFilterSupport.FILTER_MODE_DISABLED) {
+            val categoryCheck = checkMarketCategoryFilter(copyTrading, market.category)
+            if (!categoryCheck.isPassed) {
+                return categoryCheck
+            }
+        }
+
+        if (copyTrading.marketIntervalMode != MarketFilterSupport.FILTER_MODE_DISABLED) {
+            val intervalCheck = checkMarketIntervalFilter(copyTrading, market.intervalSeconds)
+            if (!intervalCheck.isPassed) {
+                return intervalCheck
+            }
+        }
+
+        if (copyTrading.marketSeriesMode != MarketFilterSupport.FILTER_MODE_DISABLED) {
+            val seriesCheck = checkMarketSeriesFilter(copyTrading, market.seriesSlugPrefix)
+            if (!seriesCheck.isPassed) {
+                return seriesCheck
             }
         }
         
         // 1.5. 市场截止时间检查（如果配置了市场截止时间限制）
         if (copyTrading.maxMarketEndDate != null) {
-            val marketEndDateCheck = checkMarketEndDate(copyTrading, marketEndDate)
+            val marketEndDateCheck = checkMarketEndDate(copyTrading, market.endDate)
             if (!marketEndDateCheck.isPassed) {
                 return marketEndDateCheck
             }
@@ -100,6 +121,143 @@ class CopyTradingFilterService(
         }
         
         return FilterResult.passed(orderbook)
+    }
+
+    private fun checkMarketCategoryFilter(
+        copyTrading: CopyTrading,
+        marketCategory: String?
+    ): FilterResult {
+        val mode = MarketFilterSupport.normalizeFilterMode(copyTrading.marketCategoryMode)
+        if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) {
+            return FilterResult.passed()
+        }
+
+        val normalizedCategory = CategoryValidator.normalizeCategory(marketCategory)
+            ?: marketCategory?.trim()?.lowercase()
+        if (normalizedCategory.isNullOrBlank()) {
+            return FilterResult.marketCategoryFailed("市场分类缺失，无法进行市场分类过滤")
+        }
+
+        val categories = MarketFilterSupport.normalizeMarketCategories(
+            jsonUtils.parseStringArray(copyTrading.marketCategories)
+        )
+        if (categories.isEmpty()) {
+            return FilterResult.marketCategoryFailed("市场分类过滤已启用，但分类列表为空")
+        }
+
+        val matched = normalizedCategory in categories
+        return when (mode) {
+            MarketFilterSupport.FILTER_MODE_WHITELIST -> {
+                if (matched) {
+                    FilterResult.passed()
+                } else {
+                    FilterResult.marketCategoryFailed(
+                        "市场分类不在白名单中: marketCategory=$normalizedCategory, allowed=${categories.joinToString(", ")}"
+                    )
+                }
+            }
+
+            MarketFilterSupport.FILTER_MODE_BLACKLIST -> {
+                if (matched) {
+                    FilterResult.marketCategoryFailed(
+                        "市场分类命中黑名单: marketCategory=$normalizedCategory"
+                    )
+                } else {
+                    FilterResult.passed()
+                }
+            }
+
+            else -> FilterResult.passed()
+        }
+    }
+
+    private fun checkMarketIntervalFilter(
+        copyTrading: CopyTrading,
+        intervalSeconds: Int?
+    ): FilterResult {
+        val mode = MarketFilterSupport.normalizeFilterMode(copyTrading.marketIntervalMode)
+        if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) {
+            return FilterResult.passed()
+        }
+
+        if (intervalSeconds == null || intervalSeconds <= 0) {
+            return FilterResult.marketIntervalFailed("市场周期缺失，无法进行市场周期过滤")
+        }
+
+        val intervals = MarketFilterSupport.normalizeMarketIntervals(
+            jsonUtils.parseIntArray(copyTrading.marketIntervals)
+        )
+        if (intervals.isEmpty()) {
+            return FilterResult.marketIntervalFailed("市场周期过滤已启用，但周期列表为空")
+        }
+
+        val matched = intervalSeconds in intervals
+        return when (mode) {
+            MarketFilterSupport.FILTER_MODE_WHITELIST -> {
+                if (matched) {
+                    FilterResult.passed()
+                } else {
+                    FilterResult.marketIntervalFailed(
+                        "市场周期不在白名单中: intervalSeconds=$intervalSeconds, allowed=${intervals.joinToString(", ")}"
+                    )
+                }
+            }
+
+            MarketFilterSupport.FILTER_MODE_BLACKLIST -> {
+                if (matched) {
+                    FilterResult.marketIntervalFailed("市场周期命中黑名单: intervalSeconds=$intervalSeconds")
+                } else {
+                    FilterResult.passed()
+                }
+            }
+
+            else -> FilterResult.passed()
+        }
+    }
+
+    private fun checkMarketSeriesFilter(
+        copyTrading: CopyTrading,
+        seriesSlugPrefix: String?
+    ): FilterResult {
+        val mode = MarketFilterSupport.normalizeFilterMode(copyTrading.marketSeriesMode)
+        if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) {
+            return FilterResult.passed()
+        }
+
+        val normalizedSeries = seriesSlugPrefix?.trim()?.lowercase()
+        if (normalizedSeries.isNullOrBlank()) {
+            return FilterResult.marketSeriesFailed("市场系列缺失，无法进行市场系列过滤")
+        }
+
+        val seriesList = MarketFilterSupport.normalizeMarketSeries(
+            jsonUtils.parseStringArray(copyTrading.marketSeries)
+        )
+        if (seriesList.isEmpty()) {
+            return FilterResult.marketSeriesFailed("市场系列过滤已启用，但系列列表为空")
+        }
+
+        val matched = normalizedSeries in seriesList
+        return when (mode) {
+            MarketFilterSupport.FILTER_MODE_WHITELIST -> {
+                if (matched) {
+                    FilterResult.passed()
+                } else {
+                    FilterResult.marketSeriesFailed(
+                        "市场系列不在白名单中: series=$normalizedSeries, allowed=${seriesList.joinToString(", ")}"
+                    )
+                }
+            }
+
+            MarketFilterSupport.FILTER_MODE_BLACKLIST -> {
+                if (matched) {
+                    FilterResult.marketSeriesFailed("市场系列命中黑名单: series=$normalizedSeries")
+                } else {
+                    FilterResult.passed()
+                }
+            }
+
+            else -> FilterResult.passed()
+        }
     }
     
     /**

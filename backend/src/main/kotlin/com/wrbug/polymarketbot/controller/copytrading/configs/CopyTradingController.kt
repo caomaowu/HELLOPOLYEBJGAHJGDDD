@@ -232,8 +232,25 @@ class CopyTradingController(
             if (request.copyTradingId <= 0) {
                 return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_COPY_TRADING_ID_INVALID, messageSource = messageSource))
             }
+            val normalizedLatencyMetric = request.latencyMetric?.trim()?.takeIf { it.isNotEmpty() }
+            if (normalizedLatencyMetric != null && normalizedLatencyMetric !in CopyTradingExecutionEventService.SUPPORTED_LATENCY_METRICS) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "不支持的耗时指标: $normalizedLatencyMetric", messageSource))
+            }
+            if (request.minLatencyMs != null && request.minLatencyMs < 0) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "最小耗时阈值不能小于 0", messageSource))
+            }
+            if (request.minLatencyMs != null && normalizedLatencyMetric == null) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "使用最小耗时阈值时必须指定耗时指标", messageSource))
+            }
+            if (request.startTime != null && request.endTime != null && request.startTime > request.endTime) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "开始时间不能大于结束时间", messageSource))
+            }
 
-            val response = executionEventService.getEvents(request)
+            val response = executionEventService.getEvents(
+                request.copy(
+                    latencyMetric = normalizedLatencyMetric
+                )
+            )
             ResponseEntity.ok(ApiResponse.success(response))
         } catch (e: Exception) {
             logger.error("查询执行事件列表异常: ${e.message}", e)

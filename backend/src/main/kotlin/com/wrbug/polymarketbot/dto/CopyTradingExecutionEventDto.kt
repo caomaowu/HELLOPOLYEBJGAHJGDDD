@@ -9,6 +9,8 @@ data class CopyTradingExecutionEventListRequest(
     val stage: String? = null,
     val source: String? = null,
     val status: String? = null,
+    val latencyMetric: String? = null,
+    val minLatencyMs: Long? = null,
     val page: Int? = 1,
     val limit: Int? = 20,
     val startTime: Long? = null,
