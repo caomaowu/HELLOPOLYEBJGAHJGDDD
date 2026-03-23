@@ -76,9 +76,8 @@ object ProxyConfigProvider {
         val expectedPort = config.port
         Authenticator.setDefault(object : Authenticator() {
             override fun getPasswordAuthentication(): PasswordAuthentication? {
-                if (requestorType != RequestorType.PROXY) {
-                    return null
-                }
+                // SOCKS5 在不同 JVM/底层实现里的 requestorType 并不总是 PROXY，
+                // 这里改为只校验目标 host/port，避免明明凭证正确却拿不到认证。
                 if (!expectedHost.isNullOrBlank() && requestingHost != null && !requestingHost.equals(expectedHost, ignoreCase = true)) {
                     return null
                 }
