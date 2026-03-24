@@ -104,7 +104,6 @@ DB_USERNAME=$(get_env_value "DB_USERNAME" "root")
 DB_PASSWORD=$(get_env_value "DB_PASSWORD" "")
 DB_NAME=$(get_env_value "DB_NAME" "polyhermes")
 SERVER_PORT=$(get_env_value "SERVER_PORT" "8000")
-FRONTEND_PORT=$(get_env_value "FRONTEND_PORT" "3000")
 JWT_SECRET=$(get_env_value "JWT_SECRET" "change-me-in-production")
 ADMIN_RESET_PASSWORD_KEY=$(get_env_value "ADMIN_RESET_PASSWORD_KEY" "change-me-in-production-use-openssl-rand-hex-32")
 VITE_API_URL=$(get_env_value "VITE_API_URL" "http://localhost:8000")
@@ -203,7 +202,6 @@ fi
 
 print_step "6. Creating frontend environment file"
 cat > "$FRONTEND_ENV_FILE" << EOF
-FRONTEND_PORT=$FRONTEND_PORT
 VITE_API_URL=$VITE_API_URL
 VITE_WS_URL=$VITE_WS_URL
 VITE_ENABLE_SYSTEM_UPDATE=$VITE_ENABLE_SYSTEM_UPDATE

@@ -135,7 +135,7 @@ npm install
 
 2. **启动开发服务器**
 
-> 注意：前端环境变量文件（.env）已由初始化脚本自动创建。如需修改：
+> 注意：前端代理地址会写入 `frontend/.env`，前端页面端口请修改根目录 `.env` 中的 `FRONTEND_PORT`。如需修改：
 > ```env
 > FRONTEND_PORT=3000
 > VITE_API_URL=http://localhost:8000
@@ -146,7 +146,7 @@ npm install
 npm run dev
 ```
 
-前端应用将在 `http://localhost:${FRONTEND_PORT}` 启动；未配置时默认使用 `3000`。
+前端应用会监听根目录 `.env` 中 `FRONTEND_PORT` 指定的端口，例如 `http://localhost:3000`；未配置时默认使用 `3000`。
 
 ## 📝 代码规范
 

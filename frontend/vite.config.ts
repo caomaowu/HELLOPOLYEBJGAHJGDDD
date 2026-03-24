@@ -7,8 +7,8 @@ export default defineConfig(({ mode }) => {
   const frontendRoot = process.cwd()
   const projectRoot = path.resolve(frontendRoot, '..')
   const env = {
-    ...loadEnv(mode, projectRoot, ''),
     ...loadEnv(mode, frontendRoot, ''),
+    ...loadEnv(mode, projectRoot, ''),
     ...process.env
   }
   
