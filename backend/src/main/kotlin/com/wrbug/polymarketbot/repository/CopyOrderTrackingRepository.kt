@@ -11,6 +11,8 @@ import java.math.BigDecimal
  */
 @Repository
 interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
+    @Query("SELECT DISTINCT t.marketId FROM CopyOrderTracking t WHERE t.marketId <> '' AND t.marketId LIKE '0x%'")
+    fun findDistinctValidMarketIds(): List<String>
     
     /**
      * 根据跟单关系ID查询所有买入订单
@@ -114,4 +116,3 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
         thresholdTime: Long
     ): List<CopyOrderTracking>
 }
-

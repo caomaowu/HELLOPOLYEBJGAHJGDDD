@@ -52,7 +52,7 @@ prepare_deploy_dir() {
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-exec java -Xms512m -Xmx1024m -XX:+UseG1GC -jar app.jar
+exec java -Xms256m -Xmx512m -XX:+UseG1GC -jar app.jar
 EOF
     chmod +x "$DEPLOY_DIR/start.sh"
 
@@ -66,7 +66,7 @@ Type=simple
 User=polyhermes
 WorkingDirectory=/opt/polyhermes/backend
 EnvironmentFile=/opt/polyhermes/backend/.env
-ExecStart=/usr/bin/java -Xms512m -Xmx1024m -XX:+UseG1GC -jar /opt/polyhermes/backend/app.jar
+ExecStart=/usr/bin/java -Xms256m -Xmx512m -XX:+UseG1GC -jar /opt/polyhermes/backend/app.jar
 Restart=always
 RestartSec=10
 

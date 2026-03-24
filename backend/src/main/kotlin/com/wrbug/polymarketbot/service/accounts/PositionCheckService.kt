@@ -481,7 +481,7 @@ class PositionCheckService(
     private suspend fun checkUnmatchedOrders(currentPositions: List<AccountPositionDto>) {
         try {
             // 获取所有启用的跟单配置
-            val allCopyTradings = copyTradingRepository.findAll().filter { it.enabled }
+            val allCopyTradings = copyTradingRepository.findByEnabledTrue()
             
             // 按账户和市场分组当前仓位
             val positionsByAccountAndMarket = currentPositions.groupBy { 
@@ -1034,4 +1034,3 @@ class PositionCheckService(
         return "${address.take(6)}...${address.takeLast(4)}"
     }
 }
-

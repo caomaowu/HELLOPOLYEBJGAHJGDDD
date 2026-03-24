@@ -89,9 +89,8 @@ class MarketPollingService(
      */
     private suspend fun checkAndUpdateMissingMarkets() {
         try {
-            // 1. 获取所有买入订单的市场ID（去重）
-            val allOrders = copyOrderTrackingRepository.findAll()
-            val marketIds = allOrders.map { it.marketId }.distinct()
+            // 1. 直接从数据库查询去重后的有效市场ID，避免整表加载订单实体
+            val marketIds = copyOrderTrackingRepository.findDistinctValidMarketIds()
             
             if (marketIds.isEmpty()) {
                 logger.debug("没有找到任何订单，跳过市场信息检查")
@@ -102,19 +101,14 @@ class MarketPollingService(
             val existingMarketIds = existingMarkets.map { it.marketId }.toSet()
             val missingMarketIds = marketIds.filter { it !in existingMarketIds }
             
-            // 过滤掉空字符串和无效的市场ID
-            val validMissingMarketIds = missingMarketIds.filter { 
-                it.isNotBlank() && it.startsWith("0x") 
-            }
-            
-            if (validMissingMarketIds.isEmpty()) {
+            if (missingMarketIds.isEmpty()) {
                 return
             }
             
-            logger.info("发现 ${validMissingMarketIds.size} 个缺失的市场信息，开始批量更新...")
+            logger.info("发现 ${missingMarketIds.size} 个缺失的市场信息，开始批量更新...")
             
             // 3. 批量从API获取缺失的市场信息（分批处理，避免一次性请求过多）
-            val batches = validMissingMarketIds.chunked(batchSize)
+            val batches = missingMarketIds.chunked(batchSize)
             var successCount = 0
             var failCount = 0
             
@@ -145,7 +139,7 @@ class MarketPollingService(
                 }
             }
             
-            logger.info("市场信息更新完成: 成功=${successCount}, 失败=${failCount}, 总计=${validMissingMarketIds.size}")
+            logger.info("市场信息更新完成: 成功=${successCount}, 失败=${failCount}, 总计=${missingMarketIds.size}")
         } catch (e: Exception) {
             logger.error("检查并更新市场信息异常: ${e.message}", e)
         }
@@ -164,4 +158,3 @@ class MarketPollingService(
         }
     }
 }
-

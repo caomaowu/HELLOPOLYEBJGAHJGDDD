@@ -32,6 +32,11 @@ interface CopyTradingRepository : JpaRepository<CopyTrading, Long> {
      * 查找所有启用的跟单
      */
     fun findByEnabledTrue(): List<CopyTrading>
+
+    /**
+     * 查找所有启用且开启了小单聚合的跟单
+     */
+    fun findByEnabledTrueAndSmallOrderAggregationEnabledTrue(): List<CopyTrading>
     
     /**
      * 根据账户ID查找启用的跟单
@@ -48,4 +53,3 @@ interface CopyTradingRepository : JpaRepository<CopyTrading, Long> {
      */
     fun countByLeaderId(leaderId: Long): Long
 }
-

@@ -459,11 +459,10 @@ open class CopyOrderTrackingService(
     }
 
     private suspend fun releaseBufferedBuyAggregations() {
-        val allCopyTradings = copyTradingRepository.findAll()
+        val enabledAggregationCopyTradings = copyTradingRepository.findByEnabledTrueAndSmallOrderAggregationEnabledTrue()
             .filter { it.id != null }
-        val activeAggregationIds = allCopyTradings
+        val activeAggregationIds = enabledAggregationCopyTradings
             .asSequence()
-            .filter { it.enabled && it.smallOrderAggregationEnabled }
             .map { it.id!! }
             .toSet()
         val clearedGroups = smallOrderAggregationService.clearInactive(activeAggregationIds)
@@ -471,14 +470,12 @@ open class CopyOrderTrackingService(
             logger.info("已清理 {} 个失活的小额 BUY 聚合缓冲组", clearedGroups)
         }
 
-        val enabledCopyTradings = allCopyTradings
-            .filter { it.enabled && it.smallOrderAggregationEnabled }
-        if (enabledCopyTradings.isEmpty()) {
+        if (enabledAggregationCopyTradings.isEmpty()) {
             return
         }
 
         val readyBatches = smallOrderAggregationService.releaseExpired(
-            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
+            enabledAggregationCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
             side = "BUY"
         )
         if (readyBatches.isEmpty()) {
@@ -582,14 +579,14 @@ open class CopyOrderTrackingService(
     }
 
     private suspend fun releaseBufferedSellAggregations() {
-        val enabledCopyTradings = copyTradingRepository.findAll()
-            .filter { it.id != null && it.enabled && it.smallOrderAggregationEnabled }
-        if (enabledCopyTradings.isEmpty()) {
+        val enabledAggregationCopyTradings = copyTradingRepository.findByEnabledTrueAndSmallOrderAggregationEnabledTrue()
+            .filter { it.id != null }
+        if (enabledAggregationCopyTradings.isEmpty()) {
             return
         }
 
         val readyBatches = smallOrderAggregationService.releaseExpired(
-            enabledCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
+            enabledAggregationCopyTradings.associate { it.id!! to it.smallOrderAggregationWindowSeconds },
             side = "SELL"
         )
         if (readyBatches.isEmpty()) {
@@ -2871,4 +2868,3 @@ open class CopyOrderTrackingService(
         return "YES"  // 默认返回第一个 outcome
     }
 }
-

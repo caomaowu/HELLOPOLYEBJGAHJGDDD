@@ -139,23 +139,8 @@ class OrderStatusUpdateService(
     @Transactional
     suspend fun cleanupDeletedAccountOrders() {
         try {
-            // 查询所有卖出记录
-            val allRecords = sellMatchRecordRepository.findAll()
-
-            // 查询所有有效的账户ID
-            val validAccountIds = accountRepository.findAll().mapNotNull { it.id }.toSet()
-
-            // 查询所有有效的跟单关系
-            val validCopyTradingIds = copyTradingRepository.findAll()
-                .filter { it.accountId in validAccountIds }
-                .mapNotNull { it.id }
-                .toSet()
-
-            // 找出需要删除的记录（关联的跟单关系已不存在或账户已删除）
-            val recordsToDelete = allRecords.filter { record ->
-                val copyTrading = copyTradingRepository.findById(record.copyTradingId).orElse(null)
-                copyTrading == null || copyTrading.accountId !in validAccountIds
-            }
+            // 直接在数据库侧筛出关联的跟单配置或账户已不存在的卖出记录，避免整表扫描
+            val recordsToDelete = sellMatchRecordRepository.findRecordsWithMissingCopyTradingOrAccount()
 
             if (recordsToDelete.isNotEmpty()) {
                 logger.info("清理已删除账户的订单: ${recordsToDelete.size} 条记录")
@@ -1052,4 +1037,3 @@ class OrderStatusUpdateService(
         }
     }
 }
-

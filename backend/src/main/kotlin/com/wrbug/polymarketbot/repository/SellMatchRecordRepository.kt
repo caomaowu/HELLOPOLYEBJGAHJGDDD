@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.repository
 
 import com.wrbug.polymarketbot.entity.SellMatchRecord
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 import org.springframework.stereotype.Repository
 
 /**
@@ -9,6 +10,23 @@ import org.springframework.stereotype.Repository
  */
 @Repository
 interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
+    @Query(
+        """
+        SELECT smr
+        FROM SellMatchRecord smr
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM CopyTrading ct
+            WHERE ct.id = smr.copyTradingId
+              AND EXISTS (
+                  SELECT 1
+                  FROM Account a
+                  WHERE a.id = ct.accountId
+              )
+        )
+        """
+    )
+    fun findRecordsWithMissingCopyTradingOrAccount(): List<SellMatchRecord>
     
     /**
      * 根据跟单关系ID查询所有卖出记录
@@ -31,4 +49,3 @@ interface SellMatchRecordRepository : JpaRepository<SellMatchRecord, Long> {
      */
     fun findByPriceUpdatedFalse(): List<SellMatchRecord>
 }
-
