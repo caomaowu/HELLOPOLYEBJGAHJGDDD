@@ -107,6 +107,7 @@ Write-Step "停止开发环境"
 
 Load-EnvFile
 $BackendPort = [int](Get-EnvValue -Key "SERVER_PORT" -Default "8000")
+$FrontendPort = [int](Get-EnvValue -Key "FRONTEND_PORT" -Default "3000")
 
 Stop-ProcessFromPidFile -Name "Frontend" -PidFile $FrontendPidFile -Port $FrontendPort
 Stop-ProcessFromPidFile -Name "Backend" -PidFile $BackendPidFile -Port $BackendPort

@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.springframework.boot.gradle.tasks.run.BootRun
+import java.util.Properties
 
 plugins {
     id("org.springframework.boot") version "3.2.0"
@@ -17,6 +19,17 @@ java {
 
 repositories {
     mavenCentral()
+}
+
+fun loadRootEnvFile(): Map<String, String> {
+    val envFile = rootDir.parentFile.resolve(".env")
+    if (!envFile.exists()) {
+        return emptyMap()
+    }
+
+    val properties = Properties()
+    envFile.inputStream().use { properties.load(it) }
+    return properties.stringPropertyNames().associateWith { properties.getProperty(it) }
 }
 
 dependencies {
@@ -85,5 +98,13 @@ tasks.withType<KotlinCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+tasks.named<BootRun>("bootRun") {
+    loadRootEnvFile().forEach { (key, value) ->
+        if (System.getenv(key).isNullOrBlank()) {
+            environment(key, value)
+        }
+    }
 }
 

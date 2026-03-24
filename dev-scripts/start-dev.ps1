@@ -44,6 +44,12 @@ function Load-EnvFile {
     }
 }
 
+function Export-EnvFileToProcess {
+    foreach ($entry in $envHash.GetEnumerator()) {
+        Set-Item -Path "Env:$($entry.Key)" -Value $entry.Value
+    }
+}
+
 function Get-EnvValue {
     param(
         [string]$Key,
@@ -303,7 +309,9 @@ if (-not (Test-Path $RunDir)) {
 }
 
 Load-EnvFile
+Export-EnvFileToProcess
 $BackendPort = [int](Get-EnvValue -Key "SERVER_PORT" -Default "8000")
+$FrontendPort = [int](Get-EnvValue -Key "FRONTEND_PORT" -Default "3000")
 
 if ($InstallDeps -or -not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
     Write-Step "安装前端依赖"
@@ -343,7 +351,7 @@ Wait-ServicesReady -Services @($backendService, $frontendService) -BackendServic
 
 Write-Host ""
 Write-Ok "前后端已启动"
-Write-Host "Frontend: http://localhost:3000"
+Write-Host "Frontend: http://localhost:$FrontendPort"
 Write-Host "Backend:  http://localhost:$BackendPort"
 Write-Host "Backend Log:  $BackendLog"
 Write-Host "Frontend Log: $FrontendLog"

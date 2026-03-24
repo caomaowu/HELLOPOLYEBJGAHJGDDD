@@ -18,6 +18,7 @@ BACKEND_PID_FILE="$RUN_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUN_DIR/frontend.pid"
 ENV_FILE="$PROJECT_ROOT/.env"
 BACKEND_PORT="8000"
+FRONTEND_PORT="3000"
 
 info() {
     printf '[INFO] %s\n' "$1"
@@ -39,6 +40,25 @@ load_backend_port() {
         if [[ -n "$line" ]]; then
             BACKEND_PORT="${line#*=}"
         fi
+    fi
+}
+
+load_frontend_port() {
+    if [[ -f "$ENV_FILE" ]]; then
+        local line
+        line="$(grep -E '^FRONTEND_PORT=' "$ENV_FILE" | tail -n 1 || true)"
+        if [[ -n "$line" ]]; then
+            FRONTEND_PORT="${line#*=}"
+        fi
+    fi
+}
+
+export_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+        set +a
     fi
 }
 
@@ -89,6 +109,8 @@ assert_command npm "请安装 npm。"
 
 mkdir -p "$RUN_DIR"
 load_backend_port
+load_frontend_port
+export_env_file
 
 if [[ "$INSTALL_DEPS" == "true" || ! -d "$FRONTEND_DIR/node_modules" ]]; then
     info "安装前端依赖"
@@ -108,7 +130,7 @@ start_background "Frontend" "$FRONTEND_DIR" "npm run dev" "$FRONTEND_LOG" "$FRON
 
 printf '\n'
 ok "前后端已启动"
-printf 'Frontend: http://localhost:3000\n'
+printf 'Frontend: http://localhost:%s\n' "$FRONTEND_PORT"
 printf 'Backend:  http://localhost:%s\n' "$BACKEND_PORT"
 printf 'Backend Log:  %s\n' "$BACKEND_LOG"
 printf 'Frontend Log: %s\n' "$FRONTEND_LOG"

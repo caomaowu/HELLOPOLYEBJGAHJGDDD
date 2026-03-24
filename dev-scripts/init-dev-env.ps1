@@ -89,6 +89,7 @@ $DB_USERNAME = Get-EnvValue "DB_USERNAME" "root"
 $DB_PASSWORD = Get-EnvValue "DB_PASSWORD"
 $DB_NAME = Get-EnvValue "DB_NAME" "polyhermes"
 $SERVER_PORT = Get-EnvValue "SERVER_PORT" "8000"
+$FRONTEND_PORT = Get-EnvValue "FRONTEND_PORT" "3000"
 $JWT_SECRET = Get-EnvValue "JWT_SECRET" "change-me-in-production"
 $ADMIN_RESET_PASSWORD_KEY = Get-EnvValue "ADMIN_RESET_PASSWORD_KEY" "change-me-in-production-use-openssl-rand-hex-32"
 $VITE_API_URL = Get-EnvValue "VITE_API_URL" "http://localhost:8000"
@@ -201,6 +202,7 @@ if (Test-Path $BackendAppProps) {
 
 Write-Step "6. Creating frontend environment file"
 $frontendEnvContent = @"
+FRONTEND_PORT=$FRONTEND_PORT
 VITE_API_URL=$VITE_API_URL
 VITE_WS_URL=$VITE_WS_URL
 VITE_ENABLE_SYSTEM_UPDATE=$VITE_ENABLE_SYSTEM_UPDATE
