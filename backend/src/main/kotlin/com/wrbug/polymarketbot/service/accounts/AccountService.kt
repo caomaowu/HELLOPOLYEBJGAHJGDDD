@@ -128,6 +128,9 @@ class AccountService(
             val encryptedPrivateKey = cryptoUtils.encrypt(request.privateKey)
             val encryptedApiSecret = apiKeyCreds.secret.let { cryptoUtils.encrypt(it) }
             val encryptedApiPassphrase = apiKeyCreds.passphrase.let { cryptoUtils.encrypt(it) }
+            val encryptedBuilderApiKey = request.builderApiKey?.trim()?.takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
+            val encryptedBuilderSecret = request.builderSecret?.trim()?.takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
+            val encryptedBuilderPassphrase = request.builderPassphrase?.trim()?.takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
 
             // 8. 生成账户名称（如果未提供，使用 SAFE/MAGIC-代理地址后4位）
             val accountName = if (request.accountName.isNullOrBlank()) {
@@ -156,6 +159,9 @@ class AccountService(
                 apiKey = apiKeyCreds.apiKey,
                 apiSecret = encryptedApiSecret,  // 存储加密后的 API Secret
                 apiPassphrase = encryptedApiPassphrase,  // 存储加密后的 API Passphrase
+                builderApiKey = encryptedBuilderApiKey,
+                builderSecret = encryptedBuilderSecret,
+                builderPassphrase = encryptedBuilderPassphrase,
                 accountName = accountName,
                 isDefault = false,  // 不再支持默认账户
                 isEnabled = request.isEnabled,
@@ -429,7 +435,8 @@ class AccountService(
                             val deployResult = relayClientService.deploySafeViaBuilderRelayer(
                                 privateKey = privateKey,
                                 proxyAddress = proxyAddress,
-                                fromAddress = account.walletAddress
+                                fromAddress = account.walletAddress,
+                                builderCredentials = getAccountBuilderCredentials(account)
                             )
                             deployResult.fold(
                                 onSuccess = { txHash ->
@@ -490,7 +497,8 @@ class AccountService(
                         privateKey = privateKey,
                         proxyAddress = proxyAddress,
                         safeTx = multiSendTx,
-                        walletType = walletType
+                        walletType = walletType,
+                        builderCredentials = getAccountBuilderCredentials(account)
                     )
                     executeResult.fold(
                         onSuccess = { txHash ->
@@ -531,10 +539,31 @@ class AccountService(
             // 更新启用状态
             val updatedIsEnabled = request.isEnabled ?: account.isEnabled
 
+            val updatedBuilderApiKey = if (request.builderApiKey != null) {
+                request.builderApiKey.trim().takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
+            } else {
+                account.builderApiKey
+            }
+
+            val updatedBuilderSecret = if (request.builderSecret != null) {
+                request.builderSecret.trim().takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
+            } else {
+                account.builderSecret
+            }
+
+            val updatedBuilderPassphrase = if (request.builderPassphrase != null) {
+                request.builderPassphrase.trim().takeIf { it.isNotBlank() }?.let { cryptoUtils.encrypt(it) }
+            } else {
+                account.builderPassphrase
+            }
+
             val updated = account.copy(
                 accountName = updatedAccountName,
                 isDefault = account.isDefault,  // 保持原值，不再支持修改
                 isEnabled = updatedIsEnabled,
+                builderApiKey = updatedBuilderApiKey,
+                builderSecret = updatedBuilderSecret,
+                builderPassphrase = updatedBuilderPassphrase,
                 updatedAt = System.currentTimeMillis()
             )
 
@@ -669,6 +698,9 @@ class AccountService(
             apiKeyConfigured = account.apiKey != null,
             apiSecretConfigured = account.apiSecret != null,
             apiPassphraseConfigured = account.apiPassphrase != null,
+            builderApiKeyConfigured = account.builderApiKey != null,
+            builderSecretConfigured = account.builderSecret != null,
+            builderPassphraseConfigured = account.builderPassphrase != null,
             totalOrders = null,
             totalPnl = null,
             activeOrders = null,
@@ -694,6 +726,12 @@ class AccountService(
                 apiKeyConfigured = account.apiKey != null,
                 apiSecretConfigured = account.apiSecret != null,
                 apiPassphraseConfigured = account.apiPassphrase != null,
+                builderApiKeyConfigured = account.builderApiKey != null,
+                builderSecretConfigured = account.builderSecret != null,
+                builderPassphraseConfigured = account.builderPassphrase != null,
+                builderApiKeyDisplay = decryptBuilderApiKey(account),
+                builderSecretDisplay = decryptBuilderSecret(account),
+                builderPassphraseDisplay = decryptBuilderPassphrase(account),
                 totalOrders = statistics.totalOrders,
                 totalPnl = statistics.totalPnl,
                 activeOrders = statistics.activeOrders,
@@ -885,6 +923,37 @@ class AccountService(
         }
     }
 
+    fun hasAvailableBuilderCredentials(account: Account): Boolean {
+        return relayClientService.hasAvailableBuilderCredentials(getAccountBuilderCredentials(account))
+    }
+
+    private fun getAccountBuilderCredentials(account: Account): BuilderCredentials? {
+        val apiKey = decryptOptional(account.builderApiKey)
+        val secret = decryptOptional(account.builderSecret)
+        val passphrase = decryptOptional(account.builderPassphrase)
+        return if (!apiKey.isNullOrBlank() && !secret.isNullOrBlank() && !passphrase.isNullOrBlank()) {
+            BuilderCredentials(
+                apiKey = apiKey,
+                secret = secret,
+                passphrase = passphrase
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun decryptOptional(value: String?): String? {
+        if (value.isNullOrBlank()) {
+            return null
+        }
+        return try {
+            cryptoUtils.decrypt(value)
+        } catch (e: Exception) {
+            logger.warn("解密 Builder 凭证失败", e)
+            null
+        }
+    }
+
     /**
      * 轮询用：遍历所有账户，对代理地址 WCOL 余额 > 0 的执行解包为 USDC.e。
      * 由 WcolUnwrapJobService 每 20 秒调用，赎回后无需在赎回流程内等待确认与解包。
@@ -894,12 +963,17 @@ class AccountService(
         if (accounts.isEmpty()) return
         for (account in accounts) {
             try {
+                if (!hasAvailableBuilderCredentials(account)) {
+                    logger.debug("账户未配置可用 Builder 凭证，跳过 WCOL 解包: accountId=${account.id}")
+                    continue
+                }
                 val privateKey = decryptPrivateKey(account)
                 val walletType = WalletType.fromStringOrDefault(account.walletType, WalletType.SAFE)
                 blockchainService.unwrapWcolForProxy(
                     privateKey = privateKey,
                     proxyAddress = account.proxyAddress,
-                    walletType = walletType
+                    walletType = walletType,
+                    builderCredentials = getAccountBuilderCredentials(account)
                 ).fold(
                     onSuccess = { txHash ->
                         if (txHash != null) {
@@ -943,6 +1017,12 @@ class AccountService(
             }
         } ?: throw IllegalStateException("账户未配置 API Passphrase")
     }
+
+    private fun decryptBuilderApiKey(account: Account): String? = decryptOptional(account.builderApiKey)
+
+    private fun decryptBuilderSecret(account: Account): String? = decryptOptional(account.builderSecret)
+
+    private fun decryptBuilderPassphrase(account: Account): String? = decryptOptional(account.builderPassphrase)
 
     /**
      * 查询所有账户的仓位列表
@@ -1588,13 +1668,14 @@ class AccountService(
                 accounts[accountId] = account
             }
 
-            // 4. 若涉及 Magic 账户，必须已配置 Builder API Key（提前判断，避免执行到深层再报错）
-            val hasMagicAccount = accounts.values.any { 
-                WalletType.fromStringOrDefault(it.walletType, WalletType.SAFE) == WalletType.MAGIC 
+            // 4. 若涉及 Magic 账户，必须存在可用 Builder 凭证（账户级优先，系统级兜底）
+            val hasMagicAccountWithoutBuilder = accounts.values.any {
+                WalletType.fromStringOrDefault(it.walletType, WalletType.SAFE) == WalletType.MAGIC &&
+                        !hasAvailableBuilderCredentials(it)
             }
-            if (hasMagicAccount && !relayClientService.isBuilderApiKeyConfigured()) {
+            if (hasMagicAccountWithoutBuilder) {
                 return Result.failure(
-                    IllegalStateException("Builder API Key 未配置，无法执行 Magic 账户赎回（Gasless）。请前往系统设置页面配置 Builder API Key。")
+                    IllegalStateException("Builder API Key 未配置，无法执行 Magic 账户赎回（Gasless）。请为账户配置 Builder API Key，或在系统设置中配置默认 Builder API Key。")
                 )
             }
 
@@ -1676,7 +1757,8 @@ class AccountService(
                         privateKey = decryptedPrivateKey,
                         proxyAddress = account.proxyAddress,
                         redeemRequests = redeemRequests,
-                        walletType = walletTypeEnum
+                        walletType = walletTypeEnum,
+                        builderCredentials = getAccountBuilderCredentials(account)
                     )
 
                     redeemResult.fold(
@@ -1700,7 +1782,8 @@ class AccountService(
                             conditionId = marketId,
                             indexSets = indexSets,
                             isNegRisk = isNegRisk,
-                            walletType = walletTypeEnum
+                            walletType = walletTypeEnum,
+                            builderCredentials = getAccountBuilderCredentials(account)
                         )
 
                         redeemResult.fold(
@@ -1825,5 +1908,3 @@ class AccountService(
         }
     }
 }
-
-

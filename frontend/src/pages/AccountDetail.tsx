@@ -78,6 +78,16 @@ const AccountDetail: React.FC = () => {
         accountId: account.id,
         accountName: values.accountName || undefined,
       }
+
+      if (values.builderApiKey && values.builderApiKey.trim()) {
+        updateData.builderApiKey = values.builderApiKey.trim()
+      }
+      if (values.builderSecret && values.builderSecret.trim()) {
+        updateData.builderSecret = values.builderSecret.trim()
+      }
+      if (values.builderPassphrase && values.builderPassphrase.trim()) {
+        updateData.builderPassphrase = values.builderPassphrase.trim()
+      }
       
       await updateAccount(updateData)
       
@@ -151,7 +161,10 @@ const AccountDetail: React.FC = () => {
             onClick={() => {
               setEditModalVisible(true)
               editForm.setFieldsValue({
-                accountName: account.accountName || ''
+                accountName: account.accountName || '',
+                builderApiKey: account.builderApiKeyDisplay || '',
+                builderSecret: account.builderSecretDisplay || '',
+                builderPassphrase: account.builderPassphraseDisplay || ''
               })
             }}
             size={isMobile ? 'middle' : 'large'}
@@ -186,6 +199,19 @@ const AccountDetail: React.FC = () => {
               </Tag>
             </Descriptions.Item>
           )}
+          <Descriptions.Item label={t('builderApiKey.title') || 'Builder API Key'}>
+            <Space wrap>
+              <Tag color={account.builderApiKeyConfigured ? 'success' : 'default'}>
+                {account.builderApiKeyConfigured ? (t('account.configured') || '已配置') : (t('account.notConfigured') || '未配置')}
+              </Tag>
+              <Tag color={account.builderSecretConfigured ? 'success' : 'default'}>
+                Secret {account.builderSecretConfigured ? (t('account.configured') || '已配置') : (t('account.notConfigured') || '未配置')}
+              </Tag>
+              <Tag color={account.builderPassphraseConfigured ? 'success' : 'default'}>
+                Passphrase {account.builderPassphraseConfigured ? (t('account.configured') || '已配置') : (t('account.notConfigured') || '未配置')}
+              </Tag>
+            </Space>
+          </Descriptions.Item>
           <Descriptions.Item label={t('account.walletAddress')} span={isMobile ? 1 : 2}>
             <span style={{ 
               fontFamily: 'monospace', 
@@ -307,7 +333,7 @@ const AccountDetail: React.FC = () => {
           >
             <Alert
               message={t('account.editTip') || '编辑账户'}
-              description={t('account.editTipDesc') || '只能编辑账户名称，API 凭证需要通过导入账户功能更新。'}
+              description={t('account.editTipDesc') || '可编辑账户名称和账户级 Builder 凭证。Builder 字段留空表示保持原值不变。'}
               type="info"
               showIcon
               style={{ marginBottom: '24px' }}
@@ -318,6 +344,27 @@ const AccountDetail: React.FC = () => {
               name="accountName"
             >
               <Input placeholder={t('account.accountNamePlaceholder') || '请输入账户名称（可选）'} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.apiKey')}
+              name="builderApiKey"
+            >
+              <Input placeholder={t('builderApiKey.apiKeyPlaceholder')} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.secret')}
+              name="builderSecret"
+            >
+              <Input.Password placeholder={t('builderApiKey.secretPlaceholder')} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.passphrase')}
+              name="builderPassphrase"
+            >
+              <Input.Password placeholder={t('builderApiKey.passphrasePlaceholder')} />
             </Form.Item>
             
             <Form.Item>
@@ -356,7 +403,6 @@ const AccountDetail: React.FC = () => {
 }
 
 export default AccountDetail
-
 
 
 

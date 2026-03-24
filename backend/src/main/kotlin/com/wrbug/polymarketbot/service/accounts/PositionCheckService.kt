@@ -349,38 +349,52 @@ class PositionCheckService(
                 return
             }
 
-            // 检查系统级别的自动赎回配置
             val autoRedeemEnabled = systemConfigService.isAutoRedeemEnabled()
-            val apiKeyConfigured = relayClientService.isBuilderApiKeyConfigured()
-            
-            // 2. (未配置apikey || autoredeem==false) && 有待赎回的仓位：发送通知事件
-            if (!autoRedeemEnabled || !apiKeyConfigured) {
-                // 按账户分组发送通知
-                val positionsByAccount = redeemablePositions.groupBy { it.accountId }
-                
+            val positionsByAccount = redeemablePositions.groupBy { it.accountId }
+
+            // 2. 自动赎回未开启：发送通知并停止处理
+            if (!autoRedeemEnabled) {
                 for ((accountId, positions) in positionsByAccount) {
                     for (position in positions) {
                         val positionKey = "${accountId}_${position.marketId}_${position.outcomeIndex ?: 0}"
-                        // 检查是否在最近2小时内已发送过提示（避免频繁推送）
                         val lastNotification = notifiedRedeemablePositions[positionKey]
                         val now = System.currentTimeMillis()
-                        if (lastNotification == null || (now - lastNotification) >= 7200000) {  // 2小时
-                            if (!autoRedeemEnabled) {
-                                // 自动赎回未开启：直接发送通知，不需要查找跟单配置
-                                checkAndNotifyAutoRedeemDisabled(accountId, listOf(position))
-                            } else {
-                                // API Key 未配置：需要查找跟单配置来发送通知
-                                val copyTradings = copyTradingRepository.findByAccountId(accountId)
-                                    .filter { it.enabled }
-                                for (copyTrading in copyTradings) {
-                                    checkAndNotifyBuilderApiKeyNotConfigured(copyTrading, listOf(position))
-                                }
-                            }
+                        if (lastNotification == null || (now - lastNotification) >= 7200000) {
+                            checkAndNotifyAutoRedeemDisabled(accountId, listOf(position))
                             notifiedRedeemablePositions[positionKey] = now
                         }
                     }
                 }
-                return  // 未配置时直接返回，不进行后续处理
+                return
+            }
+
+            // 3. 自动赎回已开启：仅处理已配置可用 Builder 凭证的账户；其他账户继续发送通知
+            val redeemablePositionsByAccount = mutableMapOf<Long, List<AccountPositionDto>>()
+            for ((accountId, positions) in positionsByAccount) {
+                val account = accountRepository.findById(accountId).orElse(null)
+                val builderConfigured = account != null && accountService.hasAvailableBuilderCredentials(account)
+                if (builderConfigured) {
+                    redeemablePositionsByAccount[accountId] = positions
+                    continue
+                }
+
+                for (position in positions) {
+                    val positionKey = "${accountId}_${position.marketId}_${position.outcomeIndex ?: 0}"
+                    val lastNotification = notifiedRedeemablePositions[positionKey]
+                    val now = System.currentTimeMillis()
+                    if (lastNotification == null || (now - lastNotification) >= 7200000) {
+                        val copyTradings = copyTradingRepository.findByAccountId(accountId)
+                            .filter { it.enabled }
+                        for (copyTrading in copyTradings) {
+                            checkAndNotifyBuilderApiKeyNotConfigured(copyTrading, listOf(position))
+                        }
+                        notifiedRedeemablePositions[positionKey] = now
+                    }
+                }
+            }
+
+            if (redeemablePositionsByAccount.isEmpty()) {
+                return
             }
 
             // Builder Relayer 配额冷却期内不再发起赎回（如 API 返回 quota exceeded, resets in N seconds）
@@ -390,12 +404,10 @@ class PositionCheckService(
                 return
             }
 
-            // 3. (已配置) && 有待赎回的仓位：处理订单逻辑
+            // 4. (已配置) && 有待赎回的仓位：处理订单逻辑
             // 自动赎回已开启且已配置 API Key，按账户分组进行赎回处理
             // 先执行赎回，赎回成功后再查找订单并更新订单状态
-            val positionsByAccount = redeemablePositions.groupBy { it.accountId }
-            
-            for ((accountId, positions) in positionsByAccount) {
+            for ((accountId, positions) in redeemablePositionsByAccount) {
                 // 查找该账户下所有启用的跟单配置（仅用于赎回成功后更新跟单订单状态；无跟单配置的账户如加密价差策略账户也会执行赎回）
                 val copyTradings = copyTradingRepository.findByAccountId(accountId)
                     .filter { it.enabled }

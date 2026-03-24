@@ -249,7 +249,10 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         privateKey: privateKey,
         walletAddress: walletAddress,
         accountName: values.accountName,
-        walletType: selectedProxyType
+        walletType: selectedProxyType,
+        builderApiKey: values.builderApiKey?.trim() || undefined,
+        builderSecret: values.builderSecret?.trim() || undefined,
+        builderPassphrase: values.builderPassphrase?.trim() || undefined
       })
       
       // 等待store更新
@@ -556,7 +559,39 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
         >
           <Input placeholder={t('accountImport.accountNamePlaceholder')} />
         </Form.Item>
-        
+
+        <Alert
+          message={t('accountImport.builderCredentialsTip') || '账户级 Builder 凭证'}
+          description={t('accountImport.builderCredentialsTipDesc') || '可选。填写后该账户执行 Gasless 交易时会优先使用自己的 Builder API Key；留空则继续使用系统设置中的默认凭证。'}
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form.Item
+          label={t('builderApiKey.apiKey')}
+          name="builderApiKey"
+          style={{ marginBottom: 16 }}
+        >
+          <Input placeholder={t('builderApiKey.apiKeyPlaceholder')} />
+        </Form.Item>
+
+        <Form.Item
+          label={t('builderApiKey.secret')}
+          name="builderSecret"
+          style={{ marginBottom: 16 }}
+        >
+          <Input.Password placeholder={t('builderApiKey.secretPlaceholder')} />
+        </Form.Item>
+
+        <Form.Item
+          label={t('builderApiKey.passphrase')}
+          name="builderPassphrase"
+          style={{ marginBottom: 24 }}
+        >
+          <Input.Password placeholder={t('builderApiKey.passphrasePlaceholder')} />
+        </Form.Item>
+
         <Form.Item style={{ marginBottom: 0 }}>
           <Space size="middle">
             <Button

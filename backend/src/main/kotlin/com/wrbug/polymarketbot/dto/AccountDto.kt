@@ -8,7 +8,10 @@ data class AccountImportRequest(
     val walletAddress: String,  // 钱包地址（前端从私钥推导，用于验证）
     val accountName: String? = null,
     val isEnabled: Boolean = true,  // 是否启用（用于订单推送等功能的开关）
-    val walletType: String = "magic"  // 钱包类型：magic（邮箱/OAuth登录）或 safe（MetaMask浏览器钱包）
+    val walletType: String = "magic",  // 钱包类型：magic（邮箱/OAuth登录）或 safe（MetaMask浏览器钱包）
+    val builderApiKey: String? = null,  // Builder API Key（账户级，可选）
+    val builderSecret: String? = null,  // Builder Secret（账户级，可选）
+    val builderPassphrase: String? = null  // Builder Passphrase（账户级，可选）
 )
 
 /**
@@ -48,7 +51,10 @@ data class CheckProxyOptionsResponse(
 data class AccountUpdateRequest(
     val accountId: Long,
     val accountName: String? = null,
-    val isEnabled: Boolean? = null  // 是否启用（用于订单推送等功能的开关）
+    val isEnabled: Boolean? = null,  // 是否启用（用于订单推送等功能的开关）
+    val builderApiKey: String? = null,  // Builder API Key（账户级，可选）
+    val builderSecret: String? = null,  // Builder Secret（账户级，可选）
+    val builderPassphrase: String? = null  // Builder Passphrase（账户级，可选）
 )
 
 /**
@@ -108,6 +114,12 @@ data class AccountDto(
     val apiKeyConfigured: Boolean,  // API Key 是否已配置（不返回实际 Key）
     val apiSecretConfigured: Boolean,  // API Secret 是否已配置
     val apiPassphraseConfigured: Boolean,  // API Passphrase 是否已配置
+    val builderApiKeyConfigured: Boolean = false,  // Builder API Key 是否已配置（账户级）
+    val builderSecretConfigured: Boolean = false,  // Builder Secret 是否已配置（账户级）
+    val builderPassphraseConfigured: Boolean = false,  // Builder Passphrase 是否已配置（账户级）
+    val builderApiKeyDisplay: String? = null,  // Builder API Key 显示值（完整，用于前端展示）
+    val builderSecretDisplay: String? = null,  // Builder Secret 显示值（完整，用于前端展示）
+    val builderPassphraseDisplay: String? = null,  // Builder Passphrase 显示值（完整，用于前端展示）
     val balance: String? = null,  // 账户余额（可选）
     val totalOrders: Long? = null,  // 总订单数（可选）
     val totalPnl: String? = null,  // 总盈亏（可选）
@@ -325,4 +337,3 @@ data class RedeemablePositionInfo(
     val quantity: String,
     val value: String               // 价值（USDC，1:1）
 )
-

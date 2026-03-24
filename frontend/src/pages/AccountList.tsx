@@ -205,7 +205,10 @@ const AccountList: React.FC = () => {
       setEditAccount(accountDetail)
 
       editForm.setFieldsValue({
-        accountName: accountDetail.accountName || ''
+        accountName: accountDetail.accountName || '',
+        builderApiKey: accountDetail.builderApiKeyDisplay || '',
+        builderSecret: accountDetail.builderSecretDisplay || '',
+        builderPassphrase: accountDetail.builderPassphraseDisplay || ''
       })
     } catch (error: any) {
       console.error('打开编辑失败:', error)
@@ -220,10 +223,20 @@ const AccountList: React.FC = () => {
 
     setEditLoading(true)
     try {
-      // 构建更新请求，只支持编辑账户名称
+      // 构建更新请求；Builder 凭证留空时保持原值不变
       const updateData: any = {
         accountId: editAccount.id,
         accountName: values.accountName || undefined
+      }
+
+      if (values.builderApiKey && values.builderApiKey.trim()) {
+        updateData.builderApiKey = values.builderApiKey.trim()
+      }
+      if (values.builderSecret && values.builderSecret.trim()) {
+        updateData.builderSecret = values.builderSecret.trim()
+      }
+      if (values.builderPassphrase && values.builderPassphrase.trim()) {
+        updateData.builderPassphrase = values.builderPassphrase.trim()
       }
 
       await updateAccount(updateData)
@@ -681,6 +694,19 @@ const AccountList: React.FC = () => {
                   </Tag>
                 </Descriptions.Item>
               )}
+              <Descriptions.Item label={t('builderApiKey.title') || 'Builder API Key'}>
+                <Space wrap>
+                  <Tag color={detailAccount.builderApiKeyConfigured ? 'success' : 'default'}>
+                    {detailAccount.builderApiKeyConfigured ? (t('accountList.configured') || '已配置') : (t('accountList.notConfiguredStatus') || '未配置')}
+                  </Tag>
+                  <Tag color={detailAccount.builderSecretConfigured ? 'success' : 'default'}>
+                    Secret {detailAccount.builderSecretConfigured ? (t('accountList.configured') || '已配置') : (t('accountList.notConfiguredStatus') || '未配置')}
+                  </Tag>
+                  <Tag color={detailAccount.builderPassphraseConfigured ? 'success' : 'default'}>
+                    Passphrase {detailAccount.builderPassphraseConfigured ? (t('accountList.configured') || '已配置') : (t('accountList.notConfiguredStatus') || '未配置')}
+                  </Tag>
+                </Space>
+              </Descriptions.Item>
               <Descriptions.Item label={t('accountList.totalBalance')} span={isMobile ? 1 : 2}>
                 {detailBalanceLoading ? (
                   <Spin size="small" />
@@ -805,7 +831,7 @@ const AccountList: React.FC = () => {
           >
             <Alert
               message={t('accountList.editTip') || '编辑账户'}
-              description={t('accountList.editTipDesc') || '只能编辑账户名称，API 凭证需要通过导入账户功能更新。'}
+              description={t('accountList.editTipDesc') || '可编辑账户名称和账户级 Builder 凭证。Builder 字段留空表示保持原值不变。'}
               type="info"
               showIcon
               style={{ marginBottom: '24px' }}
@@ -816,6 +842,27 @@ const AccountList: React.FC = () => {
               name="accountName"
             >
               <Input placeholder={t('accountList.accountNamePlaceholder') || '请输入账户名称（可选）'} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.apiKey')}
+              name="builderApiKey"
+            >
+              <Input placeholder={t('builderApiKey.apiKeyPlaceholder')} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.secret')}
+              name="builderSecret"
+            >
+              <Input.Password placeholder={t('builderApiKey.secretPlaceholder')} />
+            </Form.Item>
+
+            <Form.Item
+              label={t('builderApiKey.passphrase')}
+              name="builderPassphrase"
+            >
+              <Input.Password placeholder={t('builderApiKey.passphrasePlaceholder')} />
             </Form.Item>
 
             <Form.Item>
@@ -881,4 +928,3 @@ const AccountList: React.FC = () => {
 }
 
 export default AccountList
-

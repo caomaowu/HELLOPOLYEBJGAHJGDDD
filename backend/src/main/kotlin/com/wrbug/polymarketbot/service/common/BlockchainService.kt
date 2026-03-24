@@ -8,6 +8,7 @@ import com.wrbug.polymarketbot.api.PolymarketDataApi
 import com.wrbug.polymarketbot.api.PositionResponse
 import com.wrbug.polymarketbot.api.ValueResponse
 import com.wrbug.polymarketbot.constants.PolymarketConstants
+import com.wrbug.polymarketbot.dto.BuilderCredentials
 import com.wrbug.polymarketbot.dto.PositionDto
 import com.wrbug.polymarketbot.dto.WalletBalanceResponse
 import com.wrbug.polymarketbot.enums.WalletType
@@ -657,7 +658,8 @@ class BlockchainService(
         conditionId: String,
         indexSets: List<BigInteger>,
         isNegRisk: Boolean = false,
-        walletType: WalletType = WalletType.SAFE
+        walletType: WalletType = WalletType.SAFE,
+        builderCredentials: BuilderCredentials? = null
     ): Result<String> {
         return try {
             if (indexSets.isEmpty()) {
@@ -671,7 +673,7 @@ class BlockchainService(
             }
 
             val redeemTx = relayClientService.createRedeemTx(conditionId, indexSets, isNegRisk)
-            relayClientService.execute(privateKey, proxyAddress, redeemTx, walletType)
+            relayClientService.execute(privateKey, proxyAddress, redeemTx, walletType, builderCredentials)
         } catch (e: Exception) {
             logger.error("赎回仓位失败: ${e.message}", e)
             Result.failure(e)
@@ -692,7 +694,8 @@ class BlockchainService(
         privateKey: String,
         proxyAddress: String,
         redeemRequests: List<Triple<String, List<BigInteger>, Boolean>>,
-        walletType: WalletType = WalletType.SAFE
+        walletType: WalletType = WalletType.SAFE,
+        builderCredentials: BuilderCredentials? = null
     ): Result<String> {
         return try {
             if (redeemRequests.isEmpty()) {
@@ -728,7 +731,7 @@ class BlockchainService(
 
             logger.info("批量赎回: 合并 ${redeemRequests.size} 个市场为一笔交易")
 
-            relayClientService.execute(privateKey, proxyAddress, multiSendTx, walletType)
+            relayClientService.execute(privateKey, proxyAddress, multiSendTx, walletType, builderCredentials)
         } catch (e: Exception) {
             logger.error("批量赎回仓位失败: ${e.message}", e)
             Result.failure(e)
@@ -826,7 +829,8 @@ class BlockchainService(
     suspend fun unwrapWcolForProxy(
         privateKey: String,
         proxyAddress: String,
-        walletType: WalletType
+        walletType: WalletType,
+        builderCredentials: BuilderCredentials? = null
     ): Result<String?> {
         return try {
             val balanceResult = getWcolBalance(proxyAddress)
@@ -838,7 +842,7 @@ class BlockchainService(
                 return Result.success(null)
             }
             val unwrapTx = relayClientService.createUnwrapWcolTx(proxyAddress, balance)
-            val executeResult = relayClientService.execute(privateKey, proxyAddress, unwrapTx, walletType)
+            val executeResult = relayClientService.execute(privateKey, proxyAddress, unwrapTx, walletType, builderCredentials)
             executeResult.fold(
                 onSuccess = { txHash ->
                     logger.info("WCOL 解包成功: proxy=${proxyAddress.take(10)}..., txHash=$txHash")
@@ -1233,4 +1237,3 @@ class BlockchainService(
         }
     }
 }
-

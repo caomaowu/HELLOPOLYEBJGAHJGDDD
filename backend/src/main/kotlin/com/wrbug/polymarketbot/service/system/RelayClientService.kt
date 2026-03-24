@@ -4,6 +4,7 @@ import com.wrbug.polymarketbot.api.BuilderRelayerApi
 import com.wrbug.polymarketbot.api.EthereumRpcApi
 import com.wrbug.polymarketbot.api.JsonRpcRequest
 import com.wrbug.polymarketbot.constants.PolymarketConstants
+import com.wrbug.polymarketbot.dto.BuilderCredentials
 import com.wrbug.polymarketbot.enums.WalletType
 import com.wrbug.polymarketbot.util.Eip712Encoder
 import com.wrbug.polymarketbot.util.EthereumUtils
@@ -126,19 +127,35 @@ class RelayClientService(
      * 获取 Builder Relayer API 客户端（动态获取，因为配置可能更新）
      */
     private fun getBuilderRelayerApi(): BuilderRelayerApi? {
+        val builderCredentials = getEffectiveBuilderCredentials()
+        if (builderCredentials != null) {
+            return retrofitFactory.createBuilderRelayerApi(
+                relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
+                apiKey = builderCredentials.apiKey,
+                secret = builderCredentials.secret,
+                passphrase = builderCredentials.passphrase
+            )
+        }
+        return null
+    }
+
+    private fun getEffectiveBuilderCredentials(builderCredentials: BuilderCredentials? = null): BuilderCredentials? {
+        if (builderCredentials != null) {
+            return builderCredentials
+        }
+
         val builderApiKey = systemConfigService.getBuilderApiKey()
         val builderSecret = systemConfigService.getBuilderSecret()
         val builderPassphrase = systemConfigService.getBuilderPassphrase()
-
-        if (isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
-            return retrofitFactory.createBuilderRelayerApi(
-                relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
+        return if (isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+            BuilderCredentials(
                 apiKey = builderApiKey!!,
                 secret = builderSecret!!,
                 passphrase = builderPassphrase!!
             )
+        } else {
+            null
         }
-        return null
     }
 
     /**
@@ -160,6 +177,10 @@ class RelayClientService(
      */
     fun isBuilderApiKeyConfigured(): Boolean {
         return systemConfigService.isBuilderApiKeyConfigured()
+    }
+
+    fun hasAvailableBuilderCredentials(builderCredentials: BuilderCredentials? = null): Boolean {
+        return getEffectiveBuilderCredentials(builderCredentials) != null
     }
 
     /**
@@ -404,19 +425,18 @@ class RelayClientService(
         privateKey: String,
         proxyAddress: String,
         safeTx: SafeTransaction,
-        walletType: WalletType = WalletType.SAFE
+        walletType: WalletType = WalletType.SAFE,
+        builderCredentials: BuilderCredentials? = null
     ): Result<String> {
         return try {
             if (proxyAddress.isBlank() || !proxyAddress.startsWith("0x") || proxyAddress.length != 42) {
                 return Result.failure(IllegalArgumentException("proxyAddress 格式错误，必须是有效的以太坊地址"))
             }
 
-            val builderApiKey = systemConfigService.getBuilderApiKey()
-            val builderSecret = systemConfigService.getBuilderSecret()
-            val builderPassphrase = systemConfigService.getBuilderPassphrase()
+            val effectiveBuilderCredentials = getEffectiveBuilderCredentials(builderCredentials)
 
             if (walletType == WalletType.MAGIC) {
-                if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+                if (effectiveBuilderCredentials == null) {
                     return Result.failure(IllegalStateException("Magic 账户赎回必须配置 Builder API Key（Gasless）"))
                 }
                 logger.info("使用 Builder Relayer PROXY 执行 Magic 赎回")
@@ -424,21 +444,21 @@ class RelayClientService(
                     privateKey,
                     proxyAddress,
                     safeTx,
-                    builderApiKey!!,
-                    builderSecret!!,
-                    builderPassphrase!!
+                    effectiveBuilderCredentials.apiKey,
+                    effectiveBuilderCredentials.secret,
+                    effectiveBuilderCredentials.passphrase
                 )
             }
 
-            if (isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+            if (effectiveBuilderCredentials != null) {
                 logger.info("使用 Builder Relayer 执行 Gasless 交易")
                 return executeViaBuilderRelayer(
                     privateKey,
                     proxyAddress,
                     safeTx,
-                    builderApiKey!!,
-                    builderSecret!!,
-                    builderPassphrase!!
+                    effectiveBuilderCredentials.apiKey,
+                    effectiveBuilderCredentials.secret,
+                    effectiveBuilderCredentials.passphrase
                 )
             }
 
@@ -844,20 +864,19 @@ class RelayClientService(
     suspend fun deploySafeViaBuilderRelayer(
         privateKey: String,
         proxyAddress: String,
-        fromAddress: String
+        fromAddress: String,
+        builderCredentials: BuilderCredentials? = null
     ): Result<String> {
         return try {
-            val builderApiKey = systemConfigService.getBuilderApiKey()
-            val builderSecret = systemConfigService.getBuilderSecret()
-            val builderPassphrase = systemConfigService.getBuilderPassphrase()
-            if (!isBuilderRelayerEnabled(builderApiKey, builderSecret, builderPassphrase)) {
+            val effectiveBuilderCredentials = getEffectiveBuilderCredentials(builderCredentials)
+            if (effectiveBuilderCredentials == null) {
                 return Result.failure(IllegalStateException("Builder API Key 未配置，无法执行 Safe 部署"))
             }
             val relayerApi = retrofitFactory.createBuilderRelayerApi(
                 relayerUrl = PolymarketConstants.BUILDER_RELAYER_URL,
-                apiKey = builderApiKey!!,
-                secret = builderSecret!!,
-                passphrase = builderPassphrase!!
+                apiKey = effectiveBuilderCredentials.apiKey,
+                secret = effectiveBuilderCredentials.secret,
+                passphrase = effectiveBuilderCredentials.passphrase
             )
             val zeroAddress = "0x0000000000000000000000000000000000000000"
             val paymentToken = zeroAddress
@@ -1342,4 +1361,3 @@ class RelayClientService(
         )
     }
 }
-

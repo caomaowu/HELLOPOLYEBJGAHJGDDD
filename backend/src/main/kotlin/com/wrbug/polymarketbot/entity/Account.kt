@@ -30,6 +30,15 @@ data class Account(
     
     @Column(name = "api_passphrase", length = 500)
     val apiPassphrase: String? = null,  // Polymarket API Passphrase（可选，AES 加密存储）
+
+    @Column(name = "builder_api_key", length = 500)
+    val builderApiKey: String? = null,  // Builder API Key（可选，AES 加密存储）
+
+    @Column(name = "builder_secret", length = 500)
+    val builderSecret: String? = null,  // Builder Secret（可选，AES 加密存储）
+
+    @Column(name = "builder_passphrase", length = 500)
+    val builderPassphrase: String? = null,  // Builder Passphrase（可选，AES 加密存储）
     
     @Column(name = "account_name", length = 100)
     val accountName: String? = null,
@@ -49,4 +58,3 @@ data class Account(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Long = System.currentTimeMillis()
 )
-

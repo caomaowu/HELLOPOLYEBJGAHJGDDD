@@ -20,6 +20,12 @@ export interface Account {
   apiKeyConfigured: boolean
   apiSecretConfigured: boolean
   apiPassphraseConfigured: boolean
+  builderApiKeyConfigured?: boolean
+  builderSecretConfigured?: boolean
+  builderPassphraseConfigured?: boolean
+  builderApiKeyDisplay?: string
+  builderSecretDisplay?: string
+  builderPassphraseDisplay?: string
   balance?: string
   totalOrders?: number
   totalPnl?: string
@@ -44,6 +50,9 @@ export interface AccountImportRequest {
   walletAddress: string
   accountName?: string
   walletType?: string  // 钱包类型：magic（邮箱/OAuth登录）或 safe（MetaMask浏览器钱包）
+  builderApiKey?: string
+  builderSecret?: string
+  builderPassphrase?: string
 }
 
 /**
@@ -83,6 +92,10 @@ export interface CheckProxyOptionsResponse {
 export interface AccountUpdateRequest {
   accountId: number
   accountName?: string
+  isEnabled?: boolean
+  builderApiKey?: string
+  builderSecret?: string
+  builderPassphrase?: string
 }
 
 /**
