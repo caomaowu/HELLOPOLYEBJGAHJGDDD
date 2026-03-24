@@ -127,6 +127,7 @@ const EditModal: React.FC<EditModalProps> = ({
           minPrice: found.minPrice ? parseFloat(found.minPrice) : undefined,
           maxPrice: found.maxPrice ? parseFloat(found.maxPrice) : undefined,
           maxPositionValue: found.maxPositionValue ? parseFloat(found.maxPositionValue) : undefined,
+          maxPositionCount: found.maxPositionCount,
           keywordFilterMode: found.keywordFilterMode || 'DISABLED',
           marketCategoryMode: found.marketCategoryMode || 'DISABLED',
           marketCategories: found.marketCategories,
@@ -304,6 +305,7 @@ const EditModal: React.FC<EditModalProps> = ({
         minPrice: values.minPrice != null ? values.minPrice.toString() : '',
         maxPrice: values.maxPrice != null ? values.maxPrice.toString() : '',
         maxPositionValue: values.maxPositionValue != null ? values.maxPositionValue.toString() : '',
+        maxPositionCount: values.maxPositionCount != null ? values.maxPositionCount : -1,
         keywordFilterMode: values.keywordFilterMode || 'DISABLED',
         keywords: (values.keywordFilterMode === 'WHITELIST' || values.keywordFilterMode === 'BLACKLIST')
           ? keywords
@@ -608,6 +610,14 @@ const EditModal: React.FC<EditModalProps> = ({
 
           <Form.Item label={t('copyTradingEdit.maxPositionValue') || '最大仓位金额 (USDC)'} name="maxPositionValue">
             <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item
+            label={t('copyTradingEdit.maxPositionCount') || '最大活跃仓位数量'}
+            name="maxPositionCount"
+            tooltip={t('copyTradingEdit.maxPositionCountTooltip') || '限制同一跟单配置下可同时持有的活跃仓位数。按市场 + outcome 计数；已有仓位可继续加仓，只有新开仓位时才受此限制。'}
+          >
+            <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
           </Form.Item>
 
           <Divider>{t('copyTradingEdit.keywordFilter') || '关键字过滤'}</Divider>

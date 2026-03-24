@@ -74,6 +74,18 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
     @Query("SELECT COUNT(DISTINCT CONCAT(t.marketId, '_', COALESCE(t.outcomeIndex, -1))) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.remainingQuantity > 0")
     fun countActivePositions(copyTradingId: Long): Int
 
+    @Query(
+        """
+        SELECT CASE WHEN COUNT(t) > 0 THEN true ELSE false END
+        FROM CopyOrderTracking t
+        WHERE t.copyTradingId = :copyTradingId
+          AND t.marketId = :marketId
+          AND ((:outcomeIndex IS NULL AND t.outcomeIndex IS NULL) OR t.outcomeIndex = :outcomeIndex)
+          AND t.remainingQuantity > 0
+        """
+    )
+    fun existsActivePosition(copyTradingId: Long, marketId: String, outcomeIndex: Int?): Boolean
+
     /**
      * 计算指定跟单配置、市场和方向下的当前持仓总价值 (成本价计算)
      * 按市场+方向（outcomeIndex）分别统计

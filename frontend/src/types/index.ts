@@ -318,6 +318,55 @@ export interface LeaderCandidateRecommendResponse {
   list: LeaderCandidateRecommendation[]
 }
 
+export interface LeaderTraderAnalysisRequest {
+  address: string
+  days?: number
+  activityLimit?: number
+  positionLimit?: number
+  persistToPool?: boolean
+}
+
+export interface LeaderTraderAnalysisPosition {
+  marketId: string
+  title?: string | null
+  outcome?: string | null
+  size: string
+  avgPrice: string
+  currentPrice: string
+  currentValue: string
+  realizedPnl: string
+  unrealizedPnl: string
+  totalPnl: string
+  percentPnl: string
+  endDate?: string | null
+}
+
+export interface LeaderTraderAnalysisActivity {
+  timestamp: number
+  marketId: string
+  title?: string | null
+  side?: string | null
+  usdcSize: string
+  price: string
+  outcome?: string | null
+  transactionHash?: string | null
+}
+
+export interface LeaderTraderAnalysisResponse {
+  estimated: boolean
+  address: string
+  displayName?: string | null
+  profileImage?: string | null
+  existingLeaderId?: number | null
+  existingLeaderName?: string | null
+  evaluation: LeaderCandidateRecommendation
+  pnlHighlights: string[]
+  behaviorHighlights: string[]
+  positions: LeaderTraderAnalysisPosition[]
+  recentActivities: LeaderTraderAnalysisActivity[]
+  generatedAt: number
+}
+
 export interface LeaderMarketTraderLookupRequest {
   marketIds: string[]
   days?: number
@@ -740,6 +789,7 @@ export interface CopyTrading {
   maxPrice?: string  // 最高价格（可选），NULL表示不限制最高价
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
+  maxPositionCount?: number  // 最大活跃仓位数量，NULL表示不启用
   // 关键字过滤配置
   keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null
@@ -805,6 +855,7 @@ export interface CopyTradingCreateRequest {
   maxPrice?: string  // 最高价格（可选），NULL表示不限制最高价
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
+  maxPositionCount?: number  // 最大活跃仓位数量，NULL表示不启用
   // 关键字过滤配置
   keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null
@@ -858,6 +909,7 @@ export interface CopyTradingUpdateRequest {
   maxPrice?: string  // 最高价格（可选），NULL表示不限制最高价
   // 最大仓位配置
   maxPositionValue?: string  // 最大仓位金额（USDC），NULL表示不启用
+  maxPositionCount?: number  // 最大活跃仓位数量，NULL表示不启用
   // 关键字过滤配置
   keywordFilterMode?: FilterMode  // 关键字过滤模式
   keywords?: string[]  // 关键字列表，当keywordFilterMode为DISABLED时为null

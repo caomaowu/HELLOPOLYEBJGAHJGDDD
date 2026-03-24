@@ -101,6 +101,9 @@ data class CopyTrading(
     @Column(name = "max_position_value", precision = 20, scale = 8)
     val maxPositionValue: BigDecimal? = null,  // 最大仓位金额（USDC），NULL表示不启用
 
+    @Column(name = "max_position_count")
+    val maxPositionCount: Int? = null,  // 最大活跃仓位数量，NULL表示不启用
+
     @Column(name = "max_daily_volume", precision = 20, scale = 8)
     val maxDailyVolume: BigDecimal? = null,  // 每日最大成交额（USDC），NULL表示不启用
 

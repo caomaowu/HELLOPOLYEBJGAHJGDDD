@@ -268,6 +268,31 @@ class LeaderController(
     }
 
     /**
+     * 单地址 Trader 分析
+     */
+    @PostMapping("/discovery/analyze")
+    fun analyzeTrader(@RequestBody request: LeaderTraderAnalysisRequest): ResponseEntity<ApiResponse<LeaderTraderAnalysisResponse>> {
+        return try {
+            val result = leaderDiscoveryService.analyzeTrader(request)
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("分析 Trader 失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, e.message, messageSource))
+                        else -> ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("分析 Trader 异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
+        }
+    }
+
+    /**
      * 按市场反查活跃 Trader
      */
     @PostMapping("/discovery/market-traders")

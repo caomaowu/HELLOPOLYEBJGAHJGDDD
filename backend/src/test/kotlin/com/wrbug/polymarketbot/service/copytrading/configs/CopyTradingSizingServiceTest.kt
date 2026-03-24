@@ -141,6 +141,38 @@ class CopyTradingSizingServiceTest {
     }
 
     @Test
+    fun `sizing should reject new position when active position count reaches limit`() {
+        val result = service.calculate(
+            config = config(maxPositionCount = 2),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = BigDecimal.ZERO,
+            currentDailyVolume = BigDecimal.ZERO,
+            currentActivePositionCount = 2,
+            hasActivePosition = false
+        )
+
+        assertEquals(SizingStatus.REJECTED, result.status)
+        assertEquals(SizingRejectionType.MAX_POSITION_COUNT_LIMIT, result.rejectionType)
+    }
+
+    @Test
+    fun `sizing should allow adding to existing position after reaching position count limit`() {
+        val result = service.calculate(
+            config = config(maxPositionCount = 2),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            currentActivePositionCount = 2,
+            hasActivePosition = true
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("100", result.finalAmount)
+    }
+
+    @Test
     fun `tiered multipliers should be serialized in ascending min order`() {
         val json = CopyTradingSizingSupport.serializeTieredMultipliers(
             listOf(
@@ -167,6 +199,7 @@ class CopyTradingSizingServiceTest {
         maxOrderSize: BigDecimal = bd("1000"),
         minOrderSize: BigDecimal = bd("1"),
         maxPositionValue: BigDecimal? = null,
+        maxPositionCount: Int? = null,
         maxDailyVolume: BigDecimal? = null
     ) = CopyTradingSizingConfig(
         copyMode = copyMode,
@@ -181,6 +214,7 @@ class CopyTradingSizingServiceTest {
         maxOrderSize = maxOrderSize,
         minOrderSize = minOrderSize,
         maxPositionValue = maxPositionValue,
+        maxPositionCount = maxPositionCount,
         maxDailyVolume = maxDailyVolume
     )
 

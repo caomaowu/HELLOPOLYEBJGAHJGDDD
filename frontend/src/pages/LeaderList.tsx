@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, List, Empty, Spin, Divider, Typography, Modal, Descriptions, Statistic, Row, Col } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, GlobalOutlined, EyeOutlined, ReloadOutlined, WalletOutlined, SearchOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, GlobalOutlined, EyeOutlined, ReloadOutlined, WalletOutlined, SearchOutlined, BarChartOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
 import type { Leader, LeaderBalanceResponse } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { formatUSDC } from '../utils'
 import LeaderDiscoveryModal from '../components/LeaderDiscoveryModal'
+import LeaderTraderAnalysisModal from '../components/LeaderTraderAnalysisModal'
 
 const { Text } = Typography
 
@@ -26,6 +27,7 @@ const LeaderList: React.FC = () => {
   const [detailBalance, setDetailBalance] = useState<LeaderBalanceResponse | null>(null)
   const [detailBalanceLoading, setDetailBalanceLoading] = useState(false)
   const [discoveryVisible, setDiscoveryVisible] = useState(false)
+  const [traderAnalysisVisible, setTraderAnalysisVisible] = useState(false)
 
   useEffect(() => {
     fetchLeaders()
@@ -330,6 +332,9 @@ const LeaderList: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <h2 style={{ margin: 0, fontSize: isMobile ? '20px' : '24px' }}>{t('leaderList.title')}</h2>
         <Space wrap>
+          <Button icon={<BarChartOutlined />} onClick={() => setTraderAnalysisVisible(true)} size={isMobile ? 'middle' : 'large'} style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px', fontSize: isMobile ? '14px' : '16px' }}>
+            {t('leaderList.analyzeTrader')}
+          </Button>
           <Button icon={<SearchOutlined />} onClick={() => setDiscoveryVisible(true)} size={isMobile ? 'middle' : 'large'} style={{ borderRadius: '8px', height: isMobile ? '40px' : '48px', fontSize: isMobile ? '14px' : '16px' }}>
             {t('leaderDiscovery.open')}
           </Button>
@@ -598,6 +603,11 @@ const LeaderList: React.FC = () => {
         open={discoveryVisible}
         leaders={leaders}
         onClose={() => setDiscoveryVisible(false)}
+        onLeaderAdded={fetchLeaders}
+      />
+      <LeaderTraderAnalysisModal
+        open={traderAnalysisVisible}
+        onClose={() => setTraderAnalysisVisible(false)}
         onLeaderAdded={fetchLeaders}
       />
     </div>

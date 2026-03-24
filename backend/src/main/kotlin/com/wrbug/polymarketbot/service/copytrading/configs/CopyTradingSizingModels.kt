@@ -24,6 +24,7 @@ data class CopyTradingSizingConfig(
     val maxOrderSize: BigDecimal,
     val minOrderSize: BigDecimal,
     val maxPositionValue: BigDecimal?,
+    val maxPositionCount: Int?,
     val maxDailyVolume: BigDecimal?
 )
 
@@ -35,6 +36,7 @@ enum class SizingStatus {
 enum class SizingRejectionType {
     INVALID_INPUT,
     MAX_POSITION_LIMIT,
+    MAX_POSITION_COUNT_LIMIT,
     MAX_DAILY_VOLUME_LIMIT,
     BELOW_MIN_ORDER_SIZE,
     INVALID_FINAL_QUANTITY
@@ -124,6 +126,10 @@ object CopyTradingSizingSupport {
 
         if (config.minOrderSize > config.maxOrderSize) {
             errors += "minOrderSize 不能大于 maxOrderSize"
+        }
+
+        if (config.maxPositionCount != null && config.maxPositionCount <= 0) {
+            errors += "maxPositionCount 必须大于 0"
         }
 
         if (config.maxDailyVolume != null && config.maxDailyVolume <= BigDecimal.ZERO) {

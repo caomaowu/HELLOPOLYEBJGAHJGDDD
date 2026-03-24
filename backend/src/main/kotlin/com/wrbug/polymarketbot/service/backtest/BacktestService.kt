@@ -564,6 +564,7 @@ class BacktestService(
             maxOrderSize = task.maxOrderSize,
             minOrderSize = task.minOrderSize,
             maxPositionValue = task.maxPositionValue,
+            maxPositionCount = null,
             maxDailyVolume = task.maxDailyVolume
         )
         return CopyTradingSizingSupport.validateConfig(config).firstOrNull()

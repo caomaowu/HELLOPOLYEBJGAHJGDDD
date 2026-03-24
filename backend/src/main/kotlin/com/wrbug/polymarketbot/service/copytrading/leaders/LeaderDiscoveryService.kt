@@ -13,10 +13,15 @@ import com.wrbug.polymarketbot.dto.LeaderMarketScanRequest
 import com.wrbug.polymarketbot.dto.LeaderMarketScanResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendResponse
+import com.wrbug.polymarketbot.dto.LeaderCandidateRecommendationDto
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolBatchLabelUpdateRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolBatchLabelUpdateResponse
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolLabelUpdateRequest
 import com.wrbug.polymarketbot.dto.LeaderCandidatePoolItemDto
+import com.wrbug.polymarketbot.dto.LeaderTraderAnalysisActivityDto
+import com.wrbug.polymarketbot.dto.LeaderTraderAnalysisPositionDto
+import com.wrbug.polymarketbot.dto.LeaderTraderAnalysisRequest
+import com.wrbug.polymarketbot.dto.LeaderTraderAnalysisResponse
 import com.wrbug.polymarketbot.dto.LeaderActivityHistoryByAddressRequest
 import com.wrbug.polymarketbot.dto.LeaderActivityHistoryBackfillRequest
 import com.wrbug.polymarketbot.dto.LeaderActivityHistoryBackfillResponse
@@ -329,6 +334,65 @@ class LeaderDiscoveryService(
                 } else {
                     applyRecommendationFilters(recommendations, normalizedRequest)
                 }
+            )
+        }
+    }
+
+    fun analyzeTrader(request: LeaderTraderAnalysisRequest): Result<LeaderTraderAnalysisResponse> = runBlocking {
+        runCatching {
+            val normalizedRequest = normalizeTraderAnalysisRequest(request)
+            val address = normalizeAddress(normalizedRequest.address)
+            require(address.startsWith("0x") && address.length == 42) { "请输入有效的 Trader 地址" }
+
+            val dataApi = retrofitFactory.createIsolatedDataApi()
+            val existingLeaders = leaderRepository.findAll().associateBy { normalizeAddress(it.leaderAddress) }
+            val existingLeader = existingLeaders[address]
+            val activities = fetchUserActivities(
+                address = address,
+                days = normalizedRequest.days ?: 14,
+                maxRecords = normalizedRequest.activityLimit ?: 160,
+                dataApi = dataApi
+            )
+            val positions = fetchUserPositions(
+                address = address,
+                limit = normalizedRequest.positionLimit ?: 50,
+                dataApi = dataApi
+            )
+            val sampleMarkets = buildMarketBreakdown(activities).take(5)
+            val evaluationRequest = normalizeRecommendRequest(
+                LeaderCandidateRecommendRequest(
+                    candidateAddresses = listOf(address),
+                    days = normalizedRequest.days,
+                    traderLimit = 1
+                )
+            )
+            val evaluation = evaluator.evaluateCandidate(
+                address = address,
+                displayName = resolveDisplayName(activities, existingLeader),
+                profileImage = activities.firstNotNullOfOrNull { it.profileImageOptimized ?: it.profileImage },
+                existingLeader = existingLeader,
+                activities = activities,
+                positions = positions,
+                sampleMarkets = sampleMarkets,
+                request = evaluationRequest
+            )
+
+            if (normalizedRequest.persistToPool != false) {
+                traderCandidatePoolService.updateEvaluationSnapshots(listOf(evaluation))
+            }
+
+            LeaderTraderAnalysisResponse(
+                address = address,
+                displayName = evaluation.displayName,
+                profileImage = evaluation.profileImage,
+                existingLeaderId = evaluation.existingLeaderId,
+                existingLeaderName = evaluation.existingLeaderName,
+                evaluation = evaluation,
+                pnlHighlights = buildTraderAnalysisPnlHighlights(evaluation, positions),
+                behaviorHighlights = buildTraderAnalysisBehaviorHighlights(activities, evaluation, normalizedRequest.days ?: 14),
+                positions = buildTraderAnalysisPositions(positions),
+                recentActivities = buildTraderAnalysisActivities(activities),
+                generatedAt = System.currentTimeMillis()
             )
         }
     }
@@ -999,6 +1063,16 @@ class LeaderDiscoveryService(
         )
     }
 
+    private fun normalizeTraderAnalysisRequest(request: LeaderTraderAnalysisRequest): LeaderTraderAnalysisRequest {
+        return request.copy(
+            address = request.address.trim(),
+            days = (request.days ?: 14).coerceIn(1, 30),
+            activityLimit = (request.activityLimit ?: 160).coerceIn(20, 300),
+            positionLimit = (request.positionLimit ?: 50).coerceIn(1, 100),
+            persistToPool = request.persistToPool ?: true
+        )
+    }
+
     private fun normalizeMarketScanRequest(request: LeaderMarketScanRequest): LeaderMarketScanRequest {
         return request.copy(
             mode = normalizeDiscoveryMode(request.mode),
@@ -1326,6 +1400,93 @@ class LeaderDiscoveryService(
 
     private fun normalizeAddress(address: String): String = address.trim().lowercase()
 
+    private fun buildTraderAnalysisPositions(positions: List<PositionResponse>): List<LeaderTraderAnalysisPositionDto> {
+        return positions
+            .sortedByDescending { (it.currentValue ?: 0.0).toSafeBigDecimal().abs() }
+            .map { position ->
+                val realizedPnl = (position.realizedPnl ?: 0.0).toSafeBigDecimal()
+                val unrealizedPnl = (position.cashPnl ?: 0.0).toSafeBigDecimal()
+                val totalPnl = realizedPnl + unrealizedPnl
+                LeaderTraderAnalysisPositionDto(
+                    marketId = position.conditionId ?: position.asset ?: "-",
+                    title = position.title,
+                    outcome = position.outcome,
+                    size = formatDecimal((position.size ?: 0.0).toSafeBigDecimal()),
+                    avgPrice = formatDecimal((position.avgPrice ?: 0.0).toSafeBigDecimal()),
+                    currentPrice = formatDecimal((position.curPrice ?: 0.0).toSafeBigDecimal()),
+                    currentValue = formatDecimal((position.currentValue ?: 0.0).toSafeBigDecimal()),
+                    realizedPnl = formatDecimal(realizedPnl),
+                    unrealizedPnl = formatDecimal(unrealizedPnl),
+                    totalPnl = formatDecimal(totalPnl),
+                    percentPnl = formatPercent((position.percentPnl ?: 0.0).toSafeBigDecimal()),
+                    endDate = position.endDate
+                )
+            }
+    }
+
+    private fun buildTraderAnalysisActivities(activities: List<UserActivityResponse>): List<LeaderTraderAnalysisActivityDto> {
+        return activities
+            .filter { it.type.equals("TRADE", ignoreCase = true) }
+            .sortedByDescending { it.timestamp }
+            .take(20)
+            .map { activity ->
+                LeaderTraderAnalysisActivityDto(
+                    timestamp = activity.timestamp * 1000,
+                    marketId = activity.conditionId,
+                    title = activity.title,
+                    side = activity.side,
+                    usdcSize = formatDecimal((activity.usdcSize ?: 0.0).toSafeBigDecimal()),
+                    price = formatDecimal((activity.price ?: 0.0).toSafeBigDecimal()),
+                    outcome = activity.outcome,
+                    transactionHash = activity.transactionHash
+                )
+            }
+    }
+
+    private fun buildTraderAnalysisPnlHighlights(
+        evaluation: LeaderCandidateRecommendationDto,
+        positions: List<PositionResponse>
+    ): List<String> {
+        val positivePositions = positions.count {
+            ((it.realizedPnl ?: 0.0).toSafeBigDecimal() + (it.cashPnl ?: 0.0).toSafeBigDecimal()) > BigDecimal.ZERO
+        }
+        val negativePositions = positions.count {
+            ((it.realizedPnl ?: 0.0).toSafeBigDecimal() + (it.cashPnl ?: 0.0).toSafeBigDecimal()) < BigDecimal.ZERO
+        }
+        val currentExposure = positions.fold(BigDecimal.ZERO) { acc, position ->
+            acc + (position.currentValue ?: 0.0).toSafeBigDecimal()
+        }
+        return listOf(
+            "估算总盈亏 ${evaluation.estimatedTotalPnl} USDC，ROI ${evaluation.estimatedRoiRate}%",
+            "已实现盈亏 ${evaluation.estimatedRealizedPnl} USDC，未实现盈亏 ${evaluation.estimatedUnrealizedPnl} USDC",
+            "当前持仓价值 ${formatDecimal(currentExposure)} USDC，盈利仓位 ${positivePositions} 个，亏损仓位 ${negativePositions} 个",
+            "估算开放回撤 ${evaluation.estimatedDrawdownRate}%"
+        )
+    }
+
+    private fun buildTraderAnalysisBehaviorHighlights(
+        activities: List<UserActivityResponse>,
+        evaluation: LeaderCandidateRecommendationDto,
+        days: Int
+    ): List<String> {
+        val trades = activities.filter { it.type.equals("TRADE", ignoreCase = true) }
+        val buyCount = trades.count { it.side.equals("BUY", ignoreCase = true) }
+        val sellCount = trades.count { it.side.equals("SELL", ignoreCase = true) }
+        val dominantSide = when {
+            buyCount > sellCount * 2 -> "明显偏买入"
+            sellCount > buyCount * 2 -> "明显偏卖出"
+            buyCount == 0 && sellCount == 0 -> "暂无明显方向"
+            else -> "买卖相对均衡"
+        }
+        val riskConclusion = if (evaluation.lowRisk) "综合评估偏稳健" else "综合评估需谨慎"
+        return listOf(
+            "最近 ${days} 天成交 ${evaluation.recentTradeCount} 笔，覆盖 ${evaluation.distinctMarkets} 个市场，活跃 ${evaluation.activeDays} 天",
+            "买 ${buyCount} / 卖 ${sellCount}，${dominantSide}",
+            "当前开放仓位 ${evaluation.currentPositionCount} 个，市场集中度 ${evaluation.marketConcentrationRate}%",
+            "风险分 ${evaluation.riskScore}，推荐分 ${evaluation.recommendationScore}，${riskConclusion}"
+        )
+    }
+
     private fun buildMarketDto(stats: MutableMarketStats): LeaderDiscoveryMarketDto {
         return LeaderDiscoveryMarketDto(
             marketId = stats.marketId,
@@ -1352,6 +1513,15 @@ class LeaderDiscoveryService(
 
     private fun formatDecimal(value: BigDecimal): String {
         return value.setScale(4, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+    }
+
+    private fun formatPercent(value: BigDecimal): String {
+        val normalized = if (value.abs() <= BigDecimal.ONE) {
+            value.multiply(BigDecimal("100"))
+        } else {
+            value
+        }
+        return normalized.setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
     }
 
     private suspend fun <T> executeWithRetry(

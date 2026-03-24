@@ -917,6 +917,8 @@ open class CopyOrderTrackingService(
                 sizingResult.rejectionType == SizingRejectionType.BELOW_MIN_ORDER_SIZE
             ) {
                 "AGGREGATION_TIMEOUT"
+            } else if (sizingResult.rejectionType == SizingRejectionType.MAX_POSITION_COUNT_LIMIT) {
+                "MAX_POSITION_COUNT"
             } else {
                 "SIZING"
             }

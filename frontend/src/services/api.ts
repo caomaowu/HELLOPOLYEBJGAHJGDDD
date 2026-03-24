@@ -39,7 +39,7 @@ const getBaseURL = (): string => {
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: getBaseURL(),
-  timeout: 30000,
+  timeout: 600000,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -346,19 +346,19 @@ export const apiService = {
      * 全市场扫描活跃 Trader
      */
     discoveryScanMarkets: (data: import('../types').LeaderMarketScanRequest) =>
-      apiClient.post<ApiResponse<import('../types').LeaderMarketScanResponse>>(
-        '/copy-trading/leaders/discovery/scan-markets',
-        data,
-        {
-          timeout: 180000
-        }
-      ),
+      apiClient.post<ApiResponse<import('../types').LeaderMarketScanResponse>>('/copy-trading/leaders/discovery/scan-markets', data),
 
     /**
      * 推荐候选 Leader
      */
     discoveryRecommend: (data: import('../types').LeaderCandidateRecommendRequest) =>
       apiClient.post<ApiResponse<import('../types').LeaderCandidateRecommendResponse>>('/copy-trading/leaders/discovery/recommend', data),
+
+    /**
+     * 单地址分析 Trader
+     */
+    discoveryAnalyzeTrader: (data: import('../types').LeaderTraderAnalysisRequest) =>
+      apiClient.post<ApiResponse<import('../types').LeaderTraderAnalysisResponse>>('/copy-trading/leaders/discovery/analyze', data),
 
     /**
      * 按市场反查活跃 Trader

@@ -27,6 +27,7 @@ import com.wrbug.polymarketbot.api.SpreadsResponse
 import com.wrbug.polymarketbot.api.UserActivityResponse
 import com.wrbug.polymarketbot.api.ValueResponse
 import com.wrbug.polymarketbot.dto.LeaderMarketScanRequest
+import com.wrbug.polymarketbot.dto.LeaderTraderAnalysisRequest
 import com.wrbug.polymarketbot.dto.LeaderMarketTraderDto
 import com.wrbug.polymarketbot.dto.LeaderMarketTraderLookupItemDto
 import com.wrbug.polymarketbot.dto.LeaderMarketTraderLookupRequest
@@ -274,6 +275,51 @@ class LeaderDiscoveryServiceTest {
 
         assertTrue(result.persistedToPool)
         assertEquals(1, result.finalCandidateCount)
+        verify(traderCandidatePoolService).updateEvaluationSnapshots(anyList())
+    }
+
+    @Test
+    fun `analyze trader should aggregate pnl from positions`() {
+        val address = "0x7777777777777777777777777777777777777777"
+        prepareScanMarketsApis(
+            markets = emptyList(),
+            orderbooks = emptyMap(),
+            activityResponses = mapOf(
+                address to successfulActivities(address, "market-analysis", 3)
+            ),
+            positionResponses = mapOf(
+                address to success(
+                    listOf(
+                        PositionResponse(
+                            proxyWallet = address,
+                            conditionId = "market-analysis",
+                            title = "title-market-analysis",
+                            outcome = "YES",
+                            size = 12.0,
+                            avgPrice = 0.45,
+                            currentValue = 72.0,
+                            cashPnl = 5.0,
+                            realizedPnl = 2.0,
+                            percentPnl = 0.1,
+                            curPrice = 0.52
+                        )
+                    )
+                )
+            )
+        )
+
+        val result = service.analyzeTrader(
+            LeaderTraderAnalysisRequest(
+                address = address,
+                days = 14
+            )
+        ).getOrThrow()
+
+        assertEquals(address, result.address)
+        assertEquals("7", result.evaluation.estimatedTotalPnl)
+        assertEquals("2", result.positions.first().realizedPnl)
+        assertEquals("5", result.positions.first().unrealizedPnl)
+        assertTrue(result.pnlHighlights.first().contains("7 USDC"))
         verify(traderCandidatePoolService).updateEvaluationSnapshots(anyList())
     }
 

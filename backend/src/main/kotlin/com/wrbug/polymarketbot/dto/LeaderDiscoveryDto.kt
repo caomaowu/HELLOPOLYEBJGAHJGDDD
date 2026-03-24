@@ -219,6 +219,67 @@ data class LeaderCandidateRecommendResponse(
 )
 
 /**
+ * 单地址 Trader 分析请求
+ */
+data class LeaderTraderAnalysisRequest(
+    val address: String,
+    val days: Int? = 14,
+    val activityLimit: Int? = 160,
+    val positionLimit: Int? = 50,
+    val persistToPool: Boolean? = true
+)
+
+/**
+ * Trader 分析中的持仓明细
+ */
+data class LeaderTraderAnalysisPositionDto(
+    val marketId: String,
+    val title: String?,
+    val outcome: String?,
+    val size: String,
+    val avgPrice: String,
+    val currentPrice: String,
+    val currentValue: String,
+    val realizedPnl: String,
+    val unrealizedPnl: String,
+    val totalPnl: String,
+    val percentPnl: String,
+    val endDate: String? = null
+)
+
+/**
+ * Trader 分析中的近期成交明细
+ */
+data class LeaderTraderAnalysisActivityDto(
+    val timestamp: Long,
+    val marketId: String,
+    val title: String?,
+    val side: String?,
+    val usdcSize: String,
+    val price: String,
+    val outcome: String?,
+    val transactionHash: String? = null
+)
+
+/**
+ * 单地址 Trader 分析响应
+ */
+data class LeaderTraderAnalysisResponse(
+    val estimated: Boolean = true,
+    val address: String,
+    val displayName: String?,
+    val profileImage: String? = null,
+    val existingLeaderId: Long? = null,
+    val existingLeaderName: String? = null,
+    val evaluation: LeaderCandidateRecommendationDto,
+    val pnlHighlights: List<String> = emptyList(),
+    val behaviorHighlights: List<String> = emptyList(),
+    val positions: List<LeaderTraderAnalysisPositionDto> = emptyList(),
+    val recentActivities: List<LeaderTraderAnalysisActivityDto> = emptyList(),
+    val generatedAt: Long
+)
+
+/**
  * 按市场反查的 Trader 结果
  */
 data class LeaderMarketTraderDto(

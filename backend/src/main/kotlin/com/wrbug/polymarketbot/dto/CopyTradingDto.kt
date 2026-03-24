@@ -45,6 +45,7 @@ data class CopyTradingCreateRequest(
     val maxPrice: String? = null,  // 最高价格（可选），NULL表示不限制最高价
     // 最大仓位配置
     val maxPositionValue: String? = null,  // 最大仓位金额（USDC），NULL表示不启用
+    val maxPositionCount: Int? = null,  // 最大活跃仓位数量，NULL表示不启用
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null
@@ -98,6 +99,7 @@ data class CopyTradingUpdateRequest(
     val maxPrice: String? = null,  // 最高价格（可选），NULL表示不限制最高价
     // 最大仓位配置
     val maxPositionValue: String? = null,  // 最大仓位金额（USDC），NULL表示不启用
+    val maxPositionCount: Int? = null,  // 最大活跃仓位数量，NULL表示不启用
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null
@@ -192,6 +194,7 @@ data class CopyTradingDto(
     val maxPrice: String?,  // 最高价格（可选），NULL表示不限制最高价
     // 最大仓位配置
     val maxPositionValue: String? = null,  // 最大仓位金额（USDC），NULL表示不启用
+    val maxPositionCount: Int? = null,  // 最大活跃仓位数量，NULL表示不启用
     // 关键字过滤配置
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表，当keywordFilterMode为DISABLED时为null

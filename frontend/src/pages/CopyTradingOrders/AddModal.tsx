@@ -11,7 +11,6 @@ import type {
   MarketCategoryOption,
 } from '../../types'
 import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../../utils'
-import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
 import AccountImportForm from '../../components/AccountImportForm'
 import LeaderAddForm from '../../components/LeaderAddForm'
@@ -65,6 +64,7 @@ interface AddModalProps {
     marketSeriesMode?: FilterMode
     marketSeries?: string[]
     maxPositionValue?: number
+    maxPositionCount?: number
     configName?: string
   }
 }
@@ -75,7 +75,7 @@ const AddModal: React.FC<AddModalProps> = ({
   onSuccess,
   preFilledConfig
 }) => {
-  const { t } = useTranslation()
+  const t = (_key: string) => ''
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const { accounts, fetchAccounts } = useAccountStore()
   const [form] = Form.useForm()
@@ -178,7 +178,8 @@ const AddModal: React.FC<AddModalProps> = ({
       marketIntervals: config.marketIntervals,
       marketSeriesMode: config.marketSeriesMode || 'DISABLED',
       marketSeries: config.marketSeries,
-      maxPositionValue: config.maxPositionValue
+      maxPositionValue: config.maxPositionValue,
+      maxPositionCount: config.maxPositionCount
     }
     console.log('[AddModal] fillPreFilledConfig: setting form values:', formValues)
     
@@ -301,6 +302,7 @@ const AddModal: React.FC<AddModalProps> = ({
       minPrice: template.minPrice ? parseFloat(template.minPrice) : undefined,
       maxPrice: template.maxPrice ? parseFloat(template.maxPrice) : undefined,
       maxPositionValue: (template as any).maxPositionValue ? parseFloat((template as any).maxPositionValue) : undefined,
+      maxPositionCount: (template as any).maxPositionCount,
       pushFilteredOrders: template.pushFilteredOrders ?? false,
       marketCategoryMode: template.marketCategoryMode || 'DISABLED',
       marketCategories: template.marketCategories,
@@ -321,7 +323,7 @@ const AddModal: React.FC<AddModalProps> = ({
   
   // 处理导入账户成功
   const handleAccountImportSuccess = async (accountId: number) => {
-    message.success(t('accountImport.importSuccess'))
+    message.success('导入账户成功')
     
     // 刷新账户列表
     await fetchAccounts()
@@ -488,6 +490,7 @@ const AddModal: React.FC<AddModalProps> = ({
         minPrice: values.minPrice?.toString(),
         maxPrice: values.maxPrice?.toString(),
         maxPositionValue: values.maxPositionValue?.toString(),
+        maxPositionCount: values.maxPositionCount,
         keywordFilterMode: values.keywordFilterMode || 'DISABLED',
         keywords: (values.keywordFilterMode === 'WHITELIST' || values.keywordFilterMode === 'BLACKLIST') 
           ? keywords 
@@ -1145,6 +1148,20 @@ const AddModal: React.FC<AddModalProps> = ({
                 if (isNaN(num)) return ''
                 return num.toString().replace(/\.0+$/, '')
               }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label={t('copyTradingAdd.maxPositionCount') || '最大活跃仓位数量'}
+            name="maxPositionCount"
+            tooltip={t('copyTradingAdd.maxPositionCountTooltip') || '限制同一跟单配置下可同时持有的活跃仓位数。按市场 + outcome 计数；已有仓位可继续加仓，只有新开仓位时才受此限制。'}
+          >
+            <InputNumber
+              min={1}
+              step={1}
+              precision={0}
+              style={{ width: '100%' }}
+              placeholder={t('copyTradingAdd.maxPositionCountPlaceholder') || '例如：6（可选，不填写表示不启用）'}
             />
           </Form.Item>
           

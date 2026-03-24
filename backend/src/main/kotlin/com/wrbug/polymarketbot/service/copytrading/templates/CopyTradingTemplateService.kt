@@ -443,6 +443,7 @@ class CopyTradingTemplateService(
             maxOrderSize = template.maxOrderSize,
             minOrderSize = template.minOrderSize,
             maxPositionValue = null,
+            maxPositionCount = null,
             maxDailyVolume = template.maxDailyVolume
         )
         CopyTradingSizingSupport.validateConfig(config).firstOrNull()?.let { return it }

@@ -16,6 +16,7 @@ import {
   Typography,
   message
 } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import type {
   Leader,
   LeaderActivityHistoryItem,
@@ -336,7 +337,11 @@ const renderManualLabels = (
         message.error(response.data.msg || t('leaderDiscovery.scanFailed'))
       }
     } catch (error: any) {
-      message.error(error.message || t('leaderDiscovery.scanFailed'))
+      if (error?.code === 'ECONNABORTED' || String(error?.message || '').includes('timeout')) {
+        message.error(t('leaderDiscovery.traderScanTimeout'))
+      } else {
+        message.error(error.message || t('leaderDiscovery.scanFailed'))
+      }
     } finally {
       setScanLoading(false)
     }
@@ -704,7 +709,7 @@ const renderManualLabels = (
     { text: t('leaderDiscovery.sourceFilterMarketExpansion'), value: 'market-expansion' }
   ]
 
-  const marketScanColumns = [
+  const marketScanColumns: ColumnsType<LeaderDiscoveredTrader> = [
     {
       title: t('leaderDiscovery.address'),
       dataIndex: 'address',
@@ -736,7 +741,7 @@ const renderManualLabels = (
       title: '来源线索',
       key: 'sourceHints',
       filters: sourceFilterOptions,
-      onFilter: (value, record) => extractMarketScanSources(record).includes(String(value)),
+      onFilter: (value: boolean | Key, record: LeaderDiscoveredTrader) => extractMarketScanSources(record).includes(String(value)),
       defaultSortOrder: 'descend',
       sorter: (left: LeaderDiscoveredTrader, right: LeaderDiscoveredTrader) => {
         const confidenceDiff = (left.discoveryConfidence || 0) - (right.discoveryConfidence || 0)
@@ -802,8 +807,8 @@ const renderManualLabels = (
       dataIndex: 'sourceType',
       key: 'sourceType',
       filters: sourceFilterOptions,
-      onFilter: (value: string, record: LeaderDiscoveredTrader) =>
-        Boolean(record.sourceType?.split('+').includes(value)),
+      onFilter: (value: boolean | Key, record: LeaderDiscoveredTrader) =>
+        Boolean(record.sourceType?.split('+').includes(String(value))),
       render: (value?: string | null, record?: LeaderDiscoveredTrader) => (
         <Tag color={record?.sourceType?.includes('market-expansion') ? 'purple' : 'geekblue'}>
           {value || '-'}

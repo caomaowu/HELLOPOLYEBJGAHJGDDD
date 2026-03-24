@@ -32,15 +32,25 @@ class CopyTradingSizingService(
         outcomeIndex: Int?
     ): CopyTradingSizingResult {
         val currentPositionValue = getCurrentPositionValue(copyTrading, marketId, outcomeIndex)
-        val currentDailyVolume = getCurrentDailyVolume(
+        val currentActivePositionCount = getCurrentActivePositionCount(
             copyTrading.id ?: return rejected("跟单配置不存在", SizingRejectionType.INVALID_INPUT)
+        )
+        val hasActivePosition = hasActivePosition(
+            copyTrading.id,
+            marketId,
+            outcomeIndex
+        )
+        val currentDailyVolume = getCurrentDailyVolume(
+            copyTrading.id
         )
         return calculate(
             config = copyTrading.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
             tradePrice = tradePrice,
             currentPositionValue = currentPositionValue,
-            currentDailyVolume = currentDailyVolume
+            currentDailyVolume = currentDailyVolume,
+            currentActivePositionCount = currentActivePositionCount,
+            hasActivePosition = hasActivePosition
         )
     }
 
@@ -65,7 +75,9 @@ class CopyTradingSizingService(
         leaderOrderAmount: BigDecimal,
         tradePrice: BigDecimal,
         currentPositionValue: BigDecimal,
-        currentDailyVolume: BigDecimal
+        currentDailyVolume: BigDecimal,
+        currentActivePositionCount: Int? = null,
+        hasActivePosition: Boolean = false
     ): CopyTradingSizingResult {
         if (tradePrice <= BigDecimal.ZERO) {
             return rejected("交易价格无效", SizingRejectionType.INVALID_INPUT)
@@ -100,6 +112,22 @@ class CopyTradingSizingService(
         if (finalAmount.gt(config.maxOrderSize)) {
             finalAmount = config.maxOrderSize
             reasons += "按单笔最大金额裁剪到 ${config.maxOrderSize.stripTrailingZeros().toPlainString()} USDC"
+        }
+
+        if (config.maxPositionCount != null && currentActivePositionCount != null && !hasActivePosition) {
+            if (currentActivePositionCount >= config.maxPositionCount) {
+                return buildResult(
+                    baseAmount = baseAmount,
+                    multipliedAmount = multipliedAmount,
+                    finalAmount = finalAmount,
+                    finalQuantity = BigDecimal.ZERO,
+                    appliedAdaptiveRatio = appliedAdaptiveRatio,
+                    appliedMultiplier = appliedMultiplier,
+                    status = SizingStatus.REJECTED,
+                    reason = "超过最大活跃仓位数量限制: 当前活跃仓位=${currentActivePositionCount}, 上限=${config.maxPositionCount}",
+                    rejectionType = SizingRejectionType.MAX_POSITION_COUNT_LIMIT
+                )
+            }
         }
 
         if (config.maxPositionValue != null) {
@@ -232,6 +260,20 @@ class CopyTradingSizingService(
         return trackingRepository.sumDailyBuyVolume(copyTradingId, start, end) ?: BigDecimal.ZERO
     }
 
+    private fun getCurrentActivePositionCount(copyTradingId: Long): Int {
+        val trackingRepository = requireNotNull(copyOrderTrackingRepository) {
+            "CopyOrderTrackingRepository 未初始化"
+        }
+        return trackingRepository.countActivePositions(copyTradingId)
+    }
+
+    private fun hasActivePosition(copyTradingId: Long, marketId: String, outcomeIndex: Int?): Boolean {
+        val trackingRepository = requireNotNull(copyOrderTrackingRepository) {
+            "CopyOrderTrackingRepository 未初始化"
+        }
+        return trackingRepository.existsActivePosition(copyTradingId, marketId, outcomeIndex)
+    }
+
     private fun calculateAdaptiveRatio(
         config: CopyTradingSizingConfig,
         leaderOrderAmount: BigDecimal
@@ -302,6 +344,7 @@ class CopyTradingSizingService(
             maxOrderSize = maxOrderSize,
             minOrderSize = minOrderSize,
             maxPositionValue = maxPositionValue,
+            maxPositionCount = maxPositionCount,
             maxDailyVolume = maxDailyVolume
         )
     }
@@ -320,6 +363,7 @@ class CopyTradingSizingService(
             maxOrderSize = maxOrderSize,
             minOrderSize = minOrderSize,
             maxPositionValue = maxPositionValue,
+            maxPositionCount = null,
             maxDailyVolume = maxDailyVolume
         )
     }

@@ -118,6 +118,7 @@ class CopyTradingService(
                     minPrice = request.minPrice?.toSafeBigDecimal() ?: template.minPrice,
                     maxPrice = request.maxPrice?.toSafeBigDecimal() ?: template.maxPrice,
                     maxPositionValue = request.maxPositionValue?.toSafeBigDecimal(),
+                    maxPositionCount = request.maxPositionCount,
                     keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                     keywords = convertKeywordsToJson(request.keywords),
                     marketCategoryMode = MarketFilterSupport.normalizeFilterMode(
@@ -186,6 +187,7 @@ class CopyTradingService(
                     minPrice = request.minPrice?.toSafeBigDecimal(),
                     maxPrice = request.maxPrice?.toSafeBigDecimal(),
                     maxPositionValue = request.maxPositionValue?.toSafeBigDecimal(),
+                    maxPositionCount = request.maxPositionCount,
                     keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                     keywords = convertKeywordsToJson(request.keywords),
                     marketCategoryMode = MarketFilterSupport.normalizeFilterMode(request.marketCategoryMode),
@@ -256,6 +258,7 @@ class CopyTradingService(
                 minPrice = config.minPrice,
                 maxPrice = config.maxPrice,
                 maxPositionValue = config.maxPositionValue,
+                maxPositionCount = config.maxPositionCount,
                 keywordFilterMode = config.keywordFilterMode,
                 keywords = config.keywords,
                 marketCategoryMode = config.marketCategoryMode,
@@ -393,6 +396,11 @@ class CopyTradingService(
                 } else {
                     copyTrading.maxPositionValue
                 },
+                maxPositionCount = when (request.maxPositionCount) {
+                    null -> copyTrading.maxPositionCount
+                    -1 -> null
+                    else -> request.maxPositionCount
+                },
                 keywordFilterMode = request.keywordFilterMode ?: copyTrading.keywordFilterMode,
                 keywords = if (request.keywords != null) {
                     convertKeywordsToJson(request.keywords)
@@ -468,6 +476,7 @@ class CopyTradingService(
                     minPrice = updated.minPrice,
                     maxPrice = updated.maxPrice,
                     maxPositionValue = updated.maxPositionValue,
+                    maxPositionCount = updated.maxPositionCount,
                     keywordFilterMode = updated.keywordFilterMode,
                     keywords = updated.keywords,
                     marketCategoryMode = updated.marketCategoryMode,
@@ -713,6 +722,7 @@ class CopyTradingService(
             minPrice = copyTrading.minPrice?.toPlainString(),
             maxPrice = copyTrading.maxPrice?.toPlainString(),
             maxPositionValue = copyTrading.maxPositionValue?.toPlainString(),
+            maxPositionCount = copyTrading.maxPositionCount,
             keywordFilterMode = copyTrading.keywordFilterMode,
             keywords = convertJsonToKeywords(copyTrading.keywords),
             marketCategoryMode = copyTrading.marketCategoryMode,
@@ -819,6 +829,7 @@ class CopyTradingService(
         val minPrice: BigDecimal?,
         val maxPrice: BigDecimal?,
         val maxPositionValue: BigDecimal?,
+        val maxPositionCount: Int?,
         val keywordFilterMode: String,
         val keywords: String?,  // JSON 字符串
         val marketCategoryMode: String,
@@ -856,6 +867,7 @@ class CopyTradingService(
             maxOrderSize = config.maxOrderSize,
             minOrderSize = config.minOrderSize,
             maxPositionValue = config.maxPositionValue,
+            maxPositionCount = config.maxPositionCount,
             maxDailyVolume = config.maxDailyVolume
         )
         CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()?.let { return it }
