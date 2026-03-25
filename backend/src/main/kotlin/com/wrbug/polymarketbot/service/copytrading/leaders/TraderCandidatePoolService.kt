@@ -36,6 +36,7 @@ import com.wrbug.polymarketbot.util.parseStringArray
 import com.wrbug.polymarketbot.util.toJson
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.data.jpa.domain.Specification
@@ -58,7 +59,9 @@ class TraderCandidatePoolService(
     private val traderMarketActivityPoolRepository: TraderMarketActivityPoolRepository,
     private val traderActivityEventHistoryRepository: TraderActivityEventHistoryRepository,
     private val leaderRepository: LeaderRepository,
-    private val marketService: MarketService
+    private val marketService: MarketService,
+    @Value("\${copy.trading.discovery.activity-history.store-raw-payload:false}")
+    private val storeRawPayloadJson: Boolean
 ) {
 
     data class CandidateLabelSnapshot(
@@ -714,7 +717,7 @@ class TraderCandidatePoolService(
                 size = size,
                 volume = volume
             ),
-            rawPayloadJson = payload.toJson()
+            rawPayloadJson = if (storeRawPayloadJson) payload.toJson() else null
         )
     }
 
