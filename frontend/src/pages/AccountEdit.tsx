@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Form, Input, Button, message, Typography, Space } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
@@ -18,16 +18,7 @@ const AccountEdit: React.FC = () => {
   const [account, setAccount] = useState<any>(null)
   const [loadingDetail, setLoadingDetail] = useState(true)
   
-  useEffect(() => {
-    if (accountId) {
-      loadAccountDetail()
-    } else {
-      message.error('账户ID不能为空')
-      navigate('/accounts')
-    }
-  }, [accountId])
-  
-  const loadAccountDetail = async () => {
+  const loadAccountDetail = useCallback(async () => {
     if (!accountId) return
     
     setLoadingDetail(true)
@@ -45,7 +36,16 @@ const AccountEdit: React.FC = () => {
     } finally {
       setLoadingDetail(false)
     }
-  }
+  }, [accountId, fetchAccountDetail, form, navigate])
+
+  useEffect(() => {
+    if (accountId) {
+      loadAccountDetail()
+    } else {
+      message.error('账户ID不能为空')
+      navigate('/accounts')
+    }
+  }, [accountId, loadAccountDetail, navigate])
   
   const handleSubmit = async (values: any) => {
     if (!accountId) return
@@ -145,4 +145,3 @@ const AccountEdit: React.FC = () => {
 }
 
 export default AccountEdit
-

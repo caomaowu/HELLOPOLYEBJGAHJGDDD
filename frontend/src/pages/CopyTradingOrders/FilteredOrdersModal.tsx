@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Modal, Table, Tag, Select, Card, Divider, Spin } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../../services/api'
@@ -62,13 +62,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     EXECUTION_PRECHECK: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败'
   }
   
-  useEffect(() => {
-    if (open && copyTradingId) {
-      fetchFilteredOrders()
-    }
-  }, [open, copyTradingId, page, filterType])
-  
-  const fetchFilteredOrders = async () => {
+  const fetchFilteredOrders = useCallback(async () => {
     if (!copyTradingId) return
     
     setLoading(true)
@@ -90,7 +84,13 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [copyTradingId, filterType, limit, page])
+
+  useEffect(() => {
+    if (open && copyTradingId) {
+      fetchFilteredOrders()
+    }
+  }, [open, copyTradingId, fetchFilteredOrders])
   
   const getFilterTypeTag = (filterType: string) => {
     const config = filterTypeMap[filterType] || { color: 'default', text: filterType }
@@ -315,4 +315,3 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
 }
 
 export default FilteredOrdersModal
-

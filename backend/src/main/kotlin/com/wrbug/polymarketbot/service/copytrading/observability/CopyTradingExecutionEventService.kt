@@ -54,6 +54,13 @@ class CopyTradingExecutionEventService(
     companion object {
         private const val LATENCY_MARKET_META_RESOLVE_MS = "marketMetaResolveMs"
         private const val LATENCY_FILTER_EVALUATE_MS = "filterEvaluateMs"
+        private const val LATENCY_DIAGNOSTICS_MS = "diagnosticsMs"
+        private const val LATENCY_ORDERBOOK_FETCH_MS = "orderbookFetchMs"
+        private const val LATENCY_API_SECRET_DECRYPT_MS = "apiSecretDecryptMs"
+        private const val LATENCY_API_PASSPHRASE_DECRYPT_MS = "apiPassphraseDecryptMs"
+        private const val LATENCY_PRIVATE_KEY_DECRYPT_MS = "privateKeyDecryptMs"
+        private const val LATENCY_FEE_RATE_FETCH_MS = "feeRateFetchMs"
+        private const val LATENCY_NEG_RISK_RESOLVE_MS = "negRiskResolveMs"
         private const val LATENCY_SOURCE_TO_PROCESS_MS = "sourceToProcessMs"
         private const val LATENCY_PROCESS_TO_ORDER_REQUEST_MS = "processToOrderRequestMs"
         private const val LATENCY_ORDER_CREATE_DURATION_MS = "orderCreateDurationMs"
@@ -61,6 +68,13 @@ class CopyTradingExecutionEventService(
         val SUPPORTED_LATENCY_METRICS = setOf(
             LATENCY_MARKET_META_RESOLVE_MS,
             LATENCY_FILTER_EVALUATE_MS,
+            LATENCY_DIAGNOSTICS_MS,
+            LATENCY_ORDERBOOK_FETCH_MS,
+            LATENCY_API_SECRET_DECRYPT_MS,
+            LATENCY_API_PASSPHRASE_DECRYPT_MS,
+            LATENCY_PRIVATE_KEY_DECRYPT_MS,
+            LATENCY_FEE_RATE_FETCH_MS,
+            LATENCY_NEG_RISK_RESOLVE_MS,
             LATENCY_SOURCE_TO_PROCESS_MS,
             LATENCY_PROCESS_TO_ORDER_REQUEST_MS,
             LATENCY_ORDER_CREATE_DURATION_MS,

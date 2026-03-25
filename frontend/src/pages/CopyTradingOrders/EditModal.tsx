@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, Form, Button, message, Radio, InputNumber, Divider, Spin, Select, Input, Space, Switch, Tag, InputRef, Card, Row, Col, Statistic } from 'antd'
 import { SaveOutlined } from '@ant-design/icons'
 import { apiService } from '../../services/api'
@@ -54,13 +54,7 @@ const EditModal: React.FC<EditModalProps> = ({
   const [leaderAssetInfo, setLeaderAssetInfo] = useState<{ total: string; available: string; position: string } | null>(null)
   const [loadingAssetInfo, setLoadingAssetInfo] = useState(false)
 
-  useEffect(() => {
-    if (open && copyTradingId) {
-      fetchCopyTrading(parseInt(copyTradingId, 10))
-    }
-  }, [open, copyTradingId])
-
-  const fetchCopyTrading = async (targetId: number) => {
+  const fetchCopyTrading = useCallback(async (targetId: number) => {
     setFetching(true)
     try {
       const response = await apiService.copyTrading.list({})
@@ -156,7 +150,13 @@ const EditModal: React.FC<EditModalProps> = ({
     } finally {
       setFetching(false)
     }
-  }
+  }, [form, onClose, t])
+
+  useEffect(() => {
+    if (open && copyTradingId) {
+      fetchCopyTrading(parseInt(copyTradingId, 10))
+    }
+  }, [copyTradingId, fetchCopyTrading, open])
 
   const fetchLeaderAssetInfo = async (leaderId: number) => {
     setLoadingAssetInfo(true)

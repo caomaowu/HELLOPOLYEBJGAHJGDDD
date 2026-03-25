@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, Typography, Spin, Modal, Descriptions, Divider, Form, Input, Alert } from 'antd'
 import { PlusOutlined, ReloadOutlined, EditOutlined, CopyOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +27,8 @@ const AccountList: React.FC = () => {
   const [editLoading, setEditLoading] = useState(false)
   const [accountImportModalVisible, setAccountImportModalVisible] = useState(false)
   const [accountImportForm] = Form.useForm()
+  const loadedBalanceIdsRef = useRef<Set<number>>(new Set())
+  const loadingBalanceIdsRef = useRef<Set<number>>(new Set())
 
   useEffect(() => {
     fetchAccounts()
@@ -41,27 +43,39 @@ const AccountList: React.FC = () => {
 
   // 加载所有账户的余额
   useEffect(() => {
+    let cancelled = false
+
     const loadBalances = async () => {
       for (const account of accounts) {
-        if (!balanceMap[account.id] && !balanceLoading[account.id]) {
-          setBalanceLoading(prev => ({ ...prev, [account.id]: true }))
-          try {
-            const balanceData = await fetchAccountBalance(account.id)
-            setBalanceMap(prev => ({
-              ...prev,
-              [account.id]: {
-                total: balanceData.totalBalance || '0',
-                available: balanceData.availableBalance || '0',
-                position: balanceData.positionBalance || '0'
-              }
-            }))
-          } catch (error) {
-            console.error(`获取账户 ${account.id} 余额失败:`, error)
-            setBalanceMap(prev => ({
-              ...prev,
-              [account.id]: { total: '-', available: '-', position: '-' }
-            }))
-          } finally {
+        if (loadedBalanceIdsRef.current.has(account.id) || loadingBalanceIdsRef.current.has(account.id)) {
+          continue
+        }
+
+        loadingBalanceIdsRef.current.add(account.id)
+        setBalanceLoading(prev => ({ ...prev, [account.id]: true }))
+        try {
+          const balanceData = await fetchAccountBalance(account.id)
+          if (cancelled) return
+          setBalanceMap(prev => ({
+            ...prev,
+            [account.id]: {
+              total: balanceData.totalBalance || '0',
+              available: balanceData.availableBalance || '0',
+              position: balanceData.positionBalance || '0'
+            }
+          }))
+          loadedBalanceIdsRef.current.add(account.id)
+        } catch (error) {
+          if (cancelled) return
+          console.error(`获取账户 ${account.id} 余额失败:`, error)
+          setBalanceMap(prev => ({
+            ...prev,
+            [account.id]: { total: '-', available: '-', position: '-' }
+          }))
+          loadedBalanceIdsRef.current.add(account.id)
+        } finally {
+          loadingBalanceIdsRef.current.delete(account.id)
+          if (!cancelled) {
             setBalanceLoading(prev => ({ ...prev, [account.id]: false }))
           }
         }
@@ -71,7 +85,11 @@ const AccountList: React.FC = () => {
     if (accounts.length > 0) {
       loadBalances()
     }
-  }, [accounts])
+
+    return () => {
+      cancelled = true
+    }
+  }, [accounts, fetchAccountBalance])
 
   const handleDelete = async (account: Account) => {
     try {

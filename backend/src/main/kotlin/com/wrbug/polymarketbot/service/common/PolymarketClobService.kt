@@ -6,6 +6,7 @@ import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Polymarket CLOB API 服务封装
@@ -18,16 +19,44 @@ class PolymarketClobService(
 ) {
     
     private val logger = LoggerFactory.getLogger(PolymarketClobService::class.java)
+    private val orderbookByTokenCache = ConcurrentHashMap<String, TimedCacheEntry<OrderbookResponse>>()
+    private val orderbookByMarketCache = ConcurrentHashMap<String, TimedCacheEntry<OrderbookResponse>>()
+    private val feeRateCache = ConcurrentHashMap<String, TimedCacheEntry<Int>>()
+
+    companion object {
+        private const val ORDERBOOK_CACHE_TTL_MS = 1_000L
+        private const val FEE_RATE_CACHE_TTL_MS = 30_000L
+        private const val MAX_ORDERBOOK_CACHE_SIZE = 2_000
+        private const val MAX_FEE_RATE_CACHE_SIZE = 4_000
+    }
+
+    private data class TimedCacheEntry<T>(
+        val value: T,
+        val cachedAt: Long
+    )
     
     /**
      * 获取订单簿
      * 使用 market 参数（condition ID）
      */
     suspend fun getOrderbook(market: String): Result<OrderbookResponse> {
+        val now = System.currentTimeMillis()
+        getFreshCache(orderbookByMarketCache, market, now, ORDERBOOK_CACHE_TTL_MS)?.let { cached ->
+            return Result.success(cached)
+        }
         return try {
             val response = clobApi.getOrderbook(tokenId = null, market = market)
             if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!)
+                val body = response.body()!!
+                putCache(
+                    cache = orderbookByMarketCache,
+                    key = market,
+                    value = body,
+                    now = System.currentTimeMillis(),
+                    maxSize = MAX_ORDERBOOK_CACHE_SIZE,
+                    staleTtlMs = ORDERBOOK_CACHE_TTL_MS
+                )
+                Result.success(body)
             } else {
                 Result.failure(Exception("获取订单簿失败: ${response.code()} ${response.message()}"))
             }
@@ -42,10 +71,23 @@ class PolymarketClobService(
      * 用于三元及以上市场，获取特定 outcome 的价格
      */
     suspend fun getOrderbookByTokenId(tokenId: String): Result<OrderbookResponse> {
+        val now = System.currentTimeMillis()
+        getFreshCache(orderbookByTokenCache, tokenId, now, ORDERBOOK_CACHE_TTL_MS)?.let { cached ->
+            return Result.success(cached)
+        }
         return try {
             val response = clobApi.getOrderbook(tokenId = tokenId, market = null)
             if (response.isSuccessful && response.body() != null) {
-                Result.success(response.body()!!)
+                val body = response.body()!!
+                putCache(
+                    cache = orderbookByTokenCache,
+                    key = tokenId,
+                    value = body,
+                    now = System.currentTimeMillis(),
+                    maxSize = MAX_ORDERBOOK_CACHE_SIZE,
+                    staleTtlMs = ORDERBOOK_CACHE_TTL_MS
+                )
+                Result.success(body)
             } else {
                 Result.failure(Exception("获取订单簿失败: ${response.code()} ${response.message()}"))
             }
@@ -413,10 +455,22 @@ class PolymarketClobService(
      * @return 费率基点（0 表示无费率，1000 表示 10%）
      */
     suspend fun getFeeRate(tokenId: String): Result<Int> {
+        val now = System.currentTimeMillis()
+        getFreshCache(feeRateCache, tokenId, now, FEE_RATE_CACHE_TTL_MS)?.let { cached ->
+            return Result.success(cached)
+        }
         return try {
             val response = clobApi.getFeeRate(tokenId)
             if (response.isSuccessful && response.body() != null) {
                 val baseFee = response.body()!!.baseFee
+                putCache(
+                    cache = feeRateCache,
+                    key = tokenId,
+                    value = baseFee,
+                    now = System.currentTimeMillis(),
+                    maxSize = MAX_FEE_RATE_CACHE_SIZE,
+                    staleTtlMs = FEE_RATE_CACHE_TTL_MS
+                )
                 logger.debug("获取费率成功: tokenId=$tokenId, baseFee=$baseFee")
                 Result.success(baseFee)
             } else {
@@ -433,5 +487,47 @@ class PolymarketClobService(
             Result.failure(e)
         }
     }
-}
 
+    private fun <T> getFreshCache(
+        cache: ConcurrentHashMap<String, TimedCacheEntry<T>>,
+        key: String,
+        now: Long,
+        ttlMs: Long
+    ): T? {
+        val entry = cache[key] ?: return null
+        if (now - entry.cachedAt <= ttlMs) {
+            return entry.value
+        }
+        cache.remove(key, entry)
+        return null
+    }
+
+    private fun <T> putCache(
+        cache: ConcurrentHashMap<String, TimedCacheEntry<T>>,
+        key: String,
+        value: T,
+        now: Long,
+        maxSize: Int,
+        staleTtlMs: Long
+    ) {
+        cache[key] = TimedCacheEntry(value = value, cachedAt = now)
+        if (cache.size <= maxSize) {
+            return
+        }
+        // 轻量级裁剪：先删过期，再按最旧时间删掉 1/4，避免内存持续增长。
+        val oldest = cache.entries
+            .asSequence()
+            .sortedBy { it.value.cachedAt }
+            .toList()
+        oldest
+            .asSequence()
+            .filter { now - it.value.cachedAt > staleTtlMs }
+            .forEach { cache.remove(it.key, it.value) }
+        if (cache.size <= maxSize) {
+            return
+        }
+        oldest
+            .take((maxSize / 4).coerceAtLeast(1))
+            .forEach { cache.remove(it.key, it.value) }
+    }
+}

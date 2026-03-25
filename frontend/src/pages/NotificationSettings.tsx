@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, Typography, Modal, Form, Input, Switch } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -19,11 +19,7 @@ const NotificationSettings: React.FC = () => {
   const [form] = Form.useForm()
   const [testLoading, setTestLoading] = useState(false)
   
-  useEffect(() => {
-    fetchConfigs()
-  }, [])
-  
-  const fetchConfigs = async () => {
+  const fetchConfigs = useCallback(async () => {
     setLoading(true)
     try {
       const response = await apiService.notifications.list({ type: 'telegram' })
@@ -37,7 +33,11 @@ const NotificationSettings: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
+
+  useEffect(() => {
+    void fetchConfigs()
+  }, [fetchConfigs])
   
   const handleCreate = () => {
     setEditingConfig(null)
@@ -403,4 +403,3 @@ const NotificationSettings: React.FC = () => {
 }
 
 export default NotificationSettings
-

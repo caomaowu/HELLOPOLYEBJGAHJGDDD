@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -35,6 +35,8 @@ import type { CryptoTailStrategyDto, CryptoTailStrategyTriggerDto, CryptoTailMar
 import { formatUSDC, formatNumber } from '../utils'
 import { getVersionInfo } from '../utils/version'
 
+const BINANCE_API_NAMES = ['币安 API', '币安 WebSocket']
+
 const CryptoTailStrategyList: React.FC = () => {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
@@ -63,9 +65,7 @@ const CryptoTailStrategyList: React.FC = () => {
   const [binanceUnhealthy, setBinanceUnhealthy] = useState<Array<{ name: string; message: string }>>([])
   const [binanceCheckLoading, setBinanceCheckLoading] = useState(false)
 
-  const BINANCE_API_NAMES = ['币安 API', '币安 WebSocket']
-
-  const fetchBinanceApiStatus = async () => {
+  const fetchBinanceApiStatus = useCallback(async () => {
     setBinanceCheckLoading(true)
     try {
       const res = await apiService.proxyConfig.checkApiHealth()
@@ -82,23 +82,9 @@ const CryptoTailStrategyList: React.FC = () => {
     } finally {
       setBinanceCheckLoading(false)
     }
-  }
-
-  useEffect(() => {
-    fetchAccounts()
-    fetchSystemConfig()
-    fetchMarketOptions()
   }, [])
 
-  useEffect(() => {
-    fetchBinanceApiStatus()
-  }, [])
-
-  useEffect(() => {
-    fetchList()
-  }, [filters])
-
-  const fetchSystemConfig = async () => {
+  const fetchSystemConfig = useCallback(async () => {
     try {
       const res = await apiService.systemConfig.get()
       if (res.data.code === 0 && res.data.data) {
@@ -107,9 +93,9 @@ const CryptoTailStrategyList: React.FC = () => {
     } catch {
       setSystemConfig(null)
     }
-  }
+  }, [])
 
-  const fetchMarketOptions = async () => {
+  const fetchMarketOptions = useCallback(async () => {
     try {
       const res = await apiService.cryptoTailStrategy.marketOptions()
       if (res.data.code === 0 && res.data.data) {
@@ -118,9 +104,9 @@ const CryptoTailStrategyList: React.FC = () => {
     } catch {
       setMarketOptions([])
     }
-  }
+  }, [])
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     setLoading(true)
     try {
       const res = await apiService.cryptoTailStrategy.list(filters)
@@ -134,7 +120,21 @@ const CryptoTailStrategyList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters, t])
+
+  useEffect(() => {
+    void fetchAccounts()
+    void fetchSystemConfig()
+    void fetchMarketOptions()
+  }, [fetchAccounts, fetchMarketOptions, fetchSystemConfig])
+
+  useEffect(() => {
+    void fetchBinanceApiStatus()
+  }, [fetchBinanceApiStatus])
+
+  useEffect(() => {
+    void fetchList()
+  }, [fetchList])
 
   const openAddModal = () => {
     const needApiKey = !systemConfig?.builderApiKeyConfigured
@@ -534,7 +534,7 @@ const CryptoTailStrategyList: React.FC = () => {
       windowEndMinutes: intervalMin,
       windowEndSeconds: 0
     })
-  }, [formModalOpen, editingId, selectedMarket, intervalSeconds])
+  }, [form, formModalOpen, editingId, selectedMarket, intervalSeconds])
 
   const getGuideUrl = () => {
     const { githubRepoUrl } = getVersionInfo()

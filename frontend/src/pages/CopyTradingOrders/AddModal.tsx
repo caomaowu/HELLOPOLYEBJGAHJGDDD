@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useState, useRef } from 'react'
 import { Modal, Form, Button, Switch, message, Space, Radio, InputNumber, Table, Select, Divider, Input, Tag, InputRef, Card, Row, Col, Statistic, Spin } from 'antd'
 import { SaveOutlined, FileTextOutlined, PlusOutlined } from '@ant-design/icons'
 import { apiService } from '../../services/api'
@@ -20,6 +20,7 @@ import {
   validateRepeatAddReductionConfig
 } from '../../utils'
 import { useMediaQuery } from 'react-responsive'
+import { useTranslation } from 'react-i18next'
 import AccountImportForm from '../../components/AccountImportForm'
 import LeaderAddForm from '../../components/LeaderAddForm'
 import LeaderSelect from '../../components/LeaderSelect'
@@ -88,7 +89,7 @@ const AddModal: React.FC<AddModalProps> = ({
   onSuccess,
   preFilledConfig
 }) => {
-  const t = (_key: string) => ''
+  const { t } = useTranslation()
   const isMobile = useMediaQuery({ maxWidth: 768 })
   const { accounts, fetchAccounts } = useAccountStore()
   const [form] = Form.useForm()
@@ -114,7 +115,7 @@ const AddModal: React.FC<AddModalProps> = ({
   const [leaderAddForm] = Form.useForm()
   
   // 生成默认配置名
-  const generateDefaultConfigName = (): string => {
+  const generateDefaultConfigName = useCallback((): string => {
     const now = new Date()
     const dateStr = now.toLocaleDateString('zh-CN', { 
       year: 'numeric', 
@@ -128,10 +129,10 @@ const AddModal: React.FC<AddModalProps> = ({
       hour12: false
     })
     return `跟单配置-${dateStr}-${timeStr}`
-  }
+  }, [])
   
   // 获取 Leader 资产信息
-  const fetchLeaderAssetInfo = async (leaderId: number) => {
+  const fetchLeaderAssetInfo = useCallback(async (leaderId: number) => {
     if (!leaderId) return
     
     setLoadingAssetInfo(true)
@@ -154,10 +155,10 @@ const AddModal: React.FC<AddModalProps> = ({
     } finally {
       setLoadingAssetInfo(false)
     }
-  }
+  }, [t])
 
   // 填充预配置数据到表单（复用模板填充逻辑）
-  const fillPreFilledConfig = (config: typeof preFilledConfig) => {
+  const fillPreFilledConfig = useCallback((config: typeof preFilledConfig) => {
     console.log('[AddModal] fillPreFilledConfig called with config:', config)
     if (!config) {
       console.log('[AddModal] fillPreFilledConfig: config is null/undefined')
@@ -213,9 +214,31 @@ const AddModal: React.FC<AddModalProps> = ({
       console.log('[AddModal] fillPreFilledConfig: fetching leader asset info for leaderId:', config.leaderId)
       fetchLeaderAssetInfo(config.leaderId)
     }
-  }
+  }, [fetchLeaderAssetInfo, form, generateDefaultConfigName])
   
   // 处理 Modal 打开/关闭
+  const fetchLeaders = useCallback(async () => {
+    try {
+      const response = await apiService.leaders.list({})
+      if (response.data.code === 0 && response.data.data) {
+        setLeaders(response.data.data.list || [])
+      }
+    } catch (error: any) {
+      message.error(error.message || t('copyTradingAdd.fetchLeaderFailed') || '获取 Leader 列表失败')
+    }
+  }, [t])
+
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const response = await apiService.templates.list()
+      if (response.data.code === 0 && response.data.data) {
+        setTemplates(response.data.data.list || [])
+      }
+    } catch (error: any) {
+      message.error(error.message || t('copyTradingAdd.fetchTemplateFailed') || '获取模板列表失败')
+    }
+  }, [t])
+
   useEffect(() => {
     console.log('[AddModal] useEffect triggered, open:', open, 'preFilledConfig:', preFilledConfig)
     if (open) {
@@ -269,29 +292,7 @@ const AddModal: React.FC<AddModalProps> = ({
       setMultiplierMode('NONE')
       setLeaderAssetInfo(null)
     }
-  }, [open, preFilledConfig])
-  
-  const fetchLeaders = async () => {
-    try {
-      const response = await apiService.leaders.list({})
-      if (response.data.code === 0 && response.data.data) {
-        setLeaders(response.data.data.list || [])
-      }
-    } catch (error: any) {
-      message.error(error.message || t('copyTradingAdd.fetchLeaderFailed') || '获取 Leader 列表失败')
-    }
-  }
-  
-  const fetchTemplates = async () => {
-    try {
-      const response = await apiService.templates.list()
-      if (response.data.code === 0 && response.data.data) {
-        setTemplates(response.data.data.list || [])
-      }
-    } catch (error: any) {
-      message.error(error.message || t('copyTradingAdd.fetchTemplateFailed') || '获取模板列表失败')
-    }
-  }
+  }, [fetchAccounts, fetchLeaders, fetchTemplates, fillPreFilledConfig, form, generateDefaultConfigName, open, preFilledConfig])
   
   const handleSelectTemplate = (template: CopyTradingTemplate) => {
     // 填充模板数据到表单（只填充模板中存在的字段）
@@ -1697,4 +1698,3 @@ const AddModal: React.FC<AddModalProps> = ({
 }
 
 export default AddModal
-

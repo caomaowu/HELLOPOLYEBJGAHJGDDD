@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Descriptions, Button, Tag, Space, Table, message, Row, Col, Statistic, Spin } from 'antd'
 import { ArrowLeftOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, CopyOutlined } from '@ant-design/icons'
@@ -25,14 +25,14 @@ const BacktestDetail: React.FC = () => {
   const [tradesTotal, setTradesTotal] = useState(0)
   const [tradesPage, setTradesPage] = useState(1)
   const [tradesSize] = useState(20)
-  const [polling, setPolling] = useState<NodeJS.Timeout | null>(null)
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
   // 创建跟单配置 Modal
   const [addCopyTradingModalVisible, setAddCopyTradingModalVisible] = useState(false)
   const [preFilledConfig, setPreFilledConfig] = useState<any>(null)
 
   // 获取回测任务详情
-  const fetchTaskDetail = async () => {
+  const fetchTaskDetail = useCallback(async () => {
     setLoading(true)
     try {
       const response = await backtestService.detail({ id: parseInt(id!) })
@@ -49,10 +49,10 @@ const BacktestDetail: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [id, t])
 
   // 获取交易记录
-  const fetchTrades = async (page: number) => {
+  const fetchTrades = useCallback(async (page: number) => {
     setTradesLoading(true)
     try {
       const response = await backtestService.trades({
@@ -72,10 +72,10 @@ const BacktestDetail: React.FC = () => {
     } finally {
       setTradesLoading(false)
     }
-  }
+  }, [id, tradesSize, t])
 
   // 获取所有交易记录（用于图表显示）
-  const fetchAllTrades = async () => {
+  const fetchAllTrades = useCallback(async () => {
     try {
       const response = await backtestService.trades({
         taskId: parseInt(id!),
@@ -88,14 +88,21 @@ const BacktestDetail: React.FC = () => {
     } catch (error) {
       console.error('Failed to fetch all trades for chart:', error)
     }
-  }
+  }, [id])
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
+  }, [])
 
   // 初始加载任务详情和交易记录
   useEffect(() => {
     fetchTaskDetail()
     fetchTrades(tradesPage)
     fetchAllTrades()  // 加载所有交易数据用于图表
-  }, [id])
+  }, [fetchAllTrades, fetchTaskDetail, fetchTrades, tradesPage])
 
   // 根据任务状态控制轮询
   useEffect(() => {
@@ -107,21 +114,14 @@ const BacktestDetail: React.FC = () => {
       const timer = setInterval(() => {
         fetchTaskDetail()
       }, 3000) // 每3秒轮询一次
-      setPolling(timer)
+      pollingRef.current = timer
     }
 
     // 组件卸载或状态变化时清理定时器
     return () => {
       stopPolling()
     }
-  }, [task?.status])
-
-  const stopPolling = () => {
-    if (polling) {
-      clearInterval(polling)
-      setPolling(null)
-    }
-  }
+  }, [fetchTaskDetail, stopPolling, task?.status])
 
   // 返回
   const handleBack = () => {
@@ -523,4 +523,3 @@ const BacktestDetail: React.FC = () => {
 }
 
 export default BacktestDetail
-

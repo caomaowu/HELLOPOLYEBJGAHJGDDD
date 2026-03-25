@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Card, Form, Button, Input, message, Typography, Space, Alert } from 'antd'
 import { SaveOutlined, LinkOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
@@ -15,11 +15,7 @@ const BuilderApiKeySettings: React.FC = () => {
   const [builderApiKeyConfig, setBuilderApiKeyConfig] = useState<SystemConfig | null>(null)
   const [builderApiKeyLoading, setBuilderApiKeyLoading] = useState(false)
   
-  useEffect(() => {
-    fetchBuilderApiKeyConfig()
-  }, [])
-  
-  const fetchBuilderApiKeyConfig = async () => {
+  const fetchBuilderApiKeyConfig = useCallback(async () => {
     try {
       const response = await apiService.systemConfig.get()
       if (response.data.code === 0 && response.data.data) {
@@ -37,7 +33,11 @@ const BuilderApiKeySettings: React.FC = () => {
     } catch (error: any) {
       message.error(error.message || t('builderApiKey.getFailed'))
     }
-  }
+  }, [builderApiKeyForm, t])
+
+  useEffect(() => {
+    fetchBuilderApiKeyConfig()
+  }, [fetchBuilderApiKeyConfig])
   
   const handleBuilderApiKeySubmit = async (values: BuilderApiKeyUpdateRequest) => {
     setBuilderApiKeyLoading(true)
@@ -169,4 +169,3 @@ const BuilderApiKeySettings: React.FC = () => {
 }
 
 export default BuilderApiKeySettings
-

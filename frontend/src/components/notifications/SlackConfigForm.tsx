@@ -8,7 +8,7 @@ interface SlackConfigFormProps {
 /**
  * Slack 配置表单组件
  */
-const SlackConfigForm: React.FC<SlackConfigFormProps> = ({ form: _form }) => {
+const SlackConfigForm: React.FC<SlackConfigFormProps> = () => {
   const { t } = useTranslation()
   
   return (
@@ -46,4 +46,3 @@ const SlackConfigForm: React.FC<SlackConfigFormProps> = ({ form: _form }) => {
 }
 
 export default SlackConfigForm
-

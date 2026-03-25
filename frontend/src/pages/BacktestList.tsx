@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { Key } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Table, Card, Button, Select, Tag, Space, Modal, message, Row, Col, Form, Input, InputNumber, Switch, Statistic, Descriptions } from 'antd'
@@ -115,7 +115,7 @@ const BacktestList: React.FC = () => {
   const [compareEventOnlyDiff, setCompareEventOnlyDiff] = useState(true)
 
   // 获取回测任务列表（silent 为 true 时不显示 loading，用于轮询刷新）
-  const fetchTasks = async (silent = false) => {
+  const fetchTasks = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
       const request: BacktestListRequest = {
@@ -139,7 +139,7 @@ const BacktestList: React.FC = () => {
     } finally {
       if (!silent) setLoading(false)
     }
-  }
+  }, [leaderIdFilter, page, size, sortBy, sortOrder, statusFilter, t])
 
   // 从 URL 读取 leaderId 并应用筛选（如从 Leader 管理页跳转过来）
   useEffect(() => {
@@ -152,7 +152,7 @@ const BacktestList: React.FC = () => {
 
   useEffect(() => {
     fetchTasks()
-  }, [page, statusFilter, leaderIdFilter, sortBy, sortOrder])
+  }, [fetchTasks])
 
   // 存在非终态任务（PENDING/RUNNING）时每 3s 轮询刷新进度
   const hasNonTerminalTask = tasks.some(
@@ -162,48 +162,9 @@ const BacktestList: React.FC = () => {
     if (!hasNonTerminalTask) return
     const timer = setInterval(() => fetchTasks(true), 3000)
     return () => clearInterval(timer)
-  }, [hasNonTerminalTask, page, statusFilter, leaderIdFilter, sortBy, sortOrder])
+  }, [fetchTasks, hasNonTerminalTask])
 
-  useEffect(() => {
-    if (!compareModalVisible || !compareResult || compareResult.list.length < 2) {
-      return
-    }
-    fetchCompareEventDiffs(compareResult.list.map(item => item.task.id))
-  }, [compareModalVisible, compareResult])
-
-  // 刷新
-  const handleRefresh = () => {
-    fetchTasks()
-  }
-
-  const handleCompareTasks = async () => {
-    if (selectedCompareTaskIds.length < 2) {
-      message.warning(t('backtest.compareSelectHint'))
-      return
-    }
-    setCompareLoading(true)
-    try {
-      const response = await backtestService.audit({ taskIds: selectedCompareTaskIds })
-      if (response.data.code === 0 && response.data.data) {
-        setCompareEventRows([])
-        setCompareEventStage(undefined)
-        setCompareEventDecision(undefined)
-        setCompareEventType('')
-        setCompareEventOnlyDiff(true)
-        setCompareResult(response.data.data.compare)
-        setCompareModalVisible(true)
-      } else {
-        message.error(response.data.msg || t('backtest.compareFailed'))
-      }
-    } catch (error) {
-      console.error('Failed to compare backtest tasks:', error)
-      message.error(t('backtest.compareFailed'))
-    } finally {
-      setCompareLoading(false)
-    }
-  }
-
-  const buildCompareEventRows = (
+  const buildCompareEventRows = useCallback((
     taskIds: number[],
     eventMap: Record<number, BacktestAuditEventDto[]>
   ): CompareEventDiffRow[] => {
@@ -245,9 +206,9 @@ const BacktestList: React.FC = () => {
       const rightMax = Math.max(...taskIds.map(taskId => right.byTask[taskId]?.latestAt || 0))
       return rightMax - leftMax
     })
-  }
+  }, [])
 
-  const fetchCompareEventDiffs = async (
+  const fetchCompareEventDiffs = useCallback(async (
     taskIds: number[],
     filters?: {
       stage?: string
@@ -264,13 +225,14 @@ const BacktestList: React.FC = () => {
     try {
       const responses = await Promise.all(
         taskIds.map(async taskId => {
+          const eventType = filters?.eventType?.trim() || undefined
           const response = await backtestService.auditEvents({
             taskId,
             page: 1,
             size: 200,
-            stage: filters?.stage ?? compareEventStage,
-            decision: filters?.decision ?? compareEventDecision,
-            eventType: filters?.eventType ?? (compareEventType.trim() || undefined)
+            stage: filters?.stage,
+            decision: filters?.decision,
+            eventType
           })
           if (response.data.code !== 0 || !response.data.data) {
             throw new Error(response.data.msg || `加载任务 ${taskId} 审计事件失败`)
@@ -288,6 +250,45 @@ const BacktestList: React.FC = () => {
       setCompareEventRows([])
     } finally {
       setCompareEventDiffLoading(false)
+    }
+  }, [buildCompareEventRows, t])
+
+  useEffect(() => {
+    if (!compareModalVisible || !compareResult || compareResult.list.length < 2) {
+      return
+    }
+    fetchCompareEventDiffs(compareResult.list.map(item => item.task.id))
+  }, [compareModalVisible, compareResult, fetchCompareEventDiffs])
+
+  // 刷新
+  const handleRefresh = () => {
+    fetchTasks()
+  }
+
+  const handleCompareTasks = async () => {
+    if (selectedCompareTaskIds.length < 2) {
+      message.warning(t('backtest.compareSelectHint'))
+      return
+    }
+    setCompareLoading(true)
+    try {
+      const response = await backtestService.audit({ taskIds: selectedCompareTaskIds })
+      if (response.data.code === 0 && response.data.data) {
+        setCompareEventRows([])
+        setCompareEventStage(undefined)
+        setCompareEventDecision(undefined)
+        setCompareEventType('')
+        setCompareEventOnlyDiff(true)
+        setCompareResult(response.data.data.compare)
+        setCompareModalVisible(true)
+      } else {
+        message.error(response.data.msg || t('backtest.compareFailed'))
+      }
+    } catch (error) {
+      console.error('Failed to compare backtest tasks:', error)
+      message.error(t('backtest.compareFailed'))
+    } finally {
+      setCompareLoading(false)
     }
   }
 
@@ -1330,7 +1331,11 @@ const BacktestList: React.FC = () => {
                   />
                   <Button
                     loading={compareEventDiffLoading}
-                    onClick={() => fetchCompareEventDiffs(compareTaskIds)}
+                    onClick={() => fetchCompareEventDiffs(compareTaskIds, {
+                      stage: compareEventStage,
+                      decision: compareEventDecision,
+                      eventType: compareEventType
+                    })}
                   >
                     {t('common.search')}
                   </Button>

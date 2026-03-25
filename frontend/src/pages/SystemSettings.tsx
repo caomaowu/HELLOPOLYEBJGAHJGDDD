@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Form, Button, Switch, Input, InputNumber, message, Typography, Space, Alert, Select, Table, Tag, Popconfirm, Modal } from 'antd'
 import { SaveOutlined, CheckCircleOutlined, ReloadOutlined, NotificationOutlined, KeyOutlined, LinkOutlined, PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
@@ -64,14 +64,8 @@ const SystemSettings: React.FC = () => {
   const [proxyCheckResult, setProxyCheckResult] = useState<ProxyCheckResponse | null>(null)
   const [currentProxyConfig, setCurrentProxyConfig] = useState<ProxyConfig | null>(null)
 
-  useEffect(() => {
-    fetchNotificationConfigs()
-    fetchSystemConfig()
-    fetchProxyConfig()
-  }, [])
-
   // ==================== 第一部分：消息推送设置 ====================
-  const fetchNotificationConfigs = async () => {
+  const fetchNotificationConfigs = useCallback(async () => {
     setNotificationLoading(true)
     try {
       const response = await apiService.notifications.list({ type: 'telegram' })
@@ -85,7 +79,7 @@ const SystemSettings: React.FC = () => {
     } finally {
       setNotificationLoading(false)
     }
-  }
+  }, [t])
 
   const handleNotificationCreate = () => {
     setEditingNotificationConfig(null)
@@ -310,7 +304,7 @@ const SystemSettings: React.FC = () => {
   ]
 
   // ==================== 第三部分：Relayer配置 ====================
-  const fetchSystemConfig = async () => {
+  const fetchSystemConfig = useCallback(async () => {
     try {
       const response = await apiService.systemConfig.get()
       if (response.data.code === 0 && response.data.data) {
@@ -329,7 +323,7 @@ const SystemSettings: React.FC = () => {
     } catch (error: any) {
       console.error('获取系统配置失败:', error)
     }
-  }
+  }, [autoRedeemForm, relayerForm])
 
   const handleRelayerSubmit = async (values: BuilderApiKeyUpdateRequest) => {
     setRelayerLoading(true)
@@ -384,7 +378,7 @@ const SystemSettings: React.FC = () => {
   }
 
   // ==================== 第四部分：代理设置 ====================
-  const fetchProxyConfig = async () => {
+  const fetchProxyConfig = useCallback(async () => {
     try {
       const response = await apiService.proxyConfig.get()
       if (response.data.code === 0) {
@@ -415,7 +409,13 @@ const SystemSettings: React.FC = () => {
     } catch (error: any) {
       message.error(error.message || '获取代理配置失败')
     }
-  }
+  }, [proxyForm])
+
+  useEffect(() => {
+    void fetchNotificationConfigs()
+    void fetchSystemConfig()
+    void fetchProxyConfig()
+  }, [fetchNotificationConfigs, fetchProxyConfig, fetchSystemConfig])
 
   const handleProxySubmit = async (values: any) => {
     setProxyLoading(true)
@@ -755,7 +755,7 @@ const SystemSettings: React.FC = () => {
             name="host"
             rules={[
               { required: true, message: t('proxySettings.hostRequired') || '请输入代理主机地址' },
-              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
+              { pattern: /^[\w.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
             ]}
           >
             <Input placeholder={t('proxySettings.hostPlaceholder') || '例如：127.0.0.1 或 proxy.example.com'} />

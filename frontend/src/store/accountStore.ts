@@ -122,16 +122,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
   },
   
   fetchAccountBalance: async (accountId) => {
-    try {
-      const response = await apiService.accounts.balance({ accountId })
-      if (response.data.code === 0 && response.data.data) {
-        return response.data.data
-      } else {
-        throw new Error(response.data.msg || '获取账户余额失败')
-      }
-    } catch (error: any) {
-      throw error
+    const response = await apiService.accounts.balance({ accountId })
+    if (response.data.code === 0 && response.data.data) {
+      return response.data.data
     }
+    throw new Error(response.data.msg || '获取账户余额失败')
   }
 }))
-

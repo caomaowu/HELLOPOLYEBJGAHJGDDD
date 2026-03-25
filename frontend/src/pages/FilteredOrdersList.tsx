@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Card, Table, Button, Tag, Select, Space, message, Divider, Spin } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
@@ -22,15 +22,9 @@ const FilteredOrdersList: React.FC = () => {
   const [limit] = useState(20)
   const [filterType, setFilterType] = useState<string | undefined>(undefined)
   
-  useEffect(() => {
-    if (id) {
-      fetchFilteredOrders()
-    }
-  }, [id, page, filterType])
-  
-  const fetchFilteredOrders = async () => {
+  const fetchFilteredOrders = useCallback(async () => {
     if (!id) return
-    
+
     setLoading(true)
     try {
       const response = await apiService.copyTrading.getFilteredOrders({
@@ -39,7 +33,7 @@ const FilteredOrdersList: React.FC = () => {
         page: page,
         limit: limit
       })
-      
+
       if (response.data.code === 0 && response.data.data) {
         const data: FilteredOrderListResponse = response.data.data
         setFilteredOrders(data.list || [])
@@ -53,7 +47,11 @@ const FilteredOrdersList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filterType, id, limit, page, t])
+
+  useEffect(() => {
+    void fetchFilteredOrders()
+  }, [fetchFilteredOrders])
   
   const getFilterTypeTag = (type: string) => {
     const typeMap: Record<string, { color: string; label: string }> = {
@@ -413,4 +411,3 @@ const FilteredOrdersList: React.FC = () => {
 }
 
 export default FilteredOrdersList
-

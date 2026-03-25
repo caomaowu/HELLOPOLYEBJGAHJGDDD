@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Key } from 'react'
 import {
   Alert,
@@ -186,6 +186,12 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
   const [selectedPoolAddresses, setSelectedPoolAddresses] = useState<string[]>([])
   const [batchTagModalOpen, setBatchTagModalOpen] = useState(false)
   const [batchTagDraft, setBatchTagDraft] = useState('')
+  const poolQueryRef = useRef({
+    page: 1,
+    lowRiskOnly: false,
+    favoriteOnly: false,
+    includeBlacklisted: false
+  })
 
   const [noteModalOpen, setNoteModalOpen] = useState(false)
   const [editingCandidate, setEditingCandidate] = useState<LeaderCandidatePoolItem | null>(null)
@@ -211,12 +217,6 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     }
   }, [open, leaders, selectedLeaderIds.length, seedAddressInput])
 
-  useEffect(() => {
-    if (open) {
-      handleLoadPool(1, poolLowRiskOnly, poolFavoriteOnly, poolIncludeBlacklisted)
-    }
-  }, [open])
-
   const buildBasePayload = () => ({
     leaderIds: selectedLeaderIds,
     seedAddresses: parseMultilineValues(seedAddressInput),
@@ -232,6 +232,15 @@ const LeaderDiscoveryModal: React.FC<LeaderDiscoveryModalProps> = ({
     includeTags: parseMultilineValues(discoveryIncludeTagsInput),
     excludeTags: parseMultilineValues(discoveryExcludeTagsInput)
   })
+
+  useEffect(() => {
+    poolQueryRef.current = {
+      page: poolPage,
+      lowRiskOnly: poolLowRiskOnly,
+      favoriteOnly: poolFavoriteOnly,
+      includeBlacklisted: poolIncludeBlacklisted
+    }
+  }, [poolPage, poolLowRiskOnly, poolFavoriteOnly, poolIncludeBlacklisted])
 
   const translateMarketScanMode = (mode?: string | null) =>
     mode ? t(`leaderDiscovery.scanModeOptions.${mode}`, { defaultValue: mode }) : '-'
@@ -454,11 +463,11 @@ const renderManualLabels = (
     }
   }
 
-  const handleLoadPool = async (
-    page = poolPage,
-    lowRisk = poolLowRiskOnly,
-    favoriteOnly = poolFavoriteOnly,
-    includeBlacklisted = poolIncludeBlacklisted
+  const handleLoadPool = useCallback(async (
+    page = poolQueryRef.current.page,
+    lowRisk = poolQueryRef.current.lowRiskOnly,
+    favoriteOnly = poolQueryRef.current.favoriteOnly,
+    includeBlacklisted = poolQueryRef.current.includeBlacklisted
   ) => {
     setPoolLoading(true)
     try {
@@ -483,7 +492,13 @@ const renderManualLabels = (
     } finally {
       setPoolLoading(false)
     }
-  }
+  }, [t])
+
+  useEffect(() => {
+    if (open) {
+      void handleLoadPool(1)
+    }
+  }, [open, handleLoadPool])
 
   const handleUpdateLabels = async (
     address: string,

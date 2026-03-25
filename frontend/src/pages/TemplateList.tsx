@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, Input, Modal, Form, Radio, InputNumber, Switch, Divider, Spin, Select } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
@@ -76,13 +76,9 @@ const TemplateList: React.FC = () => {
   const [copyLoading, setCopyLoading] = useState(false)
   const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
   const [copyMultiplierMode, setCopyMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
-  const [_sourceTemplate, setSourceTemplate] = useState<CopyTradingTemplate | null>(null) // 用于跟踪复制的源模板
+  const [, setSourceTemplate] = useState<CopyTradingTemplate | null>(null) // 用于跟踪复制的源模板
   
-  useEffect(() => {
-    fetchTemplates()
-  }, [])
-  
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     setLoading(true)
     try {
       const response = await apiService.templates.list()
@@ -96,7 +92,11 @@ const TemplateList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
+
+  useEffect(() => {
+    void fetchTemplates()
+  }, [fetchTemplates])
   
   const handleDelete = async (templateId: number) => {
     try {
@@ -1153,4 +1153,3 @@ const TemplateList: React.FC = () => {
 }
 
 export default TemplateList
-

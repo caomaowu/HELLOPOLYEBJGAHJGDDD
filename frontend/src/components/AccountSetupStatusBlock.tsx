@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { Card, Steps, Button, Space, Tag, Spin, Typography, message } from 'antd'
 import {
   CheckCircleOutlined,
@@ -70,7 +70,7 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
   const [refreshing, setRefreshing] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     if (accountId <= 0) return
     try {
       const response = await apiService.accounts.checkSetupStatus(accountId)
@@ -86,12 +86,12 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [accountId])
 
   useEffect(() => {
     setLoading(true)
-    fetchStatus()
-  }, [accountId])
+    void fetchStatus()
+  }, [accountId, fetchStatus])
 
   // 每 5 秒轮询最新状态（首次加载完成后且存在未完成步骤时轮询，全部完成后停止）
   useEffect(() => {
@@ -102,10 +102,10 @@ const AccountSetupStatusBlock: React.FC<AccountSetupStatusBlockProps> = ({
       setupStatus.tokensApproved
     if (allCompleted) return
     const timer = setInterval(() => {
-      fetchStatus()
+      void fetchStatus()
     }, 5000)
     return () => clearInterval(timer)
-  }, [accountId, setupStatus?.proxyDeployed, setupStatus?.tradingEnabled, setupStatus?.tokensApproved])
+  }, [accountId, fetchStatus, setupStatus, setupStatus?.proxyDeployed, setupStatus?.tradingEnabled, setupStatus?.tokensApproved])
 
   // 全部完成时通知父组件（供弹窗等关闭或更新用）
   const allCompleted =

@@ -93,8 +93,9 @@ const CryptoTailMonitor: React.FC = () => {
         if (res.data.code === 0 && res.data.data) {
           setStrategies(res.data.data.list ?? [])
           // 自动选择第一个策略
-          if (res.data.data.list?.length > 0 && !selectedStrategyId) {
-            setSelectedStrategyId(res.data.data.list[0].id)
+          if (res.data.data.list?.length > 0) {
+            const firstId = res.data.data.list[0].id
+            setSelectedStrategyId((prev) => prev ?? firstId)
           }
         }
       } catch (e) {

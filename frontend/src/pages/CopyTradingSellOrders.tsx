@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Tag, Select, Input, message, Divider, Spin } from 'antd'
 import { LeftOutlined } from '@ant-design/icons'
@@ -25,13 +25,7 @@ const CopyTradingSellOrdersPage: React.FC = () => {
     side?: string
   }>({})
   
-  useEffect(() => {
-    if (copyTradingId) {
-      fetchOrders()
-    }
-  }, [copyTradingId, page, limit, filters])
-  
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     if (!copyTradingId) return
     
     setLoading(true)
@@ -57,7 +51,13 @@ const CopyTradingSellOrdersPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [copyTradingId, page, limit, filters])
+
+  useEffect(() => {
+    if (copyTradingId) {
+      fetchOrders()
+    }
+  }, [copyTradingId, fetchOrders])
   
   const getPnlColor = (value: string): string => {
     const num = parseFloat(value)
@@ -347,4 +347,3 @@ const CopyTradingSellOrdersPage: React.FC = () => {
 }
 
 export default CopyTradingSellOrdersPage
-

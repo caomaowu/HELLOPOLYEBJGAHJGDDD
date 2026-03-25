@@ -197,7 +197,7 @@ const AccountImportForm: React.FC<AccountImportFormProps> = ({
     setSelectedProxyType('')
     setStep('input')
     form.setFieldsValue({ walletAddress: '', privateKey: '', mnemonic: '' })
-  }, [importType])
+  }, [importType, form])
   
   const handleSubmit = async (values: any) => {
     try {

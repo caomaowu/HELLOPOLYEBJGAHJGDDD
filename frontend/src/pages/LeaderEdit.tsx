@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Form, Input, Button, message, Typography, Space, Spin } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
@@ -19,16 +19,7 @@ const LeaderEdit: React.FC = () => {
   const [fetching, setFetching] = useState(true)
   const leaderId = searchParams.get('id')
   
-  useEffect(() => {
-    if (leaderId) {
-      fetchLeaderDetail(parseInt(leaderId))
-    } else {
-      message.error(t('leaderEdit.invalidId') || 'Leader ID 无效')
-      navigate('/leaders')
-    }
-  }, [leaderId, navigate])
-  
-  const fetchLeaderDetail = async (id: number) => {
+  const fetchLeaderDetail = useCallback(async (id: number) => {
     setFetching(true)
     try {
       const response = await apiService.leaders.detail({ leaderId: id })
@@ -49,7 +40,16 @@ const LeaderEdit: React.FC = () => {
     } finally {
       setFetching(false)
     }
-  }
+  }, [form, navigate, t])
+
+  useEffect(() => {
+    if (leaderId) {
+      void fetchLeaderDetail(parseInt(leaderId))
+    } else {
+      message.error(t('leaderEdit.invalidId') || 'Leader ID 无效')
+      navigate('/leaders')
+    }
+  }, [leaderId, fetchLeaderDetail, navigate, t])
   
   const handleSubmit = async (values: any) => {
     if (!leaderId) {
@@ -164,4 +164,3 @@ const LeaderEdit: React.FC = () => {
 }
 
 export default LeaderEdit
-

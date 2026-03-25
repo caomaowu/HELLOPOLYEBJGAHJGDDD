@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button, Card, Divider, Modal, Select, Spin, Table, Tag } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from 'react-responsive'
@@ -15,6 +15,13 @@ const { Option } = Select
 const latencyMetricOptions = [
   { value: 'marketMetaResolveMs', label: '元数据耗时' },
   { value: 'filterEvaluateMs', label: '过滤耗时' },
+  { value: 'diagnosticsMs', label: '执行前诊断耗时' },
+  { value: 'orderbookFetchMs', label: '订单簿获取耗时' },
+  { value: 'apiSecretDecryptMs', label: 'API Secret 解密耗时' },
+  { value: 'apiPassphraseDecryptMs', label: 'API Passphrase 解密耗时' },
+  { value: 'privateKeyDecryptMs', label: '私钥解密耗时' },
+  { value: 'feeRateFetchMs', label: '费率获取耗时' },
+  { value: 'negRiskResolveMs', label: 'Neg Risk 判断耗时' },
   { value: 'sourceToProcessMs', label: '接收到处理' },
   { value: 'processToOrderRequestMs', label: '处理到下单' },
   { value: 'orderCreateDurationMs', label: '下单耗时' },
@@ -141,21 +148,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     ORDER_FAILED: { color: 'red', text: t('copyTradingOrders.executionEventTypes.orderFailed') || '订单失败' }
   }
 
-  useEffect(() => {
-    if (open && copyTradingId) {
-      fetchExecutionEvents()
-    }
-  }, [open, copyTradingId, page, stage, source, latencyMetric, minLatencyMs])
-
-  useEffect(() => {
-    if (open && copyTradingId) {
-      fetchAggregationSnapshot()
-    } else if (!open) {
-      setAggregationSnapshot(null)
-    }
-  }, [open, copyTradingId])
-
-  const fetchExecutionEvents = async () => {
+  const fetchExecutionEvents = useCallback(async () => {
     if (!copyTradingId) return
     setLoading(true)
     try {
@@ -178,9 +171,9 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [copyTradingId, latencyMetric, limit, minLatencyMs, page, source, stage])
 
-  const fetchAggregationSnapshot = async () => {
+  const fetchAggregationSnapshot = useCallback(async () => {
     if (!copyTradingId) return
     setSnapshotLoading(true)
     try {
@@ -198,7 +191,21 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     } finally {
       setSnapshotLoading(false)
     }
-  }
+  }, [copyTradingId])
+
+  useEffect(() => {
+    if (open && copyTradingId) {
+      fetchExecutionEvents()
+    }
+  }, [copyTradingId, fetchExecutionEvents, open])
+
+  useEffect(() => {
+    if (open && copyTradingId) {
+      fetchAggregationSnapshot()
+    } else if (!open) {
+      setAggregationSnapshot(null)
+    }
+  }, [copyTradingId, fetchAggregationSnapshot, open])
 
   const renderStage = (value: string) => {
     const config = stageMap[value] || { color: 'default', text: value }
@@ -284,6 +291,10 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
 
     const marketMetaResolveMs = toNumberValue(detailPayload.marketMetaResolveMs)
     const filterEvaluateMs = toNumberValue(detailPayload.filterEvaluateMs)
+    const diagnosticsMs = toNumberValue(detailPayload.diagnosticsMs)
+    const orderbookFetchMs = toNumberValue(detailPayload.orderbookFetchMs)
+    const feeRateFetchMs = toNumberValue(detailPayload.feeRateFetchMs)
+    const negRiskResolveMs = toNumberValue(detailPayload.negRiskResolveMs)
     const sourceToProcessMs = toNumberValue(detailPayload.sourceToProcessMs)
     const processToOrderRequestMs = toNumberValue(detailPayload.processToOrderRequestMs)
     const orderCreateDurationMs = toNumberValue(detailPayload.orderCreateDurationMs)
@@ -293,6 +304,10 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     const items = [
       marketMetaResolveMs != null ? `元数据 ${marketMetaResolveMs}ms` : null,
       filterEvaluateMs != null ? `过滤 ${filterEvaluateMs}ms` : null,
+      diagnosticsMs != null ? `诊断 ${diagnosticsMs}ms` : null,
+      orderbookFetchMs != null ? `订单簿 ${orderbookFetchMs}ms` : null,
+      feeRateFetchMs != null ? `费率 ${feeRateFetchMs}ms` : null,
+      negRiskResolveMs != null ? `NegRisk ${negRiskResolveMs}ms` : null,
       sourceToProcessMs != null ? `接收到处理 ${sourceToProcessMs}ms` : null,
       processToOrderRequestMs != null ? `处理到下单 ${processToOrderRequestMs}ms` : null,
       orderCreateDurationMs != null ? `下单耗时 ${orderCreateDurationMs}ms` : null,
@@ -474,10 +489,14 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
 
         const marketMetaResolveMs = toNumberValue(detailPayload.marketMetaResolveMs)
         const filterEvaluateMs = toNumberValue(detailPayload.filterEvaluateMs)
+        const diagnosticsMs = toNumberValue(detailPayload.diagnosticsMs)
+        const processToOrderRequestMs = toNumberValue(detailPayload.processToOrderRequestMs)
         const sourceToOrderCompleteMs = toNumberValue(detailPayload.sourceToOrderCompleteMs)
         const parts = [
           marketMetaResolveMs != null ? `元数据 ${marketMetaResolveMs}ms` : null,
           filterEvaluateMs != null ? `过滤 ${filterEvaluateMs}ms` : null,
+          diagnosticsMs != null ? `诊断 ${diagnosticsMs}ms` : null,
+          processToOrderRequestMs != null ? `处理 ${processToOrderRequestMs}ms` : null,
           sourceToOrderCompleteMs != null ? `总 ${sourceToOrderCompleteMs}ms` : null
         ].filter(Boolean)
 

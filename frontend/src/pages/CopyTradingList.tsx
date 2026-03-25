@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, Switch, message, Select, Dropdown, Divider, Spin } from 'antd'
 import { PlusOutlined, DeleteOutlined, BarChartOutlined, UnorderedListOutlined, ArrowUpOutlined, ArrowDownOutlined, EditOutlined } from '@ant-design/icons'
@@ -55,6 +55,8 @@ const CopyTradingList: React.FC = () => {
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editModalCopyTradingId, setEditModalCopyTradingId] = useState<string>('')
   const [addModalOpen, setAddModalOpen] = useState(false)
+  const loadingStatisticsRef = useRef(loadingStatistics)
+  const statisticsMapRef = useRef(statisticsMap)
   
   // 从 URL 读取 leaderId 并应用筛选（如从 Leader 管理页跳转过来）
   useEffect(() => {
@@ -68,16 +70,14 @@ const CopyTradingList: React.FC = () => {
   }, [searchParams])
 
   useEffect(() => {
-    fetchAccounts()
-    fetchLeaders()
-    fetchCopyTradings()
-  }, [])
+    loadingStatisticsRef.current = loadingStatistics
+  }, [loadingStatistics])
 
   useEffect(() => {
-    fetchCopyTradings()
-  }, [filters])
-  
-  const fetchLeaders = async () => {
+    statisticsMapRef.current = statisticsMap
+  }, [statisticsMap])
+
+  const fetchLeaders = useCallback(async () => {
     try {
       const response = await apiService.leaders.list({})
       if (response.data.code === 0 && response.data.data) {
@@ -86,35 +86,14 @@ const CopyTradingList: React.FC = () => {
     } catch (error: any) {
       console.error('获取 Leader 列表失败:', error)
     }
-  }
-  
-  const fetchCopyTradings = async () => {
-    setLoading(true)
-    try {
-      const response = await apiService.copyTrading.list(filters)
-      if (response.data.code === 0 && response.data.data) {
-        const list = response.data.data.list || []
-        setCopyTradings(list)
-        // 为每个跟单关系获取统计信息
-        list.forEach((ct: CopyTrading) => {
-          fetchStatistics(ct.id)
-        })
-      } else {
-        message.error(response.data.msg || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
-      }
-    } catch (error: any) {
-      message.error(error.message || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  const fetchStatistics = async (copyTradingId: number) => {
+  }, [])
+
+  const fetchStatistics = useCallback(async (copyTradingId: number) => {
     // 如果正在加载或已有数据，跳过
-    if (loadingStatistics.has(copyTradingId) || statisticsMap[copyTradingId]) {
+    if (loadingStatisticsRef.current.has(copyTradingId) || statisticsMapRef.current[copyTradingId]) {
       return
     }
-    
+
     setLoadingStatistics(prev => new Set(prev).add(copyTradingId))
     try {
       const response = await apiService.statistics.detail({ copyTradingId })
@@ -133,7 +112,37 @@ const CopyTradingList: React.FC = () => {
         return next
       })
     }
-  }
+  }, [])
+
+  const fetchCopyTradings = useCallback(async () => {
+    setLoading(true)
+    try {
+      const response = await apiService.copyTrading.list(filters)
+      if (response.data.code === 0 && response.data.data) {
+        const list = response.data.data.list || []
+        setCopyTradings(list)
+        // 为每个跟单关系获取统计信息
+        list.forEach((ct: CopyTrading) => {
+          void fetchStatistics(ct.id)
+        })
+      } else {
+        message.error(response.data.msg || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
+      }
+    } catch (error: any) {
+      message.error(error.message || t('copyTradingList.fetchFailed') || '获取跟单列表失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [fetchStatistics, filters, t])
+
+  useEffect(() => {
+    fetchAccounts()
+    fetchLeaders()
+  }, [fetchAccounts, fetchLeaders])
+
+  useEffect(() => {
+    fetchCopyTradings()
+  }, [fetchCopyTradings])
   
   const getPnlColor = (value: string): string => {
     const num = parseFloat(value)
@@ -822,4 +831,3 @@ const CopyTradingList: React.FC = () => {
 }
 
 export default CopyTradingList
-

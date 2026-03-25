@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Card, Table, Tag, message, Space, Input, Radio, Select, Button, Row, Col, Empty, Modal, Form, Descriptions } from 'antd'
 import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
@@ -62,20 +62,13 @@ const PositionList: React.FC = () => {
     }
   }, [])
 
-  // 当仓位数据变化时，静默更新可赎回统计（不显示loading状态）
-  useEffect(() => {
-    if (currentPositions.length > 0) {
-      fetchRedeemableSummarySilently()
-    }
-  }, [currentPositions, selectedAccountId])
-
   // 当筛选条件或搜索关键词变化时，重置分页到第一页
   useEffect(() => {
     setCurrentPage(1)
   }, [positionFilter, selectedAccountId, searchKeyword])
 
   // 静默获取可赎回仓位统计（不显示loading状态）
-  const fetchRedeemableSummarySilently = async () => {
+  const fetchRedeemableSummarySilently = useCallback(async () => {
     try {
       const response = await apiService.accounts.getRedeemableSummary({ accountId: selectedAccountId })
       if (response.data.code === 0 && response.data.data) {
@@ -84,10 +77,10 @@ const PositionList: React.FC = () => {
     } catch (error: any) {
       console.error('获取可赎回统计失败:', error)
     }
-  }
+  }, [selectedAccountId])
 
   // 获取可赎回仓位统计（带loading状态，用于用户主动操作）
-  const fetchRedeemableSummary = async () => {
+  const fetchRedeemableSummary = useCallback(async () => {
     setLoadingRedeemableSummary(true)
     try {
       const response = await apiService.accounts.getRedeemableSummary({ accountId: selectedAccountId })
@@ -99,7 +92,13 @@ const PositionList: React.FC = () => {
     } finally {
       setLoadingRedeemableSummary(false)
     }
-  }
+  }, [selectedAccountId])
+
+  useEffect(() => {
+    if (currentPositions.length > 0) {
+      fetchRedeemableSummarySilently()
+    }
+  }, [currentPositions, selectedAccountId, fetchRedeemableSummarySilently])
 
   // 处理赎回按钮点击
   const handleRedeemClick = async () => {
@@ -427,7 +426,7 @@ const PositionList: React.FC = () => {
   }
 
   // 处理卖出按钮点击
-  const handleSellClick = async (position: AccountPosition) => {
+  const handleSellClick = useCallback(async (position: AccountPosition) => {
     setSelectedPosition(position)
     setSellModalVisible(true)
     setOrderType('LIMIT')
@@ -453,7 +452,7 @@ const PositionList: React.FC = () => {
     } catch (error: any) {
       message.error('获取市场价格失败: ' + (error.message || '未知错误'))
     }
-  }
+  }, [form])
 
   // 处理数量快捷按钮
   const handleQuantityQuickSelect = (percent: number) => {
@@ -473,7 +472,7 @@ const PositionList: React.FC = () => {
   }
 
   // 计算平仓收益
-  const calculatePnl = (quantity: string, price: string) => {
+  const calculatePnl = useCallback((quantity: string, price: string) => {
     if (!selectedPosition || !quantity || !price) return { pnl: 0, percentPnl: 0 }
 
     const avgPrice = parseFloat(selectedPosition.avgPrice || '0')
@@ -491,16 +490,16 @@ const PositionList: React.FC = () => {
     const percentPnl = ((sellPrice - avgPrice) / avgPrice) * 100
 
     return { pnl, percentPnl }
-  }
+  }, [selectedPosition])
 
   // 获取当前卖出价格（市价或限价）
-  const getCurrentSellPrice = (): string => {
+  const getCurrentSellPrice = useCallback((): string => {
     if (orderType === 'MARKET') {
       // 市价订单（卖出）：使用当前价格
       return marketPrice?.currentPrice || selectedPosition?.currentPrice || '0'
     }
     return limitPrice || '0'
-  }
+  }, [orderType, marketPrice, selectedPosition, limitPrice])
 
   // 提交卖出订单
   const handleSellSubmit = async () => {
@@ -557,7 +556,7 @@ const PositionList: React.FC = () => {
     const price = getCurrentSellPrice()
     if (!price || price === '0') return { pnl: 0, percentPnl: 0 }
     return calculatePnl(sellQuantity, price)
-  }, [selectedPosition, sellQuantity, orderType, limitPrice, marketPrice])
+  }, [selectedPosition, sellQuantity, calculatePnl, getCurrentSellPrice])
 
   // 渲染卡片视图
   const renderCardView = () => {
@@ -1090,7 +1089,7 @@ const PositionList: React.FC = () => {
     }
 
     return baseColumns
-  }, [positionFilter, isMobile])
+  }, [positionFilter, isMobile, handleSellClick])
 
   // 统计当前和历史仓位数量（根据账户筛选）
   const filteredCurrentPositions = useMemo(() => {
@@ -1728,4 +1727,3 @@ const PositionList: React.FC = () => {
 }
 
 export default PositionList
-

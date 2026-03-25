@@ -33,6 +33,7 @@ import org.springframework.context.ApplicationContextAware
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.io.IOException
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,7 +54,14 @@ data class TradeProcessingLatencyContext(
     val leaderTradeTimestamp: Long? = null,
     val marketMetaResolveMs: Long? = null,
     val marketMetaSource: String? = null,
-    val filterEvaluateMs: Long? = null
+    val filterEvaluateMs: Long? = null,
+    val diagnosticsMs: Long? = null,
+    val orderbookFetchMs: Long? = null,
+    val apiSecretDecryptMs: Long? = null,
+    val apiPassphraseDecryptMs: Long? = null,
+    val privateKeyDecryptMs: Long? = null,
+    val feeRateFetchMs: Long? = null,
+    val negRiskResolveMs: Long? = null
 )
 
 /**
@@ -112,7 +120,23 @@ open class CopyOrderTrackingService(
     // 订单创建重试配置
     companion object {
         private const val MAX_RETRY_ATTEMPTS = 2  // 最多重试次数（首次 + 1次重试）
-        private const val RETRY_DELAY_MS = 3000L  // 重试前等待时间（毫秒，3秒）
+        // FAK 下单属于低时延场景：重试等待应尽量短，避免因固定长等待导致错过盘口。
+        private const val RETRY_DELAY_SHORT_MS = 180L
+        private const val RETRY_DELAY_MEDIUM_MS = 420L
+        private const val RETRY_DELAY_LONG_MS = 850L
+        private val RETRYABLE_HTTP_STATUS_CODES = setOf(408, 409, 425, 429)
+        private val NON_RETRYABLE_ORDER_ERROR_MARKERS = listOf(
+            "no orders found to match with fak order",
+            "fak orders are partially filled or killed if no match is found",
+            "not enough balance / allowance",
+            "not enough balance",
+            "insufficient balance",
+            "insufficient allowance",
+            "invalid signature",
+            "signer 与账户 walletaddress 不一致",
+            "signer does not match",
+            "maker and signer"
+        )
     }
 
     private val aggregationFlushRunning = AtomicBoolean(false)
@@ -1000,7 +1024,15 @@ open class CopyOrderTrackingService(
             return Result.success(Unit)
         }
 
-        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = false)
+        val diagnosticsStartedAt = System.currentTimeMillis()
+        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccountForExecutionHotPath(account)
+        val diagnosticsMs = (System.currentTimeMillis() - diagnosticsStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            diagnosticsMs = diagnosticsMs
+        )
         if (!diagnostics.executionReady) {
             val diagnosticsReason = buildDiagnosticsFailureReason(diagnostics)
             recordFilteredBuyPayloadAsync(
@@ -1040,10 +1072,22 @@ open class CopyOrderTrackingService(
         }
 
         val buyPrice = calculateAdjustedPrice(payload.tradePrice, copyTrading, isBuy = true)
+        val orderbookFetchStartedAt = System.currentTimeMillis()
         val orderbookForCheck = orderbook ?: run {
             val orderbookResult = clobService.getOrderbookByTokenId(payload.tokenId)
             if (orderbookResult.isSuccess) orderbookResult.getOrNull() else null
         }
+        val orderbookFetchMs = if (orderbook != null) {
+            0L
+        } else {
+            (System.currentTimeMillis() - orderbookFetchStartedAt).coerceAtLeast(0)
+        }
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            orderbookFetchMs = orderbookFetchMs
+        )
         if (orderbookForCheck != null) {
             val bestAsk = orderbookForCheck.asks.mapNotNull { it.price.toSafeBigDecimal() }.minOrNull()
             if (bestAsk == null) {
@@ -1094,6 +1138,7 @@ open class CopyOrderTrackingService(
             }
         }
 
+        val apiSecretDecryptStartedAt = System.currentTimeMillis()
         val apiSecret = try {
             decryptApiSecret(account)
         } catch (e: Exception) {
@@ -1118,6 +1163,15 @@ open class CopyOrderTrackingService(
             )
             return Result.success(Unit)
         }
+        val apiSecretDecryptMs = (System.currentTimeMillis() - apiSecretDecryptStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            apiSecretDecryptMs = apiSecretDecryptMs
+        )
+
+        val apiPassphraseDecryptStartedAt = System.currentTimeMillis()
         val apiPassphrase = try {
             decryptApiPassphrase(account)
         } catch (e: Exception) {
@@ -1142,10 +1196,53 @@ open class CopyOrderTrackingService(
             )
             return Result.success(Unit)
         }
+        val apiPassphraseDecryptMs = (System.currentTimeMillis() - apiPassphraseDecryptStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = payload.representativeTradeId,
+            source = payload.source,
+            apiPassphraseDecryptMs = apiPassphraseDecryptMs
+        )
 
-        val clobApi = retrofitFactory.createClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
-        val decryptedPrivateKey = decryptPrivateKey(account)
-        val feeRateResult = clobService.getFeeRate(payload.tokenId)
+        val clobApi = retrofitFactory.createOrderClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
+        val (decryptedPrivateKey, feeRateResult, negRisk) = coroutineScope {
+            val feeRateDeferred = async(Dispatchers.IO) {
+                val feeRateFetchStartedAt = System.currentTimeMillis()
+                val result = clobService.getFeeRate(payload.tokenId)
+                val feeRateFetchMs = (System.currentTimeMillis() - feeRateFetchStartedAt).coerceAtLeast(0)
+                updateTradeLatencyContext(
+                    leaderId = copyTrading.leaderId,
+                    tradeId = payload.representativeTradeId,
+                    source = payload.source,
+                    feeRateFetchMs = feeRateFetchMs
+                )
+                result
+            }
+            val negRiskDeferred = async(Dispatchers.IO) {
+                val negRiskResolveStartedAt = System.currentTimeMillis()
+                val result = marketService.getNegRiskByConditionId(payload.marketId) == true
+                val negRiskResolveMs = (System.currentTimeMillis() - negRiskResolveStartedAt).coerceAtLeast(0)
+                updateTradeLatencyContext(
+                    leaderId = copyTrading.leaderId,
+                    tradeId = payload.representativeTradeId,
+                    source = payload.source,
+                    negRiskResolveMs = negRiskResolveMs
+                )
+                result
+            }
+
+            val privateKeyDecryptStartedAt = System.currentTimeMillis()
+            val privateKey = decryptPrivateKey(account)
+            val privateKeyDecryptMs = (System.currentTimeMillis() - privateKeyDecryptStartedAt).coerceAtLeast(0)
+            updateTradeLatencyContext(
+                leaderId = copyTrading.leaderId,
+                tradeId = payload.representativeTradeId,
+                source = payload.source,
+                privateKeyDecryptMs = privateKeyDecryptMs
+            )
+
+            Triple(privateKey, feeRateDeferred.await(), negRiskDeferred.await())
+        }
         val feeRateBps = if (feeRateResult.isSuccess) {
             feeRateResult.getOrNull()?.toString() ?: "0"
         } else {
@@ -1179,7 +1276,6 @@ open class CopyOrderTrackingService(
             orderCreateRequestedAt = orderCreateRequestedAt
         )
 
-        val negRisk = marketService.getNegRiskByConditionId(payload.marketId) == true
         val exchangeContract = orderSigningService.getExchangeContract(negRisk)
         if (negRisk) logger.debug("市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=${payload.marketId}")
 
@@ -1591,14 +1687,28 @@ open class CopyOrderTrackingService(
         source: String,
         marketMetaResolveMs: Long? = null,
         marketMetaSource: String? = null,
-        filterEvaluateMs: Long? = null
+        filterEvaluateMs: Long? = null,
+        diagnosticsMs: Long? = null,
+        orderbookFetchMs: Long? = null,
+        apiSecretDecryptMs: Long? = null,
+        apiPassphraseDecryptMs: Long? = null,
+        privateKeyDecryptMs: Long? = null,
+        feeRateFetchMs: Long? = null,
+        negRiskResolveMs: Long? = null
     ) {
         val key = buildTradeLatencyKey(leaderId, tradeId, source)
         tradeLatencyContextMap.computeIfPresent(key) { _, context ->
             context.copy(
                 marketMetaResolveMs = marketMetaResolveMs ?: context.marketMetaResolveMs,
                 marketMetaSource = marketMetaSource ?: context.marketMetaSource,
-                filterEvaluateMs = filterEvaluateMs ?: context.filterEvaluateMs
+                filterEvaluateMs = filterEvaluateMs ?: context.filterEvaluateMs,
+                diagnosticsMs = diagnosticsMs ?: context.diagnosticsMs,
+                orderbookFetchMs = orderbookFetchMs ?: context.orderbookFetchMs,
+                apiSecretDecryptMs = apiSecretDecryptMs ?: context.apiSecretDecryptMs,
+                apiPassphraseDecryptMs = apiPassphraseDecryptMs ?: context.apiPassphraseDecryptMs,
+                privateKeyDecryptMs = privateKeyDecryptMs ?: context.privateKeyDecryptMs,
+                feeRateFetchMs = feeRateFetchMs ?: context.feeRateFetchMs,
+                negRiskResolveMs = negRiskResolveMs ?: context.negRiskResolveMs
             )
         }
     }
@@ -1630,6 +1740,13 @@ open class CopyOrderTrackingService(
         context.marketMetaResolveMs?.let { detail["marketMetaResolveMs"] = it }
         context.marketMetaSource?.let { detail["marketMetaSource"] = it }
         context.filterEvaluateMs?.let { detail["filterEvaluateMs"] = it }
+        context.diagnosticsMs?.let { detail["diagnosticsMs"] = it }
+        context.orderbookFetchMs?.let { detail["orderbookFetchMs"] = it }
+        context.apiSecretDecryptMs?.let { detail["apiSecretDecryptMs"] = it }
+        context.apiPassphraseDecryptMs?.let { detail["apiPassphraseDecryptMs"] = it }
+        context.privateKeyDecryptMs?.let { detail["privateKeyDecryptMs"] = it }
+        context.feeRateFetchMs?.let { detail["feeRateFetchMs"] = it }
+        context.negRiskResolveMs?.let { detail["negRiskResolveMs"] = it }
         orderCreateRequestedAt?.let {
             detail["orderCreateRequestedAt"] = it
             detail["processToOrderRequestMs"] = it - context.processTradeStartedAt
@@ -2029,13 +2146,20 @@ open class CopyOrderTrackingService(
         // 5. 计算卖出价格（优先使用订单簿 bestBid，失败则使用 Leader 价格，固定按90%计算）
         // 注意：需要先计算卖出价格，因为后续创建 matchDetails 需要使用实际卖出价格
         val leaderPrice = leaderSellTrade.price.toSafeBigDecimal()
-        val sellPrice = runCatching {
-            clobService.getOrderbookByTokenId(tokenId)
-                .getOrNull()
-                ?.let { calculateMarketSellPrice(it) }
+        val orderbookFetchStartedAt = System.currentTimeMillis()
+        val orderbookForSell = runCatching {
+            clobService.getOrderbookByTokenId(tokenId).getOrNull()
         }
             .onFailure { e -> logger.warn("获取订单簿或计算 bestBid 失败，使用 Leader 价格: tokenId=$tokenId, error=${e.message}") }
             .getOrNull()
+        val orderbookFetchMs = (System.currentTimeMillis() - orderbookFetchStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = leaderSellTrade.id,
+            source = source,
+            orderbookFetchMs = orderbookFetchMs
+        )
+        val sellPrice = orderbookForSell?.let { calculateMarketSellPrice(it) }
             ?: calculateFallbackSellPrice(leaderPrice)
 
         // 6. 按FIFO顺序匹配，计算实际可以卖出的数量
@@ -2091,7 +2215,15 @@ open class CopyOrderTrackingService(
             return
         }
 
-        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = false)
+        val diagnosticsStartedAt = System.currentTimeMillis()
+        val diagnostics = accountExecutionDiagnosticsService.diagnoseAccountForExecutionHotPath(account)
+        val diagnosticsMs = (System.currentTimeMillis() - diagnosticsStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = leaderSellTrade.id,
+            source = source,
+            diagnosticsMs = diagnosticsMs
+        )
         if (!diagnostics.executionReady) {
             recordTradeExecutionEvent(
                 copyTrading = copyTrading,
@@ -2108,6 +2240,7 @@ open class CopyOrderTrackingService(
         }
 
         // 7. 解密 API 凭证
+        val apiSecretDecryptStartedAt = System.currentTimeMillis()
         val apiSecret = try {
             decryptApiSecret(account)
         } catch (e: Exception) {
@@ -2125,6 +2258,15 @@ open class CopyOrderTrackingService(
             )
             return
         }
+        val apiSecretDecryptMs = (System.currentTimeMillis() - apiSecretDecryptStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = leaderSellTrade.id,
+            source = source,
+            apiSecretDecryptMs = apiSecretDecryptMs
+        )
+
+        val apiPassphraseDecryptStartedAt = System.currentTimeMillis()
         val apiPassphrase = try {
             decryptApiPassphrase(account)
         } catch (e: Exception) {
@@ -2142,12 +2284,53 @@ open class CopyOrderTrackingService(
             )
             return
         }
+        val apiPassphraseDecryptMs = (System.currentTimeMillis() - apiPassphraseDecryptStartedAt).coerceAtLeast(0)
+        updateTradeLatencyContext(
+            leaderId = copyTrading.leaderId,
+            tradeId = leaderSellTrade.id,
+            source = source,
+            apiPassphraseDecryptMs = apiPassphraseDecryptMs
+        )
 
         // 8. 解密私钥（在方法开始时解密一次，后续复用）
-        val decryptedPrivateKey = decryptPrivateKey(account)
+        val (decryptedPrivateKey, feeRateResult, negRiskSell) = coroutineScope {
+            val feeRateDeferred = async(Dispatchers.IO) {
+                val feeRateFetchStartedAt = System.currentTimeMillis()
+                val result = clobService.getFeeRate(tokenId)
+                val feeRateFetchMs = (System.currentTimeMillis() - feeRateFetchStartedAt).coerceAtLeast(0)
+                updateTradeLatencyContext(
+                    leaderId = copyTrading.leaderId,
+                    tradeId = leaderSellTrade.id,
+                    source = source,
+                    feeRateFetchMs = feeRateFetchMs
+                )
+                result
+            }
+            val negRiskDeferred = async(Dispatchers.IO) {
+                val negRiskResolveStartedAt = System.currentTimeMillis()
+                val result = marketService.getNegRiskByConditionId(leaderSellTrade.market) == true
+                val negRiskResolveMs = (System.currentTimeMillis() - negRiskResolveStartedAt).coerceAtLeast(0)
+                updateTradeLatencyContext(
+                    leaderId = copyTrading.leaderId,
+                    tradeId = leaderSellTrade.id,
+                    source = source,
+                    negRiskResolveMs = negRiskResolveMs
+                )
+                result
+            }
 
-        // 获取费率（根据 Polymarket Maker Rebates Program 要求）
-        val feeRateResult = clobService.getFeeRate(tokenId)
+            val privateKeyDecryptStartedAt = System.currentTimeMillis()
+            val privateKey = decryptPrivateKey(account)
+            val privateKeyDecryptMs = (System.currentTimeMillis() - privateKeyDecryptStartedAt).coerceAtLeast(0)
+            updateTradeLatencyContext(
+                leaderId = copyTrading.leaderId,
+                tradeId = leaderSellTrade.id,
+                source = source,
+                privateKeyDecryptMs = privateKeyDecryptMs
+            )
+
+            Triple(privateKey, feeRateDeferred.await(), negRiskDeferred.await())
+        }
         val feeRateBps = if (feeRateResult.isSuccess) {
             feeRateResult.getOrNull()?.toString() ?: "0"
         } else {
@@ -2156,55 +2339,11 @@ open class CopyOrderTrackingService(
         }
 
         // 9. Neg Risk 市场需用 Neg Risk Exchange 签约
-        val negRiskSell = marketService.getNegRiskByConditionId(leaderSellTrade.market) == true
         val exchangeContractSell = orderSigningService.getExchangeContract(negRiskSell)
         if (negRiskSell) logger.debug("卖出市场为 Neg Risk，使用 Neg Risk Exchange 签约: conditionId=${leaderSellTrade.market}")
 
-        // 10. 创建并签名卖出订单（按账户钱包类型使用对应 signatureType）
-        val signedOrder = try {
-            orderSigningService.createAndSignOrder(
-                privateKey = decryptedPrivateKey,
-                makerAddress = account.proxyAddress,
-                tokenId = tokenId,
-                side = "SELL",
-                price = sellPrice.toString(),
-                size = totalMatched.toString(),
-                signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType),
-                nonce = "0",
-                feeRateBps = feeRateBps,  // 使用动态获取的费率
-                expiration = "0",
-                exchangeContract = exchangeContractSell
-            )
-        } catch (e: Exception) {
-            logger.error("创建并签名卖出订单失败: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}", e)
-            recordTradeExecutionEvent(
-                copyTrading = copyTrading,
-                accountId = account.id ?: copyTrading.accountId,
-                trade = leaderSellTrade,
-                stage = "EXECUTION",
-                eventType = "ORDER_SIGNING_FAILED",
-                status = "error",
-                message = "创建并签名卖出订单失败: ${e.message}",
-                calculatedQuantity = totalMatched,
-                orderPrice = sellPrice,
-                orderQuantity = totalMatched,
-                source = source
-            )
-            return
-        }
-
-        // 11. 构建订单请求
-        // 跟单订单使用 FAK (Fill-And-Kill)，允许部分成交，未成交部分立即取消
-        // 这样可以快速响应 Leader 的交易，避免订单长期挂单导致价格不匹配
-        val orderRequest = NewOrderRequest(
-            order = signedOrder,
-            owner = account.apiKey,
-            orderType = "FAK",  // Fill-And-Kill
-            deferExec = false
-        )
-
-        // 12. 创建带认证的CLOB API客户端（使用解密后的凭证）
-        val clobApi = retrofitFactory.createClobApi(
+        // 10. 创建带认证的CLOB API客户端（使用解密后的凭证）
+        val clobApi = retrofitFactory.createOrderClobApi(
             account.apiKey,
             apiSecret,
             apiPassphrase,
@@ -2448,9 +2587,13 @@ open class CopyOrderTrackingService(
                     // 记录错误日志
                     logger.error("创建订单失败 (尝试 $attempt/$MAX_RETRY_ATTEMPTS): copyTradingId=$copyTradingId, tradeId=$tradeId, $errorMsg")
 
-                    // 如果不是最后一次尝试，等待后重试
+                    if (!shouldRetryCreateOrderHttpFailure(orderResponse.code(), errorBody)) {
+                        logger.warn("创建订单失败且判定为不应重试: copyTradingId=$copyTradingId, tradeId=$tradeId, attempt=$attempt, $errorMsg")
+                        return Result.failure(lastError)
+                    }
+
                     if (attempt < MAX_RETRY_ATTEMPTS) {
-                        delay(RETRY_DELAY_MS)
+                        delay(resolveRetryDelayMsForHttpFailure(orderResponse.code(), errorBody))
                         continue
                     }
                     return Result.failure(lastError)
@@ -2465,9 +2608,13 @@ open class CopyOrderTrackingService(
                     // 记录错误日志
                     logger.error("创建订单失败 (尝试 $attempt/$MAX_RETRY_ATTEMPTS): copyTradingId=$copyTradingId, tradeId=$tradeId, $errorMsg")
 
-                    // 如果不是最后一次尝试，等待后重试
+                    if (!shouldRetryCreateOrderBusinessFailure(response.errorMsg)) {
+                        logger.warn("创建订单业务失败且判定为不应重试: copyTradingId=$copyTradingId, tradeId=$tradeId, attempt=$attempt, $errorMsg")
+                        return Result.failure(lastError)
+                    }
+
                     if (attempt < MAX_RETRY_ATTEMPTS) {
-                        delay(RETRY_DELAY_MS)
+                        delay(resolveRetryDelayMsForBusinessFailure(response.errorMsg))
                         continue
                     }
                     return Result.failure(lastError)
@@ -2487,9 +2634,13 @@ open class CopyOrderTrackingService(
                     e
                 )
 
-                // 如果不是最后一次尝试，等待后重试
+                if (!shouldRetryCreateOrderException(e)) {
+                    logger.warn("创建订单异常且判定为不应重试: copyTradingId=$copyTradingId, tradeId=$tradeId, attempt=$attempt, error=${e.message}")
+                    return Result.failure(lastError)
+                }
+
                 if (attempt < MAX_RETRY_ATTEMPTS) {
-                    delay(RETRY_DELAY_MS)
+                    delay(resolveRetryDelayMsForException(e))
                     continue
                 }
                 return Result.failure(lastError)
@@ -2503,6 +2654,67 @@ open class CopyOrderTrackingService(
             finalError
         )
         return Result.failure(finalError)
+    }
+
+    private fun shouldRetryCreateOrderHttpFailure(statusCode: Int, errorBody: String?): Boolean {
+        return when {
+            statusCode in RETRYABLE_HTTP_STATUS_CODES -> true
+            statusCode in 400..499 -> !isNonRetryableCreateOrderError(errorBody)
+            else -> true
+        }
+    }
+
+    private fun shouldRetryCreateOrderBusinessFailure(errorMessage: String?): Boolean {
+        return !isNonRetryableCreateOrderError(errorMessage)
+    }
+
+    private fun shouldRetryCreateOrderException(exception: Exception): Boolean {
+        return !isNonRetryableCreateOrderError(exception.message)
+    }
+
+    private fun isNonRetryableCreateOrderError(rawMessage: String?): Boolean {
+        val normalized = rawMessage?.lowercase() ?: return false
+        return NON_RETRYABLE_ORDER_ERROR_MARKERS.any { marker -> marker in normalized }
+    }
+
+    private fun resolveRetryDelayMsForHttpFailure(statusCode: Int, errorBody: String?): Long {
+        return when {
+            statusCode == 429 -> RETRY_DELAY_LONG_MS
+            statusCode in setOf(408, 409, 425) -> RETRY_DELAY_SHORT_MS
+            statusCode in 500..599 -> RETRY_DELAY_MEDIUM_MS
+            isLikelyTransientErrorMessage(errorBody) -> RETRY_DELAY_MEDIUM_MS
+            else -> RETRY_DELAY_SHORT_MS
+        }
+    }
+
+    private fun resolveRetryDelayMsForBusinessFailure(errorMessage: String?): Long {
+        return when {
+            isLikelyTransientErrorMessage(errorMessage) -> RETRY_DELAY_MEDIUM_MS
+            else -> RETRY_DELAY_SHORT_MS
+        }
+    }
+
+    private fun resolveRetryDelayMsForException(exception: Exception): Long {
+        val message = exception.message?.lowercase().orEmpty()
+        return when {
+            exception is IOException -> RETRY_DELAY_MEDIUM_MS
+            "timeout" in message -> RETRY_DELAY_MEDIUM_MS
+            "temporarily unavailable" in message -> RETRY_DELAY_MEDIUM_MS
+            "rate limit" in message || "too many requests" in message -> RETRY_DELAY_LONG_MS
+            else -> RETRY_DELAY_SHORT_MS
+        }
+    }
+
+    private fun isLikelyTransientErrorMessage(rawMessage: String?): Boolean {
+        val normalized = rawMessage?.lowercase() ?: return false
+        return listOf(
+            "timeout",
+            "temporarily unavailable",
+            "service unavailable",
+            "rate limit",
+            "too many requests",
+            "try again"
+        ).any { marker -> marker in normalized }
     }
 
     /**

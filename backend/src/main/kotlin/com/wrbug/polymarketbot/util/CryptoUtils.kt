@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -21,9 +22,18 @@ class CryptoUtils {
     private lateinit var encryptionKey: String
     
     private val ALGORITHM = "AES"
+    private val DECRYPT_CACHE_TTL_MS = 10 * 60_000L
+    private val MAX_DECRYPT_CACHE_SIZE = 512
     // 使用 AES/CBC/PKCS5Padding 模式，明确支持 AES-256
     // 注意：如果 JVM 不支持 256 位密钥，可能需要安装 JCE 无限强度策略文件
     private val TRANSFORMATION = "AES/CBC/PKCS5Padding"
+    private val decryptCache = ConcurrentHashMap<String, CachedPlainText>()
+    private val cachedSecretKey by lazy { buildSecretKey() }
+
+    private data class CachedPlainText(
+        val value: String,
+        val cachedAt: Long
+    )
     
     /**
      * 获取加密密钥（从配置的密钥派生 32 字节密钥）
@@ -38,7 +48,7 @@ class CryptoUtils {
      * 2. 确保密钥长度固定为 32 字节，满足 AES-256 要求
      * 3. 即使密钥很短，通过哈希后也能提供足够的安全性
      */
-    private fun getSecretKey(): SecretKeySpec {
+    private fun buildSecretKey(): SecretKeySpec {
         val keyBytes = if (encryptionKey.length >= 64 && encryptionKey.matches(Regex("^[0-9a-fA-F]+$"))) {
             // 十六进制字符串，解析为字节数组
             encryptionKey.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
@@ -66,7 +76,7 @@ class CryptoUtils {
     fun encrypt(plainText: String): String {
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            val secretKey = getSecretKey()
+            val secretKey = cachedSecretKey
             cipher.init(Cipher.ENCRYPT_MODE, secretKey)
             
             // 获取 IV（初始化向量）
@@ -93,6 +103,12 @@ class CryptoUtils {
      */
     fun decrypt(encryptedText: String): String {
         return try {
+            val now = System.currentTimeMillis()
+            val cached = decryptCache[encryptedText]
+            if (cached != null && now - cached.cachedAt < DECRYPT_CACHE_TTL_MS) {
+                return cached.value
+            }
+
             val combined = Base64.getDecoder().decode(encryptedText)
             
             // 提取 IV（前 16 字节）和加密数据
@@ -102,14 +118,42 @@ class CryptoUtils {
             System.arraycopy(combined, 16, encryptedBytes, 0, encryptedBytes.size)
             
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            val secretKey = getSecretKey()
+            val secretKey = cachedSecretKey
             cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
             val decryptedBytes = cipher.doFinal(encryptedBytes)
-            
-            String(decryptedBytes, StandardCharsets.UTF_8)
+
+            val plainText = String(decryptedBytes, StandardCharsets.UTF_8)
+            if (decryptCache.size >= MAX_DECRYPT_CACHE_SIZE) {
+                pruneDecryptCache(now)
+            }
+            decryptCache[encryptedText] = CachedPlainText(
+                value = plainText,
+                cachedAt = now
+            )
+            plainText
         } catch (e: Exception) {
             throw RuntimeException("解密失败: ${e.message}", e)
         }
+    }
+
+    private fun pruneDecryptCache(now: Long) {
+        val iterator = decryptCache.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (now - entry.value.cachedAt >= DECRYPT_CACHE_TTL_MS) {
+                iterator.remove()
+            }
+        }
+        if (decryptCache.size < MAX_DECRYPT_CACHE_SIZE) {
+            return
+        }
+        decryptCache.entries
+            .asSequence()
+            .sortedBy { it.value.cachedAt }
+            .take((MAX_DECRYPT_CACHE_SIZE / 4).coerceAtLeast(1))
+            .map { it.key }
+            .toList()
+            .forEach { decryptCache.remove(it) }
     }
     
     /**
@@ -127,4 +171,3 @@ class CryptoUtils {
         }
     }
 }
-

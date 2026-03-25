@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Form, Button, Switch, Input, InputNumber, message, Typography, Space, Alert, Select } from 'antd'
 import { SaveOutlined, CheckCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
@@ -42,11 +42,7 @@ const ProxySettings: React.FC = () => {
   const [checkResult, setCheckResult] = useState<ProxyCheckResponse | null>(null)
   const [currentConfig, setCurrentConfig] = useState<ProxyConfig | null>(null)
   
-  useEffect(() => {
-    fetchConfig()
-  }, [])
-  
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     try {
       const response = await apiService.proxyConfig.get()
       if (response.data.code === 0) {
@@ -77,7 +73,11 @@ const ProxySettings: React.FC = () => {
     } catch (error: any) {
       message.error(error.message || t('proxySettings.getFailed') || '获取代理配置失败')
     }
-  }
+  }, [form, t])
+
+  useEffect(() => {
+    void fetchConfig()
+  }, [fetchConfig])
   
   const handleSubmit = async (values: any) => {
     setLoading(true)
@@ -176,7 +176,7 @@ const ProxySettings: React.FC = () => {
             name="host"
             rules={[
               { required: true, message: t('proxySettings.hostRequired') || '请输入代理主机地址' },
-              { pattern: /^[\w\.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
+              { pattern: /^[\w.-]+$/, message: t('proxySettings.hostInvalid') || '请输入有效的主机地址' }
             ]}
           >
             <Input placeholder={t('proxySettings.hostPlaceholder') || '例如：127.0.0.1 或 proxy.example.com'} />
@@ -268,4 +268,3 @@ const ProxySettings: React.FC = () => {
 }
 
 export default ProxySettings
-

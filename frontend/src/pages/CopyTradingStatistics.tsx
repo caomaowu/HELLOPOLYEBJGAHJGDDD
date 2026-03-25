@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Row, Col, Statistic, Tag, Button, message, Spin } from 'antd'
 import { ArrowUpOutlined, ArrowDownOutlined, LeftOutlined } from '@ant-design/icons'
@@ -14,13 +14,7 @@ const CopyTradingStatisticsPage: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [statistics, setStatistics] = useState<CopyTradingStatistics | null>(null)
 
-  useEffect(() => {
-    if (copyTradingId) {
-      fetchStatistics()
-    }
-  }, [copyTradingId])
-
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async () => {
     if (!copyTradingId) return
 
     setLoading(true)
@@ -36,7 +30,13 @@ const CopyTradingStatisticsPage: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [copyTradingId])
+
+  useEffect(() => {
+    if (copyTradingId) {
+      fetchStatistics()
+    }
+  }, [copyTradingId, fetchStatistics])
 
   const getPnlColor = (value: string): string => {
     const num = parseFloat(value)
@@ -315,4 +315,3 @@ const CopyTradingStatisticsPage: React.FC = () => {
 }
 
 export default CopyTradingStatisticsPage
-

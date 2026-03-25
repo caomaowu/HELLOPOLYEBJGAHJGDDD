@@ -492,7 +492,7 @@ class LeaderDiscoveryServiceTest {
 
     @Test
     fun `scan markets aggressive mode should report source breakdown counts`() {
-        val orderbookAddress = "0xcdddddddddddddddddddddddddddddddddddddd"
+        val orderbookAddress = "0xcddddddddddddddddddddddddddddddddddddddd"
         val seedAddress = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         val expandedAddress = "0xffffffffffffffffffffffffffffffffffffffff"
         prepareScanMarketsApis(

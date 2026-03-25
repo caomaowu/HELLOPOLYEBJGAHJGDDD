@@ -18,7 +18,6 @@ interface AccountSetupGuideModalProps {
 
 const AccountSetupGuideModal: React.FC<AccountSetupGuideModalProps> = ({
   visible,
-  setupStatus: _initialStatus,
   accountId,
   onClose,
   onComplete

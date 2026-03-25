@@ -148,7 +148,7 @@ class CryptoTailStrategyExecutionService(
             ""
         }
 
-        val clobApi = retrofitFactory.createClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
+        val clobApi = retrofitFactory.createOrderClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
         val feeRateByTokenId = tokenIds.associate { tokenId ->
             tokenId to (clobService.getFeeRate(tokenId).getOrNull()?.toString() ?: "0")
         }
@@ -601,7 +601,7 @@ class CryptoTailStrategyExecutionService(
         } catch (e: Exception) {
             ""
         }
-        val clobApi = retrofitFactory.createClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
+        val clobApi = retrofitFactory.createOrderClobApi(account.apiKey, apiSecret, apiPassphrase, account.walletAddress)
         val feeRateBps = clobService.getFeeRate(tokenId).getOrNull()?.toString() ?: "0"
         val signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
 

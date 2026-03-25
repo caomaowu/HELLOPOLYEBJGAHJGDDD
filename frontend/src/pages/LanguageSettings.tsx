@@ -80,7 +80,7 @@ const LanguageSettings: React.FC = () => {
         i18nInstance.changeLanguage(savedLanguage)
       }
     }
-  }, [])
+  }, [i18nInstance])
 
   return (
     <div>
@@ -124,4 +124,3 @@ const LanguageSettings: React.FC = () => {
 }
 
 export default LanguageSettings
-

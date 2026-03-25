@@ -121,6 +121,9 @@ class RetrofitFactory(
     // 缓存带认证的 CLOB API 客户端：walletAddress -> PolymarketClobApi
     // 注意：每个账户使用不同的 API Key，需要不同的客户端
     private val clobApiCache = ConcurrentHashMap<String, PolymarketClobApi>()
+    // 缓存带认证的下单专用 CLOB API 客户端：walletAddress -> PolymarketClobApi
+    // 使用更激进超时，仅用于交易热路径（create-order）
+    private val clobOrderApiCache = ConcurrentHashMap<String, PolymarketClobApi>()
     
     // 缓存 RPC API 客户端：rpcUrl -> EthereumRpcApi
     private val rpcApiCache = ConcurrentHashMap<String, EthereumRpcApi>()
@@ -145,22 +148,35 @@ class RetrofitFactory(
     ): PolymarketClobApi {
         // 使用钱包地址作为缓存键（每个账户使用不同的 API Key）
         return clobApiCache.computeIfAbsent(walletAddress) {
-            val authInterceptor = PolymarketAuthInterceptor(apiKey, apiSecret, apiPassphrase, walletAddress)
-            
-            // 添加响应日志拦截器，用于调试 JSON 解析错误
-            val responseLoggingInterceptor = ResponseLoggingInterceptor()
-            
-            val okHttpClient = createClient()
-                .addInterceptor(authInterceptor)
-                .addInterceptor(responseLoggingInterceptor)
-                .build()
-            
-            Retrofit.Builder()
-                .baseUrl(PolymarketConstants.CLOB_BASE_URL)
-                .client(okHttpClient)
-                .addConverterFactory(GsonConverterFactory.create(gson))
-                .build()
-                .create(PolymarketClobApi::class.java)
+            createAuthenticatedClobApi(
+                apiKey = apiKey,
+                apiSecret = apiSecret,
+                apiPassphrase = apiPassphrase,
+                walletAddress = walletAddress,
+                profile = HttpClientProfile.DEFAULT
+            )
+        }
+    }
+
+    /**
+     * 创建带认证的下单专用 Polymarket CLOB API 客户端
+     * 使用更激进的超时配置，降低交易热路径在网络抖动时的阻塞时长。
+     * 注意：仅建议在 create-order 路径使用，普通查询仍应使用 createClobApi。
+     */
+    fun createOrderClobApi(
+        apiKey: String,
+        apiSecret: String,
+        apiPassphrase: String,
+        walletAddress: String
+    ): PolymarketClobApi {
+        return clobOrderApiCache.computeIfAbsent(walletAddress) {
+            createAuthenticatedClobApi(
+                apiKey = apiKey,
+                apiSecret = apiSecret,
+                apiPassphrase = apiPassphrase,
+                walletAddress = walletAddress,
+                profile = HttpClientProfile.ORDER_SUBMIT
+            )
         }
     }
     
@@ -408,6 +424,7 @@ class RetrofitFactory(
     fun destroy() {
         logger.info("清理 RetrofitFactory 缓存")
         clobApiCache.clear()
+        clobOrderApiCache.clear()
         rpcApiCache.clear()
         builderRelayerApiCache.clear()
     }
@@ -418,6 +435,7 @@ class RetrofitFactory(
      */
     fun clearClobApiCache(walletAddress: String) {
         clobApiCache.remove(walletAddress)
+        clobOrderApiCache.remove(walletAddress)
         logger.debug("已清理 CLOB API 缓存: $walletAddress")
     }
     
@@ -436,6 +454,28 @@ class RetrofitFactory(
             .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
             .addInterceptor(ConnectionCloseInterceptor())
             .build()
+    }
+
+    private fun createAuthenticatedClobApi(
+        apiKey: String,
+        apiSecret: String,
+        apiPassphrase: String,
+        walletAddress: String,
+        profile: HttpClientProfile
+    ): PolymarketClobApi {
+        val authInterceptor = PolymarketAuthInterceptor(apiKey, apiSecret, apiPassphrase, walletAddress)
+        val responseLoggingInterceptor = ResponseLoggingInterceptor()
+        val okHttpClient = createClient(profile)
+            .addInterceptor(authInterceptor)
+            .addInterceptor(responseLoggingInterceptor)
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl(PolymarketConstants.CLOB_BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(PolymarketClobApi::class.java)
     }
 }
 

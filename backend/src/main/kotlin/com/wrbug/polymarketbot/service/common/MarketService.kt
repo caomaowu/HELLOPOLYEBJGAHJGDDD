@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Instant
+import java.time.Duration
 import java.time.format.DateTimeFormatter
 
 /**
@@ -31,6 +32,12 @@ class MarketService(
     // LRU 缓存（避免频繁查询数据库），最多缓存 200 条记录
     private val marketCache: Cache<String, Market> = Caffeine.newBuilder()
         .maximumSize(200)  // 最多缓存 200 条记录
+        .build()
+
+    // Neg Risk 热路径短缓存：仅缓存明确的 true/false，降低重复远程查询
+    private val negRiskCache: Cache<String, Boolean> = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterWrite(Duration.ofSeconds(20))
         .build()
     
     /**
@@ -255,6 +262,7 @@ class MarketService(
      */
     fun clearCache() {
         marketCache.invalidateAll()
+        negRiskCache.invalidateAll()
     }
     
     /**
@@ -279,17 +287,25 @@ class MarketService(
      * 用于跟单下单时选择正确的 exchange 合约，避免 invalid signature
      */
     suspend fun getNegRiskByConditionId(conditionId: String): Boolean? {
-        if (conditionId.isBlank()) return null
+        val normalizedConditionId = conditionId.trim()
+        if (normalizedConditionId.isBlank()) return null
+        val cacheKey = normalizedConditionId.lowercase()
+        negRiskCache.getIfPresent(cacheKey)?.let { return it }
+
         return try {
             val gammaApi = retrofitFactory.createGammaApi()
-            val response = gammaApi.listMarkets(conditionIds = listOf(conditionId))
+            val response = gammaApi.listMarkets(conditionIds = listOf(normalizedConditionId))
             if (!response.isSuccessful || response.body().isNullOrEmpty()) return null
             val marketResponse = response.body()!!.first()
             val fromEvent = marketResponse.events?.firstOrNull()?.negRisk
             val fromMarket = marketResponse.negRisk ?: marketResponse.negRiskOther
-            fromEvent ?: fromMarket
+            val resolved = fromEvent ?: fromMarket
+            if (resolved != null) {
+                negRiskCache.put(cacheKey, resolved)
+            }
+            resolved
         } catch (e: Exception) {
-            logger.warn("查询市场 negRisk 失败: conditionId=$conditionId, error=${e.message}")
+            logger.warn("查询市场 negRisk 失败: conditionId=$normalizedConditionId, error=${e.message}")
             null
         }
     }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Table, Tag, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { apiService } from '../services/api'
@@ -16,17 +16,14 @@ const OrderList: React.FC = () => {
     pageSize: 20,
     total: 0
   })
+  const { current, pageSize } = pagination
   
-  useEffect(() => {
-    fetchOrders()
-  }, [pagination.current, pagination.pageSize])
-  
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (page: number, limit: number) => {
     setLoading(true)
     try {
       const response = await apiService.orders.list({
-        page: pagination.current,
-        limit: pagination.pageSize
+        page,
+        limit
       })
       if (response.data.code === 0 && response.data.data) {
         setOrders(response.data.data.list || [])
@@ -42,7 +39,11 @@ const OrderList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
+
+  useEffect(() => {
+    void fetchOrders(current, pageSize)
+  }, [fetchOrders, current, pageSize])
   
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -159,4 +160,3 @@ const OrderList: React.FC = () => {
 }
 
 export default OrderList
-

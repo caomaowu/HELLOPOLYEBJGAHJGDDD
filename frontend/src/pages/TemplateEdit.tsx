@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Card, Form, Input, Button, Radio, InputNumber, Switch, Select, message, Typography, Space, Divider } from 'antd'
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons'
@@ -64,13 +64,7 @@ const TemplateEdit: React.FC = () => {
   const [copyMode, setCopyMode] = useState<'RATIO' | 'FIXED' | 'ADAPTIVE'>('RATIO')
   const [multiplierMode, setMultiplierMode] = useState<'NONE' | 'SINGLE' | 'TIERED'>('NONE')
   
-  useEffect(() => {
-    if (id) {
-      fetchTemplate(parseInt(id))
-    }
-  }, [id])
-  
-  const fetchTemplate = async (templateId: number) => {
+  const fetchTemplate = useCallback(async (templateId: number) => {
     setFetching(true)
     try {
       const response = await apiService.templates.detail({ templateId })
@@ -126,7 +120,13 @@ const TemplateEdit: React.FC = () => {
     } finally {
       setFetching(false)
     }
-  }
+  }, [form, navigate, t])
+
+  useEffect(() => {
+    if (id) {
+      void fetchTemplate(parseInt(id))
+    }
+  }, [fetchTemplate, id])
   
   const handleSubmit = async (values: any) => {
     if (!id) return
@@ -789,4 +789,3 @@ const TemplateEdit: React.FC = () => {
 }
 
 export default TemplateEdit
-

@@ -1327,7 +1327,7 @@ class AccountService(
                 return Result.failure(IllegalStateException("解密 API 凭证失败: ${e.message}"))
             }
 
-            val clobApi = retrofitFactory.createClobApi(
+            val clobApi = retrofitFactory.createOrderClobApi(
                 account.apiKey,
                 apiSecret,
                 apiPassphrase,

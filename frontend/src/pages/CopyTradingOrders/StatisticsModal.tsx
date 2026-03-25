@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Modal, Row, Col, Statistic, Spin, message } from 'antd'
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons'
 import { apiService } from '../../services/api'
@@ -23,13 +23,7 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
   const [loading, setLoading] = useState(false)
   const [statistics, setStatistics] = useState<CopyTradingStatistics | null>(null)
   
-  useEffect(() => {
-    if (open && copyTradingId) {
-      fetchStatistics()
-    }
-  }, [open, copyTradingId])
-  
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async () => {
     if (!copyTradingId) return
     
     setLoading(true)
@@ -45,7 +39,13 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [copyTradingId, t])
+
+  useEffect(() => {
+    if (open && copyTradingId) {
+      fetchStatistics()
+    }
+  }, [open, copyTradingId, fetchStatistics])
   
   const getPnlColor = (value: string): string => {
     const num = parseFloat(value)
@@ -212,4 +212,3 @@ const StatisticsModal: React.FC<StatisticsModalProps> = ({
 }
 
 export default StatisticsModal
-

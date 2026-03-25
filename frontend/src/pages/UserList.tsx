@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, Typography, Modal, Form, Input } from 'antd'
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -32,7 +32,7 @@ const UserList: React.FC = () => {
   const currentUser = users.find(user => user.isDefault) || users[0]
   const isDefaultUser = currentUser?.isDefault || false
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
       const response = await apiService.users.list()
@@ -48,11 +48,11 @@ const UserList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   useEffect(() => {
-    fetchUsers()
-  }, [])
+    void fetchUsers()
+  }, [fetchUsers])
 
   const handleCreate = async (values: { username: string; password: string }) => {
     try {
@@ -365,4 +365,3 @@ const UserList: React.FC = () => {
 }
 
 export default UserList
-

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Descriptions, Button, Space, Tag, Spin, message, Typography, Divider, Modal, Form, Input, Alert } from 'antd'
 import { ArrowLeftOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons'
@@ -27,17 +27,7 @@ const AccountDetail: React.FC = () => {
   const [editForm] = Form.useForm()
   const [editLoading, setEditLoading] = useState(false)
   
-  useEffect(() => {
-    if (accountId) {
-      loadAccountDetail()
-      loadBalance()
-    } else {
-      message.error(t('account.accountIdRequired'))
-      navigate('/accounts')
-    }
-  }, [accountId])
-  
-  const loadAccountDetail = async () => {
+  const loadAccountDetail = useCallback(async () => {
     if (!accountId) return
     
     setLoading(true)
@@ -50,9 +40,9 @@ const AccountDetail: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [accountId, fetchAccountDetail, navigate, t])
   
-  const loadBalance = async () => {
+  const loadBalance = useCallback(async () => {
     if (!accountId) return
     
     setBalanceLoading(true)
@@ -66,7 +56,17 @@ const AccountDetail: React.FC = () => {
     } finally {
       setBalanceLoading(false)
     }
-  }
+  }, [accountId, fetchAccountBalance])
+
+  useEffect(() => {
+    if (accountId) {
+      loadAccountDetail()
+      loadBalance()
+    } else {
+      message.error(t('account.accountIdRequired'))
+      navigate('/accounts')
+    }
+  }, [accountId, loadAccountDetail, loadBalance, navigate, t])
   
   const handleEditSubmit = async (values: any) => {
     if (!account) return
@@ -403,7 +403,6 @@ const AccountDetail: React.FC = () => {
 }
 
 export default AccountDetail
-
 
 
 

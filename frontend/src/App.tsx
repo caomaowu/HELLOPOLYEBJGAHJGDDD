@@ -148,7 +148,7 @@ function App() {
       duration: order.type === 'CANCELLATION' ? 3 : 5,  // 鍙栨秷璁㈠崟閫氱煡鏄剧ず鏃堕棿鐭竴浜?
       key: `order-${order.id}`,  // 浣跨敤璁㈠崟 ID 浣滀负 key锛岄伩鍏嶉噸澶嶉€氱煡
     })
-  }, [getOrderTypeText])
+  }, [getOrderTypeText, t])
   
   // 搴旂敤鍚姩鏃舵鏌ユ槸鍚﹂娆′娇鐢?
   useEffect(() => {
@@ -269,4 +269,3 @@ function App() {
 }
 
 export default App
-

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Row, Col, Statistic, message, DatePicker, Space, Button, Typography } from 'antd'
 import { ArrowUpOutlined, ArrowDownOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -18,15 +18,11 @@ const Statistics: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([null, null])
 
-  useEffect(() => {
-    fetchStatistics()
-  }, [])
-
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async (range: [Dayjs | null, Dayjs | null] = [null, null]) => {
     setLoading(true)
     try {
-      const startTime = dateRange[0] ? dateRange[0].valueOf() : undefined
-      const endTime = dateRange[1] ? dateRange[1].valueOf() : undefined
+      const startTime = range[0] ? range[0].valueOf() : undefined
+      const endTime = range[1] ? range[1].valueOf() : undefined
 
       const response = await apiService.statistics.global({ startTime, endTime })
       if (response.data.code === 0 && response.data.data) {
@@ -39,7 +35,11 @@ const Statistics: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
+
+  useEffect(() => {
+    void fetchStatistics()
+  }, [fetchStatistics])
 
   const handleDateRangeChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
     setDateRange(dates || [null, null])
@@ -49,7 +49,7 @@ const Statistics: React.FC = () => {
     setDateRange([null, null])
     // 重置后自动刷新
     setTimeout(() => {
-      fetchStatistics()
+      void fetchStatistics([null, null])
     }, 100)
   }
 
@@ -69,7 +69,7 @@ const Statistics: React.FC = () => {
           <Button
             type="primary"
             icon={<ReloadOutlined />}
-            onClick={fetchStatistics}
+            onClick={() => void fetchStatistics(dateRange)}
             loading={loading}
             size={isMobile ? 'middle' : 'large'}
           >
@@ -161,4 +161,3 @@ const Statistics: React.FC = () => {
 }
 
 export default Statistics
-

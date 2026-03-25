@@ -406,26 +406,26 @@ const SystemUpdate: React.FC = () => {
                                         <ReactMarkdown 
                                             remarkPlugins={[remarkGfm]}
                                             components={{
-                                                h1: ({node, ...props}) => <h1 style={{ fontSize: '20px', fontWeight: 600, marginTop: '16px', marginBottom: '12px', color: '#262626', borderBottom: '2px solid #e8e8e8', paddingBottom: '8px' }} {...props} />,
-                                                h2: ({node, ...props}) => <h2 style={{ fontSize: '18px', fontWeight: 600, marginTop: '16px', marginBottom: '10px', color: '#262626' }} {...props} />,
-                                                h3: ({node, ...props}) => <h3 style={{ fontSize: '16px', fontWeight: 600, marginTop: '14px', marginBottom: '8px', color: '#262626' }} {...props} />,
-                                                h4: ({node, ...props}) => <h4 style={{ fontSize: '15px', fontWeight: 600, marginTop: '12px', marginBottom: '6px', color: '#262626' }} {...props} />,
-                                                p: ({node, ...props}) => <p style={{ marginBottom: '12px', color: '#595959' }} {...props} />,
-                                                ul: ({node, ...props}) => <ul style={{ marginBottom: '12px', paddingLeft: '24px', color: '#595959' }} {...props} />,
-                                                ol: ({node, ...props}) => <ol style={{ marginBottom: '12px', paddingLeft: '24px', color: '#595959' }} {...props} />,
-                                                li: ({node, ...props}) => <li style={{ marginBottom: '6px', lineHeight: '1.6' }} {...props} />,
-                                                code: ({node, inline, ...props}: any) => 
+                                                h1: ({...props}) => <h1 style={{ fontSize: '20px', fontWeight: 600, marginTop: '16px', marginBottom: '12px', color: '#262626', borderBottom: '2px solid #e8e8e8', paddingBottom: '8px' }} {...props} />,
+                                                h2: ({...props}) => <h2 style={{ fontSize: '18px', fontWeight: 600, marginTop: '16px', marginBottom: '10px', color: '#262626' }} {...props} />,
+                                                h3: ({...props}) => <h3 style={{ fontSize: '16px', fontWeight: 600, marginTop: '14px', marginBottom: '8px', color: '#262626' }} {...props} />,
+                                                h4: ({...props}) => <h4 style={{ fontSize: '15px', fontWeight: 600, marginTop: '12px', marginBottom: '6px', color: '#262626' }} {...props} />,
+                                                p: ({...props}) => <p style={{ marginBottom: '12px', color: '#595959' }} {...props} />,
+                                                ul: ({...props}) => <ul style={{ marginBottom: '12px', paddingLeft: '24px', color: '#595959' }} {...props} />,
+                                                ol: ({...props}) => <ol style={{ marginBottom: '12px', paddingLeft: '24px', color: '#595959' }} {...props} />,
+                                                li: ({...props}) => <li style={{ marginBottom: '6px', lineHeight: '1.6' }} {...props} />,
+                                                code: ({ inline, ...props}: any) => 
                                                     inline 
                                                         ? <code style={{ background: '#f0f0f0', padding: '2px 6px', borderRadius: '3px', fontSize: '13px', fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace', color: '#d73a49' }} {...props} />
                                                         : <code style={{ display: 'block', background: '#282c34', color: '#abb2bf', padding: '12px', borderRadius: '4px', overflowX: 'auto', fontSize: '13px', fontFamily: 'Monaco, Menlo, "Ubuntu Mono", Consolas, monospace', marginBottom: '12px', lineHeight: '1.5' }} {...props} />,
-                                                pre: ({node, ...props}) => <pre style={{ background: '#282c34', borderRadius: '4px', padding: '12px', overflowX: 'auto', marginBottom: '12px' }} {...props} />,
-                                                blockquote: ({node, ...props}) => <blockquote style={{ borderLeft: '4px solid #1890ff', paddingLeft: '12px', margin: '12px 0', color: '#8c8c8c', fontStyle: 'italic' }} {...props} />,
-                                                a: ({node, ...props}) => <a style={{ color: '#1890ff', textDecoration: 'none' }} target="_blank" rel="noopener noreferrer" {...props} />,
-                                                strong: ({node, ...props}) => <strong style={{ fontWeight: 600, color: '#262626' }} {...props} />,
-                                                table: ({node, ...props}) => <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }} {...props} />,
-                                                th: ({node, ...props}) => <th style={{ border: '1px solid #e8e8e8', padding: '8px 12px', background: '#fafafa', fontWeight: 600, textAlign: 'left' }} {...props} />,
-                                                td: ({node, ...props}) => <td style={{ border: '1px solid #e8e8e8', padding: '8px 12px' }} {...props} />,
-                                                hr: ({node, ...props}) => <hr style={{ border: 'none', borderTop: '1px solid #e8e8e8', margin: '16px 0' }} {...props} />
+                                                pre: ({...props}) => <pre style={{ background: '#282c34', borderRadius: '4px', padding: '12px', overflowX: 'auto', marginBottom: '12px' }} {...props} />,
+                                                blockquote: ({...props}) => <blockquote style={{ borderLeft: '4px solid #1890ff', paddingLeft: '12px', margin: '12px 0', color: '#8c8c8c', fontStyle: 'italic' }} {...props} />,
+                                                a: ({...props}) => <a style={{ color: '#1890ff', textDecoration: 'none' }} target="_blank" rel="noopener noreferrer" {...props} />,
+                                                strong: ({...props}) => <strong style={{ fontWeight: 600, color: '#262626' }} {...props} />,
+                                                table: ({...props}) => <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }} {...props} />,
+                                                th: ({...props}) => <th style={{ border: '1px solid #e8e8e8', padding: '8px 12px', background: '#fafafa', fontWeight: 600, textAlign: 'left' }} {...props} />,
+                                                td: ({...props}) => <td style={{ border: '1px solid #e8e8e8', padding: '8px 12px' }} {...props} />,
+                                                hr: ({...props}) => <hr style={{ border: 'none', borderTop: '1px solid #e8e8e8', margin: '16px 0' }} {...props} />
                                             }}
                                         >
                                             {updateInfo.releaseNotes}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Space, Tag, Popconfirm, message, List, Empty, Spin, Divider, Typography, Modal, Descriptions, Statistic, Row, Col } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, GlobalOutlined, EyeOutlined, ReloadOutlined, WalletOutlined, SearchOutlined, BarChartOutlined } from '@ant-design/icons'
@@ -29,11 +29,7 @@ const LeaderList: React.FC = () => {
   const [discoveryVisible, setDiscoveryVisible] = useState(false)
   const [traderAnalysisVisible, setTraderAnalysisVisible] = useState(false)
 
-  useEffect(() => {
-    fetchLeaders()
-  }, [])
-
-  const fetchLeaders = async () => {
+  const fetchLeaders = useCallback(async () => {
     setLoading(true)
     try {
       const response = await apiService.leaders.list()
@@ -47,7 +43,7 @@ const LeaderList: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   // 加载所有 Leader 的余额
   useEffect(() => {
@@ -83,7 +79,11 @@ const LeaderList: React.FC = () => {
     if (leaders.length > 0) {
       loadBalances()
     }
-  }, [leaders])
+  }, [balanceLoading, balanceMap, leaders])
+
+  useEffect(() => {
+    void fetchLeaders()
+  }, [fetchLeaders])
 
   const handleDelete = async (leaderId: number) => {
     try {

@@ -12,6 +12,32 @@ import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.*
 
+data class ClientTimeoutConfig(
+    val connectTimeoutSeconds: Long,
+    val readTimeoutSeconds: Long,
+    val writeTimeoutSeconds: Long,
+    val callTimeoutSeconds: Long
+)
+
+enum class HttpClientProfile(val timeoutConfig: ClientTimeoutConfig) {
+    DEFAULT(
+        ClientTimeoutConfig(
+            connectTimeoutSeconds = 30,
+            readTimeoutSeconds = 30,
+            writeTimeoutSeconds = 30,
+            callTimeoutSeconds = 0
+        )
+    ),
+    ORDER_SUBMIT(
+        ClientTimeoutConfig(
+            connectTimeoutSeconds = 5,
+            readTimeoutSeconds = 8,
+            writeTimeoutSeconds = 8,
+            callTimeoutSeconds = 10
+        )
+    )
+}
+
 /**
  * 获取代理配置（用于 WebSocket 和 HTTP 请求）
  * 从数据库读取代理配置
@@ -26,12 +52,17 @@ fun getProxyConfig(): Proxy? {
  * 自动应用代理配置（从数据库读取）
  * @return OkHttpClient.Builder
  */
-fun createClient(): OkHttpClient.Builder {
+fun createClient(profile: HttpClientProfile = HttpClientProfile.DEFAULT): OkHttpClient.Builder {
+    val timeoutConfig = profile.timeoutConfig
     val builder = OkHttpClient.Builder()
         .dns(Ipv4PreferredDns())
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(timeoutConfig.connectTimeoutSeconds, TimeUnit.SECONDS)
+        .readTimeout(timeoutConfig.readTimeoutSeconds, TimeUnit.SECONDS)
+        .writeTimeout(timeoutConfig.writeTimeoutSeconds, TimeUnit.SECONDS)
+
+    if (timeoutConfig.callTimeoutSeconds > 0) {
+        builder.callTimeout(timeoutConfig.callTimeoutSeconds, TimeUnit.SECONDS)
+    }
 
     // 从数据库读取代理配置
     val dbProxy = ProxyConfigProvider.getProxy()
@@ -109,4 +140,3 @@ class Ipv4PreferredDns : Dns {
         }
     }
 }
-

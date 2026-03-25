@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Card, List, Spin, Empty, Typography, Button, Avatar, Drawer } from 'antd'
 import { MessageOutlined, LinkOutlined, UpOutlined, DownOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -121,15 +121,15 @@ const Announcements: React.FC = () => {
   }
   
   // 计算内容行数（通过换行符计算）
-  const getLineCount = (text: string): number => {
+  const getLineCount = useCallback((text: string): number => {
     if (!text) return 0
     return text.split('\n').length
-  }
+  }, [])
   
   // 检查是否需要折叠（超过30行）
-  const shouldCollapse = (body: string): boolean => {
+  const shouldCollapse = useCallback((body: string): boolean => {
     return getLineCount(body) > 30
-  }
+  }, [getLineCount])
   
   // 当选中公告改变时，重置展开状态
   useEffect(() => {
@@ -137,7 +137,7 @@ const Announcements: React.FC = () => {
       const shouldCollapseContent = shouldCollapse(selectedAnnouncement.body)
       setIsExpanded(!shouldCollapseContent) // 如果超过30行，默认折叠（isExpanded = false）
     }
-  }, [selectedAnnouncement])
+  }, [selectedAnnouncement, shouldCollapse])
   
   // 渲染公告详情内容（带折叠功能）
   const renderAnnouncementContent = (announcement: Announcement, isMobileView: boolean) => {
@@ -531,4 +531,3 @@ const Announcements: React.FC = () => {
 }
 
 export default Announcements
-

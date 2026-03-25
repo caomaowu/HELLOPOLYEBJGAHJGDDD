@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Card, Table, Button, Space, Badge, message, Popconfirm, Tag, Switch } from 'antd'
 import { UpOutlined, DownOutlined, DeleteOutlined, ReloadOutlined, PlusOutlined, ApiOutlined } from '@ant-design/icons'
 import { apiService } from '../services/api'
@@ -13,11 +13,7 @@ const RpcNodeSettings: React.FC = () => {
     const [checking, setChecking] = useState(false)
     const [modalVisible, setModalVisible] = useState(false)
 
-    useEffect(() => {
-        fetchNodes()
-    }, [])
-
-    const fetchNodes = async () => {
+    const fetchNodes = useCallback(async () => {
         setLoading(true)
         try {
             const response = await apiService.rpcNodes.list()
@@ -31,7 +27,11 @@ const RpcNodeSettings: React.FC = () => {
         } finally {
             setLoading(false)
         }
-    }
+    }, [t])
+
+    useEffect(() => {
+        void fetchNodes()
+    }, [fetchNodes])
 
     const handleCheckAllHealth = async () => {
         setChecking(true)
