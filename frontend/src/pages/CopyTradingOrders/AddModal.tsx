@@ -1265,7 +1265,7 @@ const AddModal: React.FC<AddModalProps> = ({
           <Form.Item
             label={t('copyTradingAdd.maxPositionValue') || '最大仓位金额 (USDC)'}
             name="maxPositionValue"
-            tooltip={t('copyTradingAdd.maxPositionValueTooltip') || '限制单个市场的最大仓位金额。如果该市场的当前仓位金额 + 跟单金额超过此限制，则不会下单。不填写则不启用此限制'}
+            tooltip={t('copyTradingAdd.maxPositionValueTooltip') || '限制单个市场同方向的最大持仓成本。如果该方向的当前持仓成本 + 跟单金额超过此限制，则不会下单。不填写则不启用此限制'}
           >
             <InputNumber
               min={0}

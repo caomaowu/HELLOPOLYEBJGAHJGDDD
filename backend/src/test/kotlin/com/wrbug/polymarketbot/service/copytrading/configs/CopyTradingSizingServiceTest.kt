@@ -1,11 +1,19 @@
 package com.wrbug.polymarketbot.service.copytrading.configs
 
+import com.wrbug.polymarketbot.dto.AccountPositionDto
+import com.wrbug.polymarketbot.dto.PositionListResponse
+import com.wrbug.polymarketbot.entity.CopyTrading
 import com.wrbug.polymarketbot.dto.MultiplierTierDto
+import com.wrbug.polymarketbot.repository.CopyOrderTrackingRepository
+import com.wrbug.polymarketbot.service.accounts.AccountService
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.`when`
+import org.mockito.Mockito.mock
 import java.math.BigDecimal
 
 class CopyTradingSizingServiceTest {
@@ -18,7 +26,7 @@ class CopyTradingSizingServiceTest {
             config = config(),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO
         )
 
@@ -38,7 +46,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO
         )
 
@@ -74,7 +82,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO
         )
 
@@ -95,7 +103,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("120"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO
         )
 
@@ -114,7 +122,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = bd("10")
         )
 
@@ -132,7 +140,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("10"),
+            currentPositionCost = bd("10"),
             currentDailyVolume = BigDecimal.ZERO
         )
 
@@ -147,7 +155,7 @@ class CopyTradingSizingServiceTest {
             config = config(maxPositionCount = 2),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO,
             currentActivePositionCount = 2,
             hasActivePosition = false
@@ -163,7 +171,7 @@ class CopyTradingSizingServiceTest {
             config = config(maxPositionCount = 2),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             currentActivePositionCount = 2,
             hasActivePosition = true
@@ -184,7 +192,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = BigDecimal.ZERO,
+            currentPositionCost = BigDecimal.ZERO,
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = false
         )
@@ -205,7 +213,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -231,7 +239,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -255,7 +263,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -280,7 +288,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -305,7 +313,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("10"),
+            currentPositionCost = bd("10"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -330,7 +338,7 @@ class CopyTradingSizingServiceTest {
             ),
             leaderOrderAmount = bd("100"),
             tradePrice = bd("0.5"),
-            currentPositionValue = bd("20"),
+            currentPositionCost = bd("20"),
             currentDailyVolume = BigDecimal.ZERO,
             hasActivePosition = true,
             repeatAddReductionContext = RepeatAddReductionContext(
@@ -342,6 +350,72 @@ class CopyTradingSizingServiceTest {
         assertEquals(SizingStatus.REJECTED, result.status)
         assertEquals(SizingRejectionType.BELOW_MIN_ORDER_SIZE, result.rejectionType)
         assertDecimalEquals("5", result.finalAmount)
+    }
+
+    @Test
+    fun `real time sizing should cap by current position cost for same market and outcome`() = runTest {
+        val trackingRepository = mock(CopyOrderTrackingRepository::class.java)
+        val accountService = mock(AccountService::class.java)
+        val repeatAddStateService = mock(CopyTradingRepeatAddStateService::class.java)
+        val service = CopyTradingSizingService(
+            copyOrderTrackingRepository = trackingRepository,
+            accountService = accountService,
+            repeatAddStateService = repeatAddStateService
+        )
+        val copyTrading = CopyTrading(
+            id = 1L,
+            accountId = 11L,
+            leaderId = 22L,
+            copyMode = CopyTradingSizingSupport.COPY_MODE_FIXED,
+            fixedAmount = bd("4"),
+            maxPositionValue = bd("7")
+        )
+        `when`(trackingRepository.sumCurrentPositionCostByMarketAndOutcomeIndex(1L, "market-1", 1))
+            .thenReturn(BigDecimal.ZERO)
+        `when`(trackingRepository.countActivePositions(1L)).thenReturn(1)
+        `when`(trackingRepository.existsActivePosition(1L, "market-1", 1)).thenReturn(false)
+        `when`(
+            trackingRepository.sumDailyBuyVolume(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong()
+            )
+        )
+            .thenReturn(BigDecimal.ZERO)
+        `when`(accountService.getAllPositions()).thenReturn(
+            Result.success(
+                PositionListResponse(
+                    currentPositions = listOf(
+                        position(
+                            accountId = 11L,
+                            marketId = "market-1",
+                            outcomeIndex = 1,
+                            currentValue = "1",
+                            initialValue = "5"
+                        ),
+                        position(
+                            accountId = 11L,
+                            marketId = "market-1",
+                            outcomeIndex = 2,
+                            currentValue = "20",
+                            initialValue = "20"
+                        )
+                    ),
+                    historyPositions = emptyList()
+                )
+            )
+        )
+
+        val result = service.calculateRealTimeBuySizing(
+            copyTrading = copyTrading,
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            marketId = "market-1",
+            outcomeIndex = 1
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("2", result.finalAmount)
     }
 
     @Test
@@ -401,6 +475,37 @@ class CopyTradingSizingServiceTest {
     )
 
     private fun bd(value: String) = BigDecimal(value)
+
+    private fun position(
+        accountId: Long,
+        marketId: String,
+        outcomeIndex: Int,
+        currentValue: String,
+        initialValue: String
+    ) = AccountPositionDto(
+        accountId = accountId,
+        accountName = "account-$accountId",
+        walletAddress = "0xwallet",
+        proxyAddress = "0xproxy",
+        marketId = marketId,
+        marketTitle = "market",
+        marketSlug = "market",
+        marketIcon = null,
+        side = "YES",
+        outcomeIndex = outcomeIndex,
+        quantity = "10",
+        avgPrice = "0.5",
+        currentPrice = "0.1",
+        currentValue = currentValue,
+        initialValue = initialValue,
+        pnl = "0",
+        percentPnl = "0",
+        realizedPnl = null,
+        percentRealizedPnl = null,
+        redeemable = false,
+        mergeable = false,
+        endDate = null
+    )
 
     private fun assertDecimalEquals(expected: String, actual: BigDecimal?) {
         assertTrue(actual != null && actual.compareTo(BigDecimal(expected)) == 0, "Expected $expected but was $actual")

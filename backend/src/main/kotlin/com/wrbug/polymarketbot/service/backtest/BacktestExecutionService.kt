@@ -462,7 +462,7 @@ class BacktestExecutionService(
                                 if (currentPosition == null) {
                                     repeatAddStates.remove(positionKey)
                                 }
-                                val currentPositionValue = if (currentPosition != null) {
+                                val currentPositionCost = if (currentPosition != null) {
                                     currentPosition.quantity.multiply(currentPosition.avgPrice)
                                 } else {
                                     BigDecimal.ZERO
@@ -482,7 +482,7 @@ class BacktestExecutionService(
                                     task = task,
                                     leaderOrderAmount = leaderTrade.amount,
                                     tradePrice = leaderTrade.price,
-                                    currentPositionValue = currentPositionValue,
+                                    currentPositionCost = currentPositionCost,
                                     currentDailyVolume = currentDailyVolume,
                                     repeatAddReductionContext = repeatAddReductionContext
                                 )

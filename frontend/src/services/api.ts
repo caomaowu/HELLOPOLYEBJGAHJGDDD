@@ -264,6 +264,12 @@ export const apiService = {
      */
     sellPosition: (data: any) => 
       apiClient.post<ApiResponse<any>>('/accounts/positions/sell', data),
+
+    /**
+     * 一键平仓
+     */
+    closePositions: (data: any) =>
+      apiClient.post<ApiResponse<any>>('/accounts/positions/close', data),
     
     /**
      * 获取可赎回仓位统计

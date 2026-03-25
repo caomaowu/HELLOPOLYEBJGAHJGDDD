@@ -237,6 +237,60 @@ data class PositionSellResponse(
 )
 
 /**
+ * 一键平仓请求
+ */
+data class PositionCloseRequest(
+    val positions: List<AccountClosePositionItem>  // 要平仓的仓位列表（支持多账户）
+)
+
+/**
+ * 平仓仓位项（包含账户ID）
+ */
+data class AccountClosePositionItem(
+    val accountId: Long,           // 账户ID（必需）
+    val marketId: String,          // 市场ID（conditionId）
+    val side: String,              // 结果名称（必需）
+    val outcomeIndex: Int? = null  // 结果索引（推荐提供）
+)
+
+/**
+ * 一键平仓响应
+ */
+data class PositionCloseResponse(
+    val totalCount: Int,                         // 请求总数
+    val successCount: Int,                       // 成功提交订单数
+    val failedCount: Int,                        // 失败数
+    val orders: List<PositionCloseOrderInfo>,    // 成功的订单
+    val failedItems: List<PositionCloseFailedItem>, // 失败的仓位
+    val createdAt: Long
+)
+
+/**
+ * 一键平仓成功订单信息
+ */
+data class PositionCloseOrderInfo(
+    val accountId: Long,
+    val marketId: String,
+    val side: String,
+    val outcomeIndex: Int? = null,
+    val orderId: String,
+    val quantity: String,
+    val price: String?,
+    val status: String
+)
+
+/**
+ * 一键平仓失败项
+ */
+data class PositionCloseFailedItem(
+    val accountId: Long,
+    val marketId: String,
+    val side: String,
+    val outcomeIndex: Int? = null,
+    val reason: String
+)
+
+/**
  * 市场价格请求
  */
 data class MarketPriceRequest(

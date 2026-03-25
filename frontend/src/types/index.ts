@@ -1110,6 +1110,45 @@ export interface PositionSellResponse {
   createdAt: number
 }
 
+export interface AccountClosePositionItem {
+  accountId: number
+  marketId: string
+  side: string
+  outcomeIndex?: number
+}
+
+export interface PositionCloseRequest {
+  positions: AccountClosePositionItem[]
+}
+
+export interface PositionCloseOrderInfo {
+  accountId: number
+  marketId: string
+  side: string
+  outcomeIndex?: number
+  orderId: string
+  quantity: string
+  price?: string
+  status: string
+}
+
+export interface PositionCloseFailedItem {
+  accountId: number
+  marketId: string
+  side: string
+  outcomeIndex?: number
+  reason: string
+}
+
+export interface PositionCloseResponse {
+  totalCount: number
+  successCount: number
+  failedCount: number
+  orders: PositionCloseOrderInfo[]
+  failedItems: PositionCloseFailedItem[]
+  createdAt: number
+}
+
 /**
  * 市场价格请求
  */

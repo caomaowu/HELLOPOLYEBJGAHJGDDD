@@ -458,6 +458,68 @@ class AccountController(
     }
 
     /**
+     * 一键平仓
+     */
+    @PostMapping("/positions/close")
+    fun closePositions(@RequestBody request: PositionCloseRequest): ResponseEntity<ApiResponse<PositionCloseResponse>> {
+        return try {
+            if (request.positions.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "平仓仓位列表不能为空", messageSource))
+            }
+
+            for (item in request.positions) {
+                if (item.accountId <= 0) {
+                    return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ACCOUNT_ID_INVALID, messageSource = messageSource))
+                }
+                if (item.marketId.isBlank()) {
+                    return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_MARKET_ID_EMPTY, messageSource = messageSource))
+                }
+                if (item.side.isBlank()) {
+                    return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_SIDE_EMPTY, messageSource = messageSource))
+                }
+            }
+
+            val result = runBlocking { accountService.closePositions(request) }
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("一键平仓失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(
+                            ApiResponse.error(
+                                ErrorCode.PARAM_ERROR,
+                                e.message,
+                                messageSource
+                            )
+                        )
+
+                        is IllegalStateException -> ResponseEntity.ok(
+                            ApiResponse.error(
+                                ErrorCode.BUSINESS_ERROR,
+                                e.message,
+                                messageSource
+                            )
+                        )
+
+                        else -> ResponseEntity.ok(
+                            ApiResponse.error(
+                                ErrorCode.SERVER_ACCOUNT_ORDER_CREATE_FAILED,
+                                e.message,
+                                messageSource
+                            )
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("一键平仓异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ACCOUNT_ORDER_CREATE_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
      * 获取可赎回仓位统计
      */
     @PostMapping("/positions/redeemable-summary")
@@ -573,4 +635,3 @@ class AccountController(
     }
 
 }
-

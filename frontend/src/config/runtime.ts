@@ -8,4 +8,4 @@ const parseBooleanEnv = (value: string | undefined, defaultValue: boolean): bool
 }
 
 export const isSystemUpdateEnabled = (): boolean =>
-  parseBooleanEnv(import.meta.env.VITE_ENABLE_SYSTEM_UPDATE, true)
+  parseBooleanEnv(import.meta.env.VITE_ENABLE_SYSTEM_UPDATE, false)

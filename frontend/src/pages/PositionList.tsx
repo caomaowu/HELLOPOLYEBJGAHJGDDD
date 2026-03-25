@@ -3,7 +3,7 @@ import { Card, Table, Tag, message, Space, Input, Radio, Select, Button, Row, Co
 import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { apiService } from '../services/api'
-import type { AccountPosition, Account, PositionPushMessage, PositionSellRequest, MarketPriceResponse, RedeemablePositionsSummary, PositionRedeemRequest } from '../types'
+import type { AccountPosition, Account, PositionPushMessage, PositionSellRequest, MarketPriceResponse, RedeemablePositionsSummary, PositionRedeemRequest, PositionCloseRequest, PositionCloseResponse } from '../types'
 import { getPositionKey } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { useWebSocketSubscription } from '../hooks/useWebSocket'
@@ -40,6 +40,9 @@ const PositionList: React.FC = () => {
   const [redeemableSummary, setRedeemableSummary] = useState<RedeemablePositionsSummary | null>(null)
   const [loadingRedeemableSummary, setLoadingRedeemableSummary] = useState(false)
   const [redeeming, setRedeeming] = useState(false)
+  const [closeModalVisible, setCloseModalVisible] = useState(false)
+  const [closeModalPositions, setCloseModalPositions] = useState<AccountPosition[]>([])
+  const [closingPositions, setClosingPositions] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
 
@@ -324,6 +327,88 @@ const PositionList: React.FC = () => {
 
     return filtered
   }, [basePositions, searchKeyword, selectedAccountId])
+
+  const closeablePositions = useMemo(() => {
+    if (positionFilter !== 'current') {
+      return []
+    }
+    return filteredPositions.filter(position => !position.redeemable)
+  }, [filteredPositions, positionFilter])
+
+  const closeableSummary = useMemo(() => {
+    return {
+      totalCount: closeablePositions.length,
+      totalCurrentValue: closeablePositions.reduce((sum, position) => sum + parseFloat(position.currentValue || '0'), 0),
+      totalInitialValue: closeablePositions.reduce((sum, position) => sum + parseFloat(position.initialValue || '0'), 0),
+      accountCount: new Set(closeablePositions.map(position => position.accountId)).size
+    }
+  }, [closeablePositions])
+
+  const closeModalSummary = useMemo(() => {
+    return {
+      totalCount: closeModalPositions.length,
+      totalCurrentValue: closeModalPositions.reduce((sum, position) => sum + parseFloat(position.currentValue || '0'), 0),
+      totalInitialValue: closeModalPositions.reduce((sum, position) => sum + parseFloat(position.initialValue || '0'), 0),
+      accountCount: new Set(closeModalPositions.map(position => position.accountId)).size
+    }
+  }, [closeModalPositions])
+
+  const handleCloseAllClick = useCallback(() => {
+    if (closeablePositions.length === 0) {
+      message.warning('当前筛选结果中没有可平仓的仓位')
+      return
+    }
+
+    setCloseModalPositions(closeablePositions)
+    setCloseModalVisible(true)
+  }, [closeablePositions])
+
+  const handleCloseAllSubmit = async () => {
+    if (closeModalPositions.length === 0 || closingPositions) {
+      return
+    }
+
+    setClosingPositions(true)
+    try {
+      const request: PositionCloseRequest = {
+        positions: closeModalPositions.map(position => ({
+          accountId: position.accountId,
+          marketId: position.marketId,
+          side: position.side,
+          outcomeIndex: position.outcomeIndex
+        }))
+      }
+
+      const response = await apiService.accounts.closePositions(request)
+      if (response.data.code === 0 && response.data.data) {
+        const result = response.data.data as PositionCloseResponse
+        setCloseModalVisible(false)
+        setCloseModalPositions([])
+
+        if (result.failedCount === 0) {
+          message.success(`已提交 ${result.successCount} 个平仓订单`)
+          return
+        }
+
+        const failedPreview = result.failedItems
+          .slice(0, 2)
+          .map(item => `${item.side} ${item.reason}`)
+          .join('；')
+
+        if (result.successCount > 0) {
+          message.warning(`已提交 ${result.successCount} 个平仓订单，${result.failedCount} 个失败${failedPreview ? `：${failedPreview}` : ''}`)
+        } else {
+          message.error(`一键平仓未成功${failedPreview ? `：${failedPreview}` : ''}`)
+        }
+      } else {
+        message.error(response.data.msg || '一键平仓失败')
+      }
+    } catch (error: any) {
+      message.error('一键平仓失败: ' + (error.message || '未知错误'))
+    } finally {
+      setClosingPositions(false)
+    }
+  }
 
   // 分页后的数据
   const paginatedPositions = useMemo(() => {
@@ -1265,19 +1350,29 @@ const PositionList: React.FC = () => {
                 </Radio.Button>
               </Radio.Group>
             </div>
-            {redeemableSummary && redeemableSummary.totalCount > 0 && (
-              <Button
-                type="primary"
-                onClick={handleRedeemClick}
-                loading={loadingRedeemableSummary}
-                style={{
-                  background: '#52c41a',
-                  borderColor: '#52c41a'
-                }}
-              >
-                赎回 ({redeemableSummary.totalCount}个, {formatUSDC(redeemableSummary.totalValue)} USDC)
-              </Button>
-            )}
+            <Space wrap>
+              {positionFilter === 'current' && closeableSummary.totalCount > 0 && (
+                <Button
+                  danger
+                  onClick={handleCloseAllClick}
+                >
+                  平仓 ({closeableSummary.totalCount}个, {formatUSDC(closeableSummary.totalCurrentValue)} USDC)
+                </Button>
+              )}
+              {redeemableSummary && redeemableSummary.totalCount > 0 && (
+                <Button
+                  type="primary"
+                  onClick={handleRedeemClick}
+                  loading={loadingRedeemableSummary}
+                  style={{
+                    background: '#52c41a',
+                    borderColor: '#52c41a'
+                  }}
+                >
+                  赎回 ({redeemableSummary.totalCount}个, {formatUSDC(redeemableSummary.totalValue)} USDC)
+                </Button>
+              )}
+            </Space>
           </div>
         </div>
         {/* 合计信息：开仓价值、当前价值、盈亏、已实现盈亏（仅当前仓位显示） */}
@@ -1604,6 +1699,120 @@ const PositionList: React.FC = () => {
               </div>
             )}
           </Form>
+        )}
+      </Modal>
+
+      <Modal
+        title="一键平仓确认"
+        open={closeModalVisible}
+        onCancel={() => {
+          if (!closingPositions) {
+            setCloseModalVisible(false)
+          }
+        }}
+        onOk={handleCloseAllSubmit}
+        okText="确认平仓"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        width={isMobile ? '92%' : 820}
+        destroyOnClose
+        confirmLoading={closingPositions}
+        maskClosable={!closingPositions}
+      >
+        {closeModalPositions.length > 0 ? (
+          <div>
+            <Descriptions bordered column={1} size="small" style={{ marginBottom: '16px' }}>
+              <Descriptions.Item label="平仓仓位数量">
+                <Tag color="red">{closeModalSummary.totalCount} 个</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="当前市值合计">
+                <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#cf1322' }}>
+                  {formatUSDC(closeModalSummary.totalCurrentValue)} USDC
+                </span>
+              </Descriptions.Item>
+              <Descriptions.Item label="开仓价值合计">
+                <span>{formatUSDC(closeModalSummary.totalInitialValue)} USDC</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="涉及账户">
+                <Tag color="blue">{closeModalSummary.accountCount} 个账户</Tag>
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ marginTop: '16px' }}>
+              <div style={{ marginBottom: '8px', fontWeight: '500' }}>待平仓列表：</div>
+              <Table
+                dataSource={closeModalPositions}
+                rowKey={(record) => `${record.accountId}-${record.marketId}-${record.outcomeIndex ?? 'na'}-${record.side}`}
+                pagination={false}
+                size="small"
+                scroll={{ y: 300 }}
+                columns={[
+                  {
+                    title: '账户',
+                    dataIndex: 'accountName',
+                    key: 'accountName',
+                    render: (text, record) => text || `账户 ${record.accountId}`,
+                    width: 140
+                  },
+                  {
+                    title: '市场',
+                    dataIndex: 'marketTitle',
+                    key: 'marketTitle',
+                    render: (text, record) => text || `${record.marketId.substring(0, 10)}...`,
+                    width: 240
+                  },
+                  {
+                    title: '方向',
+                    dataIndex: 'side',
+                    key: 'side',
+                    render: (side) => <Tag color={getSideColor(side)}>{side}</Tag>,
+                    width: 80
+                  },
+                  {
+                    title: '数量',
+                    dataIndex: 'quantity',
+                    key: 'quantity',
+                    align: 'right' as const,
+                    render: (value) => formatNumber(value, 4),
+                    width: 120
+                  },
+                  {
+                    title: '当前价值',
+                    dataIndex: 'currentValue',
+                    key: 'currentValue',
+                    align: 'right' as const,
+                    render: (value) => (
+                      <span style={{ fontWeight: '500' }}>
+                        {formatNumber(value, 2)}
+                      </span>
+                    ),
+                    width: 120
+                  }
+                ]}
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: '16px',
+                padding: '12px',
+                background: '#fff2f0',
+                borderRadius: '8px',
+                border: '1px solid #ffccc7'
+              }}
+            >
+              <div style={{ color: '#666', fontSize: '12px', lineHeight: '1.8' }}>
+                <div><strong>提示：</strong></div>
+                <div>1. 将按当前筛选结果，对非可赎回仓位提交 100% 市价平仓。</div>
+                <div>2. 市价单使用 FAK，可能部分成交，因此提交后仓位不一定会立即全部清零。</div>
+                <div>3. 订单提交后，仓位列表会通过 WebSocket 逐步更新。</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Empty description="当前没有可平仓的仓位" />
+          </div>
         )}
       </Modal>
 

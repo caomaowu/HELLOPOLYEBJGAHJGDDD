@@ -89,11 +89,11 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
     fun existsActivePosition(copyTradingId: Long, marketId: String, outcomeIndex: Int?): Boolean
 
     /**
-     * 计算指定跟单配置、市场和方向下的当前持仓总价值 (成本价计算)
-     * 按市场+方向（outcomeIndex）分别统计
+     * 计算指定跟单配置、市场和方向下的当前持仓总成本。
+     * 按市场 + 方向（outcomeIndex）分别统计。
      */
     @Query("SELECT SUM(t.remainingQuantity * t.price) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.marketId = :marketId AND t.outcomeIndex = :outcomeIndex AND t.remainingQuantity > 0")
-    fun sumCurrentPositionValueByMarketAndOutcomeIndex(copyTradingId: Long, marketId: String, outcomeIndex: Int): BigDecimal?
+    fun sumCurrentPositionCostByMarketAndOutcomeIndex(copyTradingId: Long, marketId: String, outcomeIndex: Int): BigDecimal?
 
     @Query("SELECT SUM(t.quantity * t.price) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.createdAt >= :startTime AND t.createdAt < :endTime")
     fun sumDailyBuyVolume(copyTradingId: Long, startTime: Long, endTime: Long): BigDecimal?

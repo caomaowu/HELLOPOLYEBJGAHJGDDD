@@ -720,7 +720,11 @@ const EditModal: React.FC<EditModalProps> = ({
 
           <Divider>{t('copyTradingEdit.positionLimitFilter') || '最大仓位限制'}</Divider>
 
-          <Form.Item label={t('copyTradingEdit.maxPositionValue') || '最大仓位金额 (USDC)'} name="maxPositionValue">
+          <Form.Item
+            label={t('copyTradingEdit.maxPositionValue') || '最大仓位金额 (USDC)'}
+            name="maxPositionValue"
+            tooltip={t('copyTradingEdit.maxPositionValueTooltip') || '限制单个市场同方向的最大持仓成本。如果该方向的当前持仓成本 + 跟单金额超过此限制，则不会下单。不填写则不启用此限制'}
+          >
             <InputNumber min={0} step={0.0001} precision={4} style={{ width: '100%' }} />
           </Form.Item>
 

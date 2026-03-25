@@ -3,8 +3,10 @@ package com.wrbug.polymarketbot.service.accounts
 import com.wrbug.polymarketbot.api.TradeResponse
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.entity.Account
+import com.wrbug.polymarketbot.entity.ManualPositionHistory
 import com.wrbug.polymarketbot.enums.WalletType
 import com.wrbug.polymarketbot.repository.AccountRepository
+import com.wrbug.polymarketbot.repository.ManualPositionHistoryRepository
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import com.wrbug.polymarketbot.util.eq
@@ -33,6 +35,7 @@ import java.math.BigInteger
 @Service
 class AccountService(
     private val accountRepository: AccountRepository,
+    private val manualPositionHistoryRepository: ManualPositionHistoryRepository,
     private val clobService: PolymarketClobService,
     private val retrofitFactory: RetrofitFactory,
     private val blockchainService: BlockchainService,
@@ -57,6 +60,7 @@ class AccountService(
     // 市价卖单：bestBid - SELL_PRICE_ADJUSTMENT（减价，确保能立即成交）
     private val BUY_PRICE_ADJUSTMENT = BigDecimal("0.01")   // 买单价格调整系数（+0.01）
     private val SELL_PRICE_ADJUSTMENT = BigDecimal("0.02")  // 卖单价格调整系数（-0.02）
+    private val CLOSE_POSITION_SUBMISSION_INTERVAL_MS = 400L
 
     /**
      * 通过私钥导入账户
@@ -1031,6 +1035,7 @@ class AccountService(
     suspend fun getAllPositions(): Result<PositionListResponse> {
         return try {
             val accounts = accountRepository.findAll()
+            val accountsById = accounts.mapNotNull { account -> account.id?.let { it to account } }.toMap()
             val currentPositions = mutableListOf<AccountPositionDto>()
             val historyPositions = mutableListOf<AccountPositionDto>()
 
@@ -1103,6 +1108,11 @@ class AccountService(
                 }
             }
 
+            manualPositionHistoryRepository.findAllByOrderByCreatedAtDesc().forEach { history ->
+                val account = accountsById[history.accountId] ?: return@forEach
+                historyPositions.add(history.toPositionDto(account))
+            }
+
             // 按照接口返回的顺序返回，不进行排序
             // 前端负责本地排序
             Result.success(
@@ -1156,7 +1166,7 @@ class AccountService(
 
             // 3. 验证仓位是否存在并获取原始数量
             val positionsResult = getAllPositions()
-            val (_, originalQuantity) = positionsResult.fold(
+            val (position, originalQuantity) = positionsResult.fold(
                 onSuccess = { positionListResponse ->
                     val position = positionListResponse.currentPositions.find {
                         it.accountId == request.accountId &&
@@ -1341,6 +1351,19 @@ class AccountService(
                 val response = orderResponse.body()!!
                 if (response.success) {
                     val orderId = response.orderId ?: ""
+                    val orderStatus = response.status ?: "pending"
+
+                    persistManualPositionHistory(
+                        account = account,
+                        position = position,
+                        request = request,
+                        orderId = orderId,
+                        fallbackStatus = orderStatus,
+                        fallbackClosePrice = priceDecimal,
+                        fallbackQuantity = sellQuantity,
+                        apiSecret = apiSecret,
+                        apiPassphrase = apiPassphrase
+                    )
                     
                     // 发送订单成功通知（异步，不阻塞）
                     notificationScope.launch {
@@ -1391,7 +1414,7 @@ class AccountService(
                             orderType = request.orderType,
                             quantity = sellQuantity.toPlainString(),  // 使用计算后的卖出数量
                             price = if (request.orderType == "LIMIT") sellPrice else null,
-                            status = "pending",  // 订单状态需要从响应中获取
+                            status = orderStatus,
                             createdAt = System.currentTimeMillis()
                         )
                     )
@@ -1488,6 +1511,252 @@ class AccountService(
             Result.failure(Exception(fullErrorMsg))
         }
     }
+
+    private fun ManualPositionHistory.toPositionDto(account: Account): AccountPositionDto {
+        val displayQuantity = closedQuantity.setScale(4, java.math.RoundingMode.DOWN).toPlainString()
+        return AccountPositionDto(
+            accountId = account.id!!,
+            accountName = account.accountName,
+            walletAddress = account.walletAddress,
+            proxyAddress = account.proxyAddress,
+            marketId = marketId,
+            marketTitle = marketTitle,
+            marketSlug = marketSlug,
+            eventSlug = eventSlug,
+            marketIcon = marketIcon,
+            side = side,
+            outcomeIndex = outcomeIndex,
+            quantity = displayQuantity,
+            originalQuantity = closedQuantity.toPlainString(),
+            avgPrice = avgPrice.toPlainString(),
+            currentPrice = "0",
+            currentValue = "0",
+            initialValue = initialValue.toPlainString(),
+            pnl = realizedPnl.toPlainString(),
+            percentPnl = percentRealizedPnl?.toPlainString() ?: "0",
+            realizedPnl = realizedPnl.toPlainString(),
+            percentRealizedPnl = percentRealizedPnl?.toPlainString(),
+            redeemable = false,
+            mergeable = false,
+            endDate = null,
+            isCurrent = false
+        )
+    }
+
+    private suspend fun persistManualPositionHistory(
+        account: Account,
+        position: AccountPositionDto,
+        request: PositionSellRequest,
+        orderId: String,
+        fallbackStatus: String,
+        fallbackClosePrice: BigDecimal,
+        fallbackQuantity: BigDecimal,
+        apiSecret: String,
+        apiPassphrase: String
+    ) {
+        if (request.orderType != "MARKET" || orderId.isBlank()) {
+            return
+        }
+
+        try {
+            val orderDetail = clobService.getOrder(
+                orderId = orderId,
+                apiKey = account.apiKey ?: return,
+                apiSecret = apiSecret,
+                apiPassphrase = apiPassphrase,
+                walletAddress = account.walletAddress
+            ).getOrNull()
+
+            val matchedQuantity = orderDetail?.sizeMatched
+                ?.toSafeBigDecimal()
+                ?.takeIf { it > BigDecimal.ZERO }
+                ?: fallbackQuantity
+            val closePrice = orderDetail?.price
+                ?.toSafeBigDecimal()
+                ?.takeIf { it > BigDecimal.ZERO }
+                ?: fallbackClosePrice
+            val avgPrice = position.avgPrice.toSafeBigDecimal()
+            val initialValue = avgPrice.multiply(matchedQuantity)
+            val realizedPnl = closePrice.subtract(avgPrice).multiply(matchedQuantity)
+            val percentRealizedPnl = if (initialValue > BigDecimal.ZERO) {
+                realizedPnl.multiply(BigDecimal("100"))
+                    .divide(initialValue, 8, java.math.RoundingMode.HALF_UP)
+            } else {
+                null
+            }
+            val now = System.currentTimeMillis()
+
+            manualPositionHistoryRepository.save(
+                ManualPositionHistory(
+                    accountId = account.id ?: return,
+                    marketId = request.marketId,
+                    marketTitle = position.marketTitle,
+                    marketSlug = position.marketSlug,
+                    eventSlug = position.eventSlug,
+                    marketIcon = position.marketIcon,
+                    side = request.side,
+                    outcomeIndex = request.outcomeIndex ?: position.outcomeIndex,
+                    closedQuantity = matchedQuantity,
+                    avgPrice = avgPrice,
+                    closePrice = closePrice,
+                    initialValue = initialValue,
+                    realizedPnl = realizedPnl,
+                    percentRealizedPnl = percentRealizedPnl,
+                    closeOrderId = orderId,
+                    closeOrderStatus = orderDetail?.status ?: fallbackStatus,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+        } catch (e: Exception) {
+            logger.warn(
+                "保存手动平仓历史失败: accountId=${account.id}, marketId=${request.marketId}, side=${request.side}, orderId=$orderId, error=${e.message}",
+                e
+            )
+        }
+    }
+
+    suspend fun closePositions(request: PositionCloseRequest): Result<PositionCloseResponse> {
+        return try {
+            if (request.positions.isEmpty()) {
+                return Result.failure(IllegalArgumentException("平仓仓位列表不能为空"))
+            }
+
+            val uniqueItems = request.positions.distinctBy {
+                "${it.accountId}_${it.marketId}_${it.outcomeIndex ?: -1}_${it.side}"
+            }
+
+            val positionsResult = getAllPositions()
+            val allPositions = positionsResult.getOrElse {
+                return Result.failure(Exception("查询仓位失败: ${it.message}"))
+            }
+
+            val successOrders = mutableListOf<PositionCloseOrderInfo>()
+            val failedItems = mutableListOf<PositionCloseFailedItem>()
+
+            val closeResults = supervisorScope {
+                uniqueItems.mapIndexed { index, item ->
+                    async {
+                        delay(index * CLOSE_POSITION_SUBMISSION_INTERVAL_MS)
+                        closeSinglePosition(item, allPositions.currentPositions)
+                    }
+                }.awaitAll()
+            }
+
+            closeResults.forEach { result ->
+                result.order?.let(successOrders::add)
+                result.failedItem?.let(failedItems::add)
+            }
+
+            Result.success(
+                PositionCloseResponse(
+                    totalCount = uniqueItems.size,
+                    successCount = successOrders.size,
+                    failedCount = failedItems.size,
+                    orders = successOrders,
+                    failedItems = failedItems,
+                    createdAt = System.currentTimeMillis()
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("一键平仓失败: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun closeSinglePosition(
+        item: AccountClosePositionItem,
+        currentPositions: List<AccountPositionDto>
+    ): PositionCloseExecutionResult {
+        return try {
+            val matchedPosition = currentPositions.find { position ->
+                position.accountId == item.accountId &&
+                    position.marketId == item.marketId &&
+                    position.side == item.side &&
+                    (item.outcomeIndex == null || position.outcomeIndex == item.outcomeIndex)
+            }
+
+            if (matchedPosition == null) {
+                return PositionCloseExecutionResult(
+                    failedItem = PositionCloseFailedItem(
+                        accountId = item.accountId,
+                        marketId = item.marketId,
+                        side = item.side,
+                        outcomeIndex = item.outcomeIndex,
+                        reason = "仓位不存在或已变化，请刷新后重试"
+                    )
+                )
+            }
+
+            val resolvedOutcomeIndex = item.outcomeIndex ?: matchedPosition.outcomeIndex
+
+            if (matchedPosition.redeemable) {
+                return PositionCloseExecutionResult(
+                    failedItem = PositionCloseFailedItem(
+                        accountId = item.accountId,
+                        marketId = item.marketId,
+                        side = item.side,
+                        outcomeIndex = resolvedOutcomeIndex,
+                        reason = "该仓位已可赎回，请使用赎回功能"
+                    )
+                )
+            }
+
+            val sellResult = sellPosition(
+                PositionSellRequest(
+                    accountId = item.accountId,
+                    marketId = item.marketId,
+                    side = item.side,
+                    outcomeIndex = resolvedOutcomeIndex,
+                    orderType = "MARKET",
+                    percent = "100"
+                )
+            )
+
+            sellResult.fold(
+                onSuccess = { response ->
+                    PositionCloseExecutionResult(
+                        order = PositionCloseOrderInfo(
+                            accountId = item.accountId,
+                            marketId = item.marketId,
+                            side = item.side,
+                            outcomeIndex = resolvedOutcomeIndex,
+                            orderId = response.orderId,
+                            quantity = response.quantity,
+                            price = response.price,
+                            status = response.status
+                        )
+                    )
+                },
+                onFailure = { e ->
+                    PositionCloseExecutionResult(
+                        failedItem = PositionCloseFailedItem(
+                            accountId = item.accountId,
+                            marketId = item.marketId,
+                            side = item.side,
+                            outcomeIndex = resolvedOutcomeIndex,
+                            reason = e.message ?: "未知错误"
+                        )
+                    )
+                }
+            )
+        } catch (e: Exception) {
+            PositionCloseExecutionResult(
+                failedItem = PositionCloseFailedItem(
+                    accountId = item.accountId,
+                    marketId = item.marketId,
+                    side = item.side,
+                    outcomeIndex = item.outcomeIndex,
+                    reason = e.message ?: "未知错误"
+                )
+            )
+        }
+    }
+
+    private data class PositionCloseExecutionResult(
+        val order: PositionCloseOrderInfo? = null,
+        val failedItem: PositionCloseFailedItem? = null
+    )
 
     /**
      * 从订单表获取最优价（用于市价单）

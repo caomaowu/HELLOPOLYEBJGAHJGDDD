@@ -32,7 +32,7 @@ class CopyTradingSizingService(
         marketId: String,
         outcomeIndex: Int?
     ): CopyTradingSizingResult {
-        val currentPositionValue = getCurrentPositionValue(copyTrading, marketId, outcomeIndex)
+        val currentPositionCost = getCurrentPositionCost(copyTrading, marketId, outcomeIndex)
         val currentActivePositionCount = getCurrentActivePositionCount(
             copyTrading.id ?: return rejected("跟单配置不存在", SizingRejectionType.INVALID_INPUT)
         )
@@ -63,7 +63,7 @@ class CopyTradingSizingService(
             config = copyTrading.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
             tradePrice = tradePrice,
-            currentPositionValue = currentPositionValue,
+            currentPositionCost = currentPositionCost,
             currentDailyVolume = currentDailyVolume,
             currentActivePositionCount = currentActivePositionCount,
             hasActivePosition = hasActivePosition,
@@ -75,7 +75,7 @@ class CopyTradingSizingService(
         task: BacktestTask,
         leaderOrderAmount: BigDecimal,
         tradePrice: BigDecimal,
-        currentPositionValue: BigDecimal,
+        currentPositionCost: BigDecimal,
         currentDailyVolume: BigDecimal,
         repeatAddReductionContext: RepeatAddReductionContext? = null
     ): CopyTradingSizingResult {
@@ -83,7 +83,7 @@ class CopyTradingSizingService(
             config = task.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
             tradePrice = tradePrice,
-            currentPositionValue = currentPositionValue,
+            currentPositionCost = currentPositionCost,
             currentDailyVolume = currentDailyVolume,
             repeatAddReductionContext = repeatAddReductionContext
         )
@@ -93,7 +93,7 @@ class CopyTradingSizingService(
         config: CopyTradingSizingConfig,
         leaderOrderAmount: BigDecimal,
         tradePrice: BigDecimal,
-        currentPositionValue: BigDecimal,
+        currentPositionCost: BigDecimal,
         currentDailyVolume: BigDecimal,
         currentActivePositionCount: Int? = null,
         hasActivePosition: Boolean = false,
@@ -167,7 +167,7 @@ class CopyTradingSizingService(
         }
 
         if (config.maxPositionValue != null) {
-            val remainingPosition = config.maxPositionValue.subtract(currentPositionValue).max(BigDecimal.ZERO)
+            val remainingPosition = config.maxPositionValue.subtract(currentPositionCost).max(BigDecimal.ZERO)
             if (remainingPosition < config.minOrderSize) {
                 return buildResult(
                     baseAmount = baseAmount,
@@ -179,7 +179,7 @@ class CopyTradingSizingService(
                     status = SizingStatus.REJECTED,
                     reason = appendReasons(
                         reasons,
-                        "超过最大仓位金额限制: 当前仓位=${currentPositionValue.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
+                        "超过最大仓位金额限制: 当前持仓成本=${currentPositionCost.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
                     ),
                     repeatAddReductionInfo = repeatAddReductionInfo,
                     rejectionType = SizingRejectionType.MAX_POSITION_LIMIT
@@ -267,7 +267,7 @@ class CopyTradingSizingService(
         )
     }
 
-    private suspend fun getCurrentPositionValue(
+    private suspend fun getCurrentPositionCost(
         copyTrading: CopyTrading,
         marketId: String,
         outcomeIndex: Int?
@@ -275,8 +275,8 @@ class CopyTradingSizingService(
         val trackingRepository = requireNotNull(copyOrderTrackingRepository) {
             "CopyOrderTrackingRepository 未初始化"
         }
-        val dbValue = if (outcomeIndex != null && copyTrading.id != null) {
-            trackingRepository.sumCurrentPositionValueByMarketAndOutcomeIndex(
+        val dbCost = if (outcomeIndex != null && copyTrading.id != null) {
+            trackingRepository.sumCurrentPositionCostByMarketAndOutcomeIndex(
                 copyTrading.id,
                 marketId,
                 outcomeIndex
@@ -289,13 +289,17 @@ class CopyTradingSizingService(
             val positions = requireNotNull(accountService) {
                 "AccountService 未初始化"
             }.getAllPositions().getOrNull()?.currentPositions.orEmpty()
-            val extValue = positions
-                .filter { it.accountId == copyTrading.accountId && it.marketId == marketId }
-                .sumOf { it.currentValue.toSafeBigDecimal() }
-            dbValue.max(extValue)
+            val extCost = positions
+                .filter {
+                    it.accountId == copyTrading.accountId &&
+                        it.marketId == marketId &&
+                        it.outcomeIndex == outcomeIndex
+                }
+                .sumOf { it.initialValue.toSafeBigDecimal() }
+            dbCost.max(extCost)
         } catch (e: Exception) {
-            logger.warn("获取外部仓位失败，使用数据库仓位值: copyTradingId=${copyTrading.id}, marketId=$marketId", e)
-            dbValue
+            logger.warn("获取外部仓位失败，使用数据库仓位成本: copyTradingId=${copyTrading.id}, marketId=$marketId", e)
+            dbCost
         }
     }
 
