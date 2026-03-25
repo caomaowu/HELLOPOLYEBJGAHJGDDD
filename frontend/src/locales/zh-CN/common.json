@@ -320,7 +320,6 @@
     "positions": "仓位管理",
     "backtest": "回测",
     "statistics": "统计信息",
-    "announcements": "公告",
     "users": "用户管理",
     "systemSettings": "系统管理",
     "systemOverview": "概览",
@@ -1451,19 +1450,6 @@
     "webhookUrl": "Webhook URL",
     "webhookUrlPlaceholder": "Webhook URL（从 Slack App 设置中获取）",
     "webhookUrlRequired": "请输入 Webhook URL"
-  },
-  "announcements": {
-    "title": "公告",
-    "noAnnouncements": "暂无公告",
-    "noDetail": "请选择一条公告查看详情",
-    "viewMore": "查看更多公告",
-    "author": "作者",
-    "createdAt": "发布时间",
-    "noTitle": "无标题",
-    "expand": "展开全部",
-    "collapse": "收起",
-    "refresh": "刷新",
-    "list": "列表"
   },
   "copyTradingOrders": {
     "title": "订单列表",

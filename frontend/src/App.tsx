@@ -29,7 +29,6 @@ import FilteredOrdersList from './pages/FilteredOrdersList'
 import SystemSettings from './pages/SystemSettings'
 import ApiHealthStatus from './pages/ApiHealthStatus'
 import RpcNodeSettings from './pages/RpcNodeSettings'
-import Announcements from './pages/Announcements'
 import BacktestList from './pages/BacktestList'
 import BacktestDetail from './pages/BacktestDetail'
 import CryptoTailStrategyList from './pages/CryptoTailStrategyList'
@@ -230,7 +229,7 @@ function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           
           {/* 鍙椾繚鎶ょ殑璺敱 */}
-          <Route path="/" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
+          <Route path="/" element={<ProtectedRoute><Navigate to="/accounts" replace /></ProtectedRoute>} />
           <Route path="/accounts" element={<ProtectedRoute><AccountList /></ProtectedRoute>} />
           <Route path="/accounts/import" element={<ProtectedRoute><AccountImport /></ProtectedRoute>} />
           <Route path="/accounts/detail" element={<ProtectedRoute><AccountDetail /></ProtectedRoute>} />
@@ -256,7 +255,6 @@ function App() {
           <Route path="/positions" element={<ProtectedRoute><PositionList /></ProtectedRoute>} />
           <Route path="/statistics" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
           <Route path="/users" element={<ProtectedRoute><UserList /></ProtectedRoute>} />
-          <Route path="/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
           <Route path="/system-settings" element={<ProtectedRoute><SystemSettings /></ProtectedRoute>} />
           <Route path="/system-settings/rpc-nodes" element={<ProtectedRoute><RpcNodeSettings /></ProtectedRoute>} />          <Route path="/system-settings/api-health" element={<ProtectedRoute><ApiHealthStatus /></ProtectedRoute>} />
           

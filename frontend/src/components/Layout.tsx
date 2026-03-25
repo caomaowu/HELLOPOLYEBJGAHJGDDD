@@ -17,7 +17,6 @@ import {
   SettingOutlined,
   CheckCircleOutlined,
   ApiOutlined,
-  NotificationOutlined,
   LineChartOutlined,
   RocketOutlined,
   DashboardOutlined
@@ -140,11 +139,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       : t('systemUpdate.versionTooltipLatest')
   
   const menuItems: MenuProps['items'] = [
-    {
-      key: '/announcements',
-      icon: <NotificationOutlined />,
-      label: t('menu.announcements') || '公告'
-    },
     {
       key: '/accounts',
       icon: <WalletOutlined />,
@@ -450,4 +444,3 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 }
 
 export default Layout
-

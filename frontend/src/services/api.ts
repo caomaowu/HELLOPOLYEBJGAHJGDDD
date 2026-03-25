@@ -800,9 +800,6 @@ export const apiService = {
   },
   
   /**
-   * 公告 API
-   */
-  /**
    * RPC 节点配置 API
    */
   rpcNodes: {
@@ -826,63 +823,6 @@ export const apiService = {
     
     validate: (data: import('../types').RpcNodeAddRequest) =>
       apiClient.post<ApiResponse<{ valid: boolean; message: string; responseTimeMs?: number }>>('/system/rpc-nodes/validate', data)
-  },
-  
-
-  announcements: {
-    /**
-     * 获取公告列表（最近10条）
-     */
-    list: (data?: { forceRefresh?: boolean }) =>
-      apiClient.post<ApiResponse<{
-        list: Array<{
-          id: number
-          title: string
-          body: string
-          author: string
-          authorAvatarUrl?: string
-          createdAt: number
-          updatedAt: number
-          reactions?: {
-            plusOne?: number
-            minusOne?: number
-            laugh?: number
-            confused?: number
-            heart?: number
-            hooray?: number
-            eyes?: number
-            rocket?: number
-            total?: number
-          }
-        }>
-        hasMore: boolean
-        total: number
-      }>>('/announcements/list', data || {}),
-    
-    /**
-     * 获取公告详情
-     */
-    detail: (data: { id?: number; forceRefresh?: boolean }) =>
-      apiClient.post<ApiResponse<{
-        id: number
-        title: string
-        body: string
-        author: string
-        authorAvatarUrl?: string
-        createdAt: number
-        updatedAt: number
-        reactions?: {
-          plusOne?: number
-          minusOne?: number
-          laugh?: number
-          confused?: number
-          heart?: number
-          hooray?: number
-          eyes?: number
-          rocket?: number
-          total?: number
-        }
-      }>>('/announcements/detail', data)
   }
 }
 
@@ -958,4 +898,3 @@ export const backtestService = {
   rerun: (data: BacktestRerunRequest) =>
     apiClient.post<ApiResponse<void>>('/backtest/tasks/rerun', data)
 }
-
