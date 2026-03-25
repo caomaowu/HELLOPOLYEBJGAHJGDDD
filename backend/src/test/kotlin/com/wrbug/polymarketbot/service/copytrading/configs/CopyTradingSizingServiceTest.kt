@@ -372,7 +372,8 @@ class CopyTradingSizingServiceTest {
         )
         `when`(trackingRepository.sumCurrentPositionCostByMarketAndOutcomeIndex(1L, "market-1", 1))
             .thenReturn(BigDecimal.ZERO)
-        `when`(trackingRepository.countActivePositions(1L)).thenReturn(1)
+        `when`(trackingRepository.findDistinctActivePositionKeys(1L))
+            .thenReturn(listOf(activePositionKey("market-1", 1)))
         `when`(trackingRepository.existsActivePosition(1L, "market-1", 1)).thenReturn(false)
         `when`(
             trackingRepository.sumDailyBuyVolume(
@@ -416,6 +417,58 @@ class CopyTradingSizingServiceTest {
 
         assertEquals(SizingStatus.EXECUTABLE, result.status)
         assertDecimalEquals("2", result.finalAmount)
+    }
+
+    @Test
+    fun `real time sizing should ignore stale db active position count after manual close`() = runTest {
+        val trackingRepository = mock(CopyOrderTrackingRepository::class.java)
+        val accountService = mock(AccountService::class.java)
+        val repeatAddStateService = mock(CopyTradingRepeatAddStateService::class.java)
+        val service = CopyTradingSizingService(
+            copyOrderTrackingRepository = trackingRepository,
+            accountService = accountService,
+            repeatAddStateService = repeatAddStateService
+        )
+        val copyTrading = CopyTrading(
+            id = 1L,
+            accountId = 11L,
+            leaderId = 22L,
+            copyMode = CopyTradingSizingSupport.COPY_MODE_FIXED,
+            fixedAmount = bd("10"),
+            maxPositionCount = 1
+        )
+        `when`(trackingRepository.sumCurrentPositionCostByMarketAndOutcomeIndex(1L, "market-new", 1))
+            .thenReturn(BigDecimal.ZERO)
+        `when`(trackingRepository.findDistinctActivePositionKeys(1L))
+            .thenReturn(listOf(activePositionKey("market-stale", 1)))
+        `when`(trackingRepository.existsActivePosition(1L, "market-new", 1)).thenReturn(false)
+        `when`(
+            trackingRepository.sumDailyBuyVolume(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong()
+            )
+        )
+            .thenReturn(BigDecimal.ZERO)
+        `when`(accountService.getAllPositions()).thenReturn(
+            Result.success(
+                PositionListResponse(
+                    currentPositions = emptyList(),
+                    historyPositions = emptyList()
+                )
+            )
+        )
+
+        val result = service.calculateRealTimeBuySizing(
+            copyTrading = copyTrading,
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            marketId = "market-new",
+            outcomeIndex = 1
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("10", result.finalAmount)
     }
 
     @Test
@@ -509,5 +562,10 @@ class CopyTradingSizingServiceTest {
 
     private fun assertDecimalEquals(expected: String, actual: BigDecimal?) {
         assertTrue(actual != null && actual.compareTo(BigDecimal(expected)) == 0, "Expected $expected but was $actual")
+    }
+
+    private fun activePositionKey(marketId: String, outcomeIndex: Int?) = object : CopyOrderTrackingRepository.ActivePositionKeyView {
+        override val marketId: String = marketId
+        override val outcomeIndex: Int? = outcomeIndex
     }
 }

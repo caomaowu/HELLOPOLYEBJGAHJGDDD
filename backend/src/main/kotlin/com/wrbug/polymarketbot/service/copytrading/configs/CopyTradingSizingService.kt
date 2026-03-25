@@ -32,14 +32,17 @@ class CopyTradingSizingService(
         marketId: String,
         outcomeIndex: Int?
     ): CopyTradingSizingResult {
+        val currentAccountPositionKeys = getCurrentAccountPositionKeys(copyTrading.accountId)
         val currentPositionCost = getCurrentPositionCost(copyTrading, marketId, outcomeIndex)
         val currentActivePositionCount = getCurrentActivePositionCount(
-            copyTrading.id ?: return rejected("跟单配置不存在", SizingRejectionType.INVALID_INPUT)
+            copyTrading.id ?: return rejected("跟单配置不存在", SizingRejectionType.INVALID_INPUT),
+            currentAccountPositionKeys
         )
         val hasActivePosition = hasActivePosition(
             copyTrading.id,
             marketId,
-            outcomeIndex
+            outcomeIndex,
+            currentAccountPositionKeys
         )
         val currentDailyVolume = getCurrentDailyVolume(
             copyTrading.id
@@ -314,18 +317,61 @@ class CopyTradingSizingService(
         return trackingRepository.sumDailyBuyVolume(copyTradingId, start, end) ?: BigDecimal.ZERO
     }
 
-    private fun getCurrentActivePositionCount(copyTradingId: Long): Int {
+    private fun getCurrentActivePositionCount(
+        copyTradingId: Long,
+        currentAccountPositionKeys: Set<String>?
+    ): Int {
         val trackingRepository = requireNotNull(copyOrderTrackingRepository) {
             "CopyOrderTrackingRepository 未初始化"
         }
-        return trackingRepository.countActivePositions(copyTradingId)
+        val dbActivePositionKeys = trackingRepository.findDistinctActivePositionKeys(copyTradingId)
+            .map { toPositionKey(it.marketId, it.outcomeIndex) }
+            .toSet()
+
+        if (currentAccountPositionKeys == null) {
+            return dbActivePositionKeys.size
+        }
+
+        return dbActivePositionKeys.count { key -> key in currentAccountPositionKeys }
     }
 
-    private fun hasActivePosition(copyTradingId: Long, marketId: String, outcomeIndex: Int?): Boolean {
+    private fun hasActivePosition(
+        copyTradingId: Long,
+        marketId: String,
+        outcomeIndex: Int?,
+        currentAccountPositionKeys: Set<String>?
+    ): Boolean {
         val trackingRepository = requireNotNull(copyOrderTrackingRepository) {
             "CopyOrderTrackingRepository 未初始化"
         }
-        return trackingRepository.existsActivePosition(copyTradingId, marketId, outcomeIndex)
+        val dbHasActivePosition = trackingRepository.existsActivePosition(copyTradingId, marketId, outcomeIndex)
+        if (!dbHasActivePosition) {
+            return false
+        }
+        if (currentAccountPositionKeys == null) {
+            return true
+        }
+        return toPositionKey(marketId, outcomeIndex) in currentAccountPositionKeys
+    }
+
+    private suspend fun getCurrentAccountPositionKeys(accountId: Long): Set<String>? {
+        return try {
+            val positions = requireNotNull(accountService) {
+                "AccountService 未初始化"
+            }.getAllPositions().getOrNull()?.currentPositions.orEmpty()
+            positions
+                .asSequence()
+                .filter { it.accountId == accountId }
+                .map { toPositionKey(it.marketId, it.outcomeIndex) }
+                .toSet()
+        } catch (e: Exception) {
+            logger.warn("获取账户当前仓位失败，活跃仓位数量回退到数据库口径: accountId=$accountId", e)
+            null
+        }
+    }
+
+    private fun toPositionKey(marketId: String, outcomeIndex: Int?): String {
+        return "${marketId}__${outcomeIndex ?: -1}"
     }
 
     private fun calculateAdaptiveRatio(

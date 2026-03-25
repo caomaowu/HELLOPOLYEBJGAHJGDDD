@@ -10,6 +10,22 @@ import AccountImportForm from '../components/AccountImportForm'
 import AccountSetupStatusBlock from '../components/AccountSetupStatusBlock'
 
 const { Title } = Typography
+const BALANCE_REQUEST_TIMEOUT_MS = 20000
+
+const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timerId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage))
+    }, timeoutMs)
+
+    promise
+      .then((result) => resolve(result))
+      .catch((error) => reject(error))
+      .finally(() => {
+        window.clearTimeout(timerId)
+      })
+  })
+}
 
 const AccountList: React.FC = () => {
   const { t } = useTranslation()
@@ -45,41 +61,49 @@ const AccountList: React.FC = () => {
   useEffect(() => {
     let cancelled = false
 
-    const loadBalances = async () => {
-      for (const account of accounts) {
-        if (loadedBalanceIdsRef.current.has(account.id) || loadingBalanceIdsRef.current.has(account.id)) {
-          continue
-        }
-
-        loadingBalanceIdsRef.current.add(account.id)
-        setBalanceLoading(prev => ({ ...prev, [account.id]: true }))
-        try {
-          const balanceData = await fetchAccountBalance(account.id)
-          if (cancelled) return
-          setBalanceMap(prev => ({
-            ...prev,
-            [account.id]: {
-              total: balanceData.totalBalance || '0',
-              available: balanceData.availableBalance || '0',
-              position: balanceData.positionBalance || '0'
-            }
-          }))
-          loadedBalanceIdsRef.current.add(account.id)
-        } catch (error) {
-          if (cancelled) return
-          console.error(`获取账户 ${account.id} 余额失败:`, error)
-          setBalanceMap(prev => ({
-            ...prev,
-            [account.id]: { total: '-', available: '-', position: '-' }
-          }))
-          loadedBalanceIdsRef.current.add(account.id)
-        } finally {
-          loadingBalanceIdsRef.current.delete(account.id)
-          if (!cancelled) {
-            setBalanceLoading(prev => ({ ...prev, [account.id]: false }))
+    const loadSingleBalance = async (account: Account) => {
+      loadingBalanceIdsRef.current.add(account.id)
+      setBalanceLoading(prev => ({ ...prev, [account.id]: true }))
+      try {
+        const balanceData = await withTimeout(
+          fetchAccountBalance(account.id),
+          BALANCE_REQUEST_TIMEOUT_MS,
+          `获取账户 ${account.id} 余额超时`
+        )
+        if (cancelled) return
+        setBalanceMap(prev => ({
+          ...prev,
+          [account.id]: {
+            total: balanceData.totalBalance || '0',
+            available: balanceData.availableBalance || '0',
+            position: balanceData.positionBalance || '0'
           }
+        }))
+        loadedBalanceIdsRef.current.add(account.id)
+      } catch (error) {
+        if (cancelled) return
+        console.error(`获取账户 ${account.id} 余额失败:`, error)
+        setBalanceMap(prev => ({
+          ...prev,
+          [account.id]: { total: '-', available: '-', position: '-' }
+        }))
+        loadedBalanceIdsRef.current.add(account.id)
+      } finally {
+        loadingBalanceIdsRef.current.delete(account.id)
+        if (!cancelled) {
+          setBalanceLoading(prev => ({ ...prev, [account.id]: false }))
         }
       }
+    }
+
+    const loadBalances = async () => {
+      const pendingAccounts = accounts.filter(
+        account => !loadedBalanceIdsRef.current.has(account.id) && !loadingBalanceIdsRef.current.has(account.id)
+      )
+      if (pendingAccounts.length === 0) {
+        return
+      }
+      await Promise.allSettled(pendingAccounts.map(loadSingleBalance))
     }
 
     if (accounts.length > 0) {

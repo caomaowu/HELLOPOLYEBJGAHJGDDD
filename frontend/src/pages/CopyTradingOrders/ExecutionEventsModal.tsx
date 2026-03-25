@@ -331,7 +331,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
   }
 
   const renderEventDetail = (event: CopyTradingExecutionEvent) => (
-    <div>
+    <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.6 }}>
       <div>{event.message}</div>
       {renderLatencySummary(event)}
       <div style={{ fontSize: 12, color: '#666', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -445,9 +445,12 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
       title: t('copyTradingOrders.market') || '市场',
       dataIndex: 'marketTitle',
       key: 'marketTitle',
-      width: 180,
-      ellipsis: true,
-      render: (_: string, record: CopyTradingExecutionEvent) => record.marketTitle || record.marketId || '-'
+      width: 260,
+      render: (_: string, record: CopyTradingExecutionEvent) => (
+        <div style={{ whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.5 }}>
+          {record.marketTitle || record.marketId || '-'}
+        </div>
+      )
     },
     {
       title: t('copyTradingOrders.executionEventStage') || '阶段',
@@ -516,7 +519,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     {
       title: t('copyTradingOrders.executionEventMessage') || '说明',
       key: 'message',
-      ellipsis: true,
+      width: 520,
       render: (_: string, record: CopyTradingExecutionEvent) => renderEventDetail(record)
     },
     {
@@ -543,7 +546,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
       open={open}
       onCancel={onClose}
       footer={null}
-      width="90%"
+      width={isMobile ? '95%' : '96vw'}
       style={{ top: 20 }}
       bodyStyle={{ padding: '24px', maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}
     >
@@ -707,6 +710,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
           dataSource={events}
           rowKey="id"
           loading={loading}
+          scroll={{ x: 1800 }}
           pagination={{
             current: page,
             pageSize: limit,

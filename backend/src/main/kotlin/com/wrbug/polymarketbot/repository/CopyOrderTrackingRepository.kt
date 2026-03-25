@@ -11,6 +11,11 @@ import java.math.BigDecimal
  */
 @Repository
 interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
+    interface ActivePositionKeyView {
+        val marketId: String
+        val outcomeIndex: Int?
+    }
+
     @Query("SELECT DISTINCT t.marketId FROM CopyOrderTracking t WHERE t.marketId <> '' AND t.marketId LIKE '0x%'")
     fun findDistinctValidMarketIds(): List<String>
     
@@ -75,6 +80,19 @@ interface CopyOrderTrackingRepository : JpaRepository<CopyOrderTracking, Long> {
      */
     @Query("SELECT COUNT(DISTINCT CONCAT(t.marketId, '_', COALESCE(t.outcomeIndex, -1))) FROM CopyOrderTracking t WHERE t.copyTradingId = :copyTradingId AND t.remainingQuantity > 0")
     fun countActivePositions(copyTradingId: Long): Int
+
+    /**
+     * 查询指定跟单配置下的活跃仓位键（marketId + outcomeIndex）
+     */
+    @Query(
+        """
+        SELECT DISTINCT t.marketId AS marketId, t.outcomeIndex AS outcomeIndex
+        FROM CopyOrderTracking t
+        WHERE t.copyTradingId = :copyTradingId
+          AND t.remainingQuantity > 0
+        """
+    )
+    fun findDistinctActivePositionKeys(copyTradingId: Long): List<ActivePositionKeyView>
 
     @Query(
         """
