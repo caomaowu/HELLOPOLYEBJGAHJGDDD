@@ -25,6 +25,7 @@ import org.springframework.stereotype.Component
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import jakarta.annotation.PreDestroy
 
@@ -128,7 +129,8 @@ class RetrofitFactory(
     // 缓存 RPC API 客户端：rpcUrl -> EthereumRpcApi
     private val rpcApiCache = ConcurrentHashMap<String, EthereumRpcApi>()
     
-    // 缓存 Builder Relayer API 客户端：relayerUrl -> BuilderRelayerApi
+    // 缓存 Builder Relayer API 客户端：relayerUrl + credentials digest -> BuilderRelayerApi
+    // 不能只按 URL 缓存，否则不同账户/系统配置的 Builder 凭证会串用，导致 401 invalid authorization。
     private val builderRelayerApiCache = ConcurrentHashMap<String, BuilderRelayerApi>()
     
     /**
@@ -371,7 +373,7 @@ class RetrofitFactory(
 
     /**
      * 创建 Builder Relayer API 客户端
-     * 按 relayerUrl 缓存，避免重复创建
+     * 按 relayerUrl + 凭证摘要缓存，避免不同账户的 Builder 鉴权头被错误复用
      * @param relayerUrl Builder Relayer URL
      * @param apiKey Builder API Key
      * @param secret Builder Secret
@@ -390,8 +392,14 @@ class RetrofitFactory(
             relayerUrl
         }
         
-        // 使用 baseUrl 作为缓存键（注意：如果 API Key 变化，需要清理缓存）
-        return builderRelayerApiCache.computeIfAbsent(baseUrl) {
+        val cacheKey = buildBuilderRelayerCacheKey(
+            baseUrl = baseUrl,
+            apiKey = apiKey,
+            secret = secret,
+            passphrase = passphrase
+        )
+
+        return builderRelayerApiCache.computeIfAbsent(cacheKey) {
             // 添加 Builder 认证拦截器
             val builderAuthInterceptor = BuilderAuthInterceptor(apiKey, secret, passphrase)
             val okHttpClient = createClient()
@@ -405,6 +413,18 @@ class RetrofitFactory(
                 .build()
                 .create(BuilderRelayerApi::class.java)
         }
+    }
+
+    private fun buildBuilderRelayerCacheKey(
+        baseUrl: String,
+        apiKey: String,
+        secret: String,
+        passphrase: String
+    ): String {
+        val raw = "$baseUrl\n$apiKey\n$secret\n$passphrase"
+        val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
+        val digestHex = digest.joinToString("") { "%02x".format(it) }
+        return "$baseUrl#$digestHex"
     }
     
     /**

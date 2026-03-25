@@ -435,6 +435,22 @@ const PositionList: React.FC = () => {
     return `${num >= 0 ? '+' : ''}${num.toFixed(2)}%`
   }
 
+  const getPositionPnlDisplay = (position: AccountPosition) => {
+    if (position.isCurrent) {
+      return {
+        label: '盈亏',
+        value: position.pnl,
+        percent: position.percentPnl
+      }
+    }
+
+    return {
+      label: '已实现盈亏',
+      value: position.pnl || position.realizedPnl || '0',
+      percent: position.percentPnl || position.percentRealizedPnl
+    }
+  }
+
   // 统计当前筛选后的仓位合计：开仓价值、当前价值、盈亏、已实现盈亏
   const positionTotals = useMemo(() => {
     if (filteredPositions.length === 0) {
@@ -657,7 +673,8 @@ const PositionList: React.FC = () => {
     return (
       <Row gutter={[16, 16]}>
         {paginatedPositions.map((position, index) => {
-          const pnlNum = parseFloat(position.pnl || '0')
+          const pnlDisplay = getPositionPnlDisplay(position)
+          const pnlNum = parseFloat(pnlDisplay.value || '0')
           const isProfit = pnlNum >= 0
           // 只有当前仓位才根据盈亏显示边框颜色
           const borderColor = positionFilter === 'current'
@@ -771,15 +788,15 @@ const PositionList: React.FC = () => {
                 {/* 关键数据 */}
                 <div style={{ marginBottom: '12px' }}>
                   {/* 移动端折叠时，显示盈亏（使用简单样式） */}
-                  {shouldCollapse && positionFilter === 'current' && (
+                  {shouldCollapse && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '13px', color: '#666' }}>盈亏</span>
+                      <span style={{ fontSize: '13px', color: '#666' }}>{pnlDisplay.label}</span>
                       <span style={{
                         fontSize: '13px',
                         fontWeight: '500',
                         color: isProfit ? '#52c41a' : '#f5222d'
                       }}>
-                        {pnlNum >= 0 ? '+' : ''}{formatUSDC(position.pnl)} USDC
+                        {pnlNum >= 0 ? '+' : ''}{formatUSDC(pnlDisplay.value)} USDC
                       </span>
                     </div>
                   )}
@@ -843,8 +860,8 @@ const PositionList: React.FC = () => {
                   )}
                 </div>
 
-                {/* 盈亏信息 - 突出显示（仅当前仓位显示，仅展开时显示） */}
-                {positionFilter === 'current' && !shouldCollapse && (
+                {/* 盈亏信息 - 突出显示（展开时显示） */}
+                {!shouldCollapse && (
                   <div style={{
                     marginBottom: '12px',
                     padding: '12px',
@@ -853,13 +870,13 @@ const PositionList: React.FC = () => {
                     border: `1px solid ${isProfit ? 'rgba(82, 196, 26, 0.2)' : 'rgba(245, 34, 45, 0.2)'}`
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '13px', color: '#666' }}>盈亏</span>
+                      <span style={{ fontSize: '13px', color: '#666' }}>{pnlDisplay.label}</span>
                       <span style={{
                         fontSize: '16px',
                         fontWeight: 'bold',
                         color: isProfit ? '#52c41a' : '#f5222d'
                       }}>
-                        {pnlNum >= 0 ? '+' : ''}{formatUSDC(position.pnl)} USDC
+                        {pnlNum >= 0 ? '+' : ''}{formatUSDC(pnlDisplay.value)} USDC
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -868,10 +885,10 @@ const PositionList: React.FC = () => {
                         color: isProfit ? '#52c41a' : '#f5222d',
                         fontWeight: '500'
                       }}>
-                        {formatPercent(position.percentPnl)}
+                        {formatPercent(pnlDisplay.percent)}
                       </span>
                     </div>
-                    {position.realizedPnl && (
+                    {positionFilter === 'current' && position.realizedPnl && (
                       <div style={{
                         marginTop: '8px',
                         paddingTop: '8px',
@@ -1081,7 +1098,7 @@ const PositionList: React.FC = () => {
       )
     }
 
-    // 只有当前仓位才显示盈亏和已实现盈亏列
+    // 当前仓位显示浮动盈亏和已实现盈亏；历史仓位显示总已实现盈亏
     if (positionFilter === 'current') {
       baseColumns.push(
         {
@@ -1147,6 +1164,40 @@ const PositionList: React.FC = () => {
           width: 150
         }
       )
+    } else {
+      baseColumns.push({
+        title: '已实现盈亏',
+        dataIndex: 'pnl',
+        key: 'pnl',
+        render: (pnl: string, record: AccountPosition) => {
+          const pnlNum = parseFloat(pnl || '0')
+          const percentValue = record.percentPnl || record.percentRealizedPnl
+          const percentPnl = parseFloat(percentValue || '0')
+          return (
+            <div>
+              <div style={{
+                color: pnlNum >= 0 ? '#3f8600' : '#cf1322',
+                fontWeight: 'bold'
+              }}>
+                {pnlNum >= 0 ? '+' : ''}{formatUSDC(pnl)} USDC
+              </div>
+              <div style={{
+                fontSize: '12px',
+                color: percentPnl >= 0 ? '#3f8600' : '#cf1322'
+              }}>
+                {formatPercent(percentValue)}
+              </div>
+            </div>
+          )
+        },
+        align: 'right' as const,
+        width: 150,
+        sorter: (a: AccountPosition, b: AccountPosition) => {
+          const pnlA = parseFloat(a.pnl || '0')
+          const pnlB = parseFloat(b.pnl || '0')
+          return pnlA - pnlB
+        }
+      })
     }
 
     // 只有当前仓位才显示操作列
