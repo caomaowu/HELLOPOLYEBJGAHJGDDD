@@ -415,6 +415,7 @@ class TelegramNotificationService(
             "ORDERBOOK_DEPTH" -> messageSource.getMessage("notification.filter.type.orderbook_depth", null, "订单簿深度不足", locale)
             "PRICE_VALIDITY" -> messageSource.getMessage("notification.filter.type.price_validity", null, "价格不合理", locale)
             "MARKET_STATUS" -> messageSource.getMessage("notification.filter.type.market_status", null, "市场状态不可交易", locale)
+            "BUY_CYCLE_PAUSED" -> messageSource.getMessage("notification.filter.type.buy_cycle_paused", null, "买单循环暂停", locale)
             else -> filterType
         }
         

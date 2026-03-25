@@ -61,6 +61,9 @@ interface AddModalProps {
     maxDailyLoss?: number
     maxDailyOrders?: number
     maxDailyVolume?: number
+    buyCycleEnabled?: boolean
+    buyCycleRunSeconds?: number
+    buyCyclePauseSeconds?: number
     repeatAddReductionEnabled?: boolean
     repeatAddReductionStrategy?: 'UNIFORM' | 'PROGRESSIVE'
     repeatAddReductionValueType?: 'PERCENT' | 'FIXED'
@@ -182,6 +185,9 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: config.maxDailyLoss,
       maxDailyOrders: config.maxDailyOrders,
       maxDailyVolume: config.maxDailyVolume,
+      buyCycleEnabled: config.buyCycleEnabled ?? false,
+      buyCycleRunMinutes: config.buyCycleRunSeconds ? config.buyCycleRunSeconds / 60 : 45,
+      buyCyclePauseMinutes: config.buyCyclePauseSeconds ? config.buyCyclePauseSeconds / 60 : 30,
       repeatAddReductionEnabled: config.repeatAddReductionEnabled ?? false,
       repeatAddReductionStrategy: config.repeatAddReductionStrategy || 'UNIFORM',
       repeatAddReductionValueType: config.repeatAddReductionValueType || 'PERCENT',
@@ -268,6 +274,9 @@ const AddModal: React.FC<AddModalProps> = ({
           minOrderSize: 1,
           maxDailyLoss: 10000,
           maxDailyOrders: 100,
+          buyCycleEnabled: false,
+          buyCycleRunMinutes: 45,
+          buyCyclePauseMinutes: 30,
           repeatAddReductionEnabled: false,
           repeatAddReductionStrategy: 'UNIFORM',
           repeatAddReductionValueType: 'PERCENT',
@@ -315,6 +324,9 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
       maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
+      buyCycleEnabled: false,
+      buyCycleRunMinutes: 45,
+      buyCyclePauseMinutes: 30,
       repeatAddReductionEnabled: template.repeatAddReductionEnabled ?? false,
       repeatAddReductionStrategy: template.repeatAddReductionStrategy || 'UNIFORM',
       repeatAddReductionValueType: template.repeatAddReductionValueType || 'PERCENT',
@@ -476,6 +488,17 @@ const AddModal: React.FC<AddModalProps> = ({
       return
     }
 
+    if (values.buyCycleEnabled) {
+      if (!values.buyCycleRunMinutes || Number(values.buyCycleRunMinutes) <= 0) {
+        message.error('启用买单循环时，运行时长必须大于 0 分钟')
+        return
+      }
+      if (!values.buyCyclePauseMinutes || Number(values.buyCyclePauseMinutes) <= 0) {
+        message.error('启用买单循环时，暂停时长必须大于 0 分钟')
+        return
+      }
+    }
+
     const repeatAddReductionPayload: Pick<
       CopyTradingCreateRequest,
       'repeatAddReductionEnabled' |
@@ -499,7 +522,7 @@ const AddModal: React.FC<AddModalProps> = ({
       const request: CopyTradingCreateRequest = {
         accountId: values.accountId,
         leaderId: values.leaderId,
-        enabled: true, // 默认启用
+        enabled: false, // 手动新建默认关闭，需手动开启
         copyMode: values.copyMode || 'RATIO',
         copyRatio: (values.copyMode === 'RATIO' || values.copyMode === 'ADAPTIVE') && values.copyRatio ? (values.copyRatio / 100).toString() : undefined,
         fixedAmount: values.copyMode === 'FIXED' ? values.fixedAmount?.toString() : undefined,
@@ -516,6 +539,13 @@ const AddModal: React.FC<AddModalProps> = ({
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        buyCycleEnabled: values.buyCycleEnabled ?? false,
+        buyCycleRunSeconds: values.buyCycleEnabled
+          ? Math.round(Number(values.buyCycleRunMinutes) * 60)
+          : undefined,
+        buyCyclePauseSeconds: values.buyCycleEnabled
+          ? Math.round(Number(values.buyCyclePauseMinutes) * 60)
+          : undefined,
         ...repeatAddReductionPayload,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
@@ -598,6 +628,9 @@ const AddModal: React.FC<AddModalProps> = ({
             minOrderSize: 1,
             maxDailyLoss: 10000,
             maxDailyOrders: 100,
+            buyCycleEnabled: false,
+            buyCycleRunMinutes: 45,
+            buyCyclePauseMinutes: 30,
             smallOrderAggregationEnabled: false,
             smallOrderAggregationWindowSeconds: 300,
             priceTolerance: 5,
@@ -1174,6 +1207,44 @@ const AddModal: React.FC<AddModalProps> = ({
               style={{ width: '100%' }}
               placeholder={t('copyTradingAdd.delaySecondsPlaceholder') || '默认 0（立即跟单）'}
             />
+          </Form.Item>
+
+          <Divider>买单运行/暂停循环</Divider>
+
+          <Form.Item
+            label="启用买单运行/暂停循环"
+            name="buyCycleEnabled"
+            tooltip="仅影响买单：按“运行时长→暂停时长”循环；暂停窗口内不跟买，卖单不受影响。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues.buyCycleEnabled !== currentValues.buyCycleEnabled
+            }
+          >
+            {({ getFieldValue }) => getFieldValue('buyCycleEnabled') ? (
+              <>
+                <Form.Item
+                  label="运行时长 (分钟)"
+                  name="buyCycleRunMinutes"
+                  rules={[{ required: true, message: '请输入运行时长' }]}
+                >
+                  <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+
+                <Form.Item
+                  label="暂停时长 (分钟)"
+                  name="buyCyclePauseMinutes"
+                  rules={[{ required: true, message: '请输入暂停时长' }]}
+                >
+                  <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+              </>
+            ) : null}
           </Form.Item>
           
           <Form.Item

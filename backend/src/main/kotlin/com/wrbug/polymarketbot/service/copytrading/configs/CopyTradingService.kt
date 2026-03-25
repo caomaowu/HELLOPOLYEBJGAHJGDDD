@@ -105,6 +105,9 @@ class CopyTradingService(
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: template.maxDailyLoss,
                     maxDailyOrders = request.maxDailyOrders ?: template.maxDailyOrders,
                     maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: template.maxDailyVolume,
+                    buyCycleEnabled = request.buyCycleEnabled ?: false,
+                    buyCycleRunSeconds = request.buyCycleRunSeconds,
+                    buyCyclePauseSeconds = request.buyCyclePauseSeconds,
                     smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: template.smallOrderAggregationEnabled,
                     smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds ?: template.smallOrderAggregationWindowSeconds,
                     repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: template.repeatAddReductionEnabled,
@@ -180,6 +183,9 @@ class CopyTradingService(
                     maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                     maxDailyOrders = request.maxDailyOrders ?: 100,
                     maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
+                    buyCycleEnabled = request.buyCycleEnabled ?: false,
+                    buyCycleRunSeconds = request.buyCycleRunSeconds,
+                    buyCyclePauseSeconds = request.buyCyclePauseSeconds,
                     smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: false,
                     smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                         ?: SmallOrderAggregationSupport.DEFAULT_WINDOW_SECONDS,
@@ -227,7 +233,8 @@ class CopyTradingService(
 
             validateConfig(config)?.let { return Result.failure(IllegalArgumentException(it)) }
 
-            if (request.enabled) {
+            val createEnabled = request.enabled
+            if (createEnabled) {
                 val diagnostics = kotlinx.coroutines.runBlocking {
                     accountExecutionDiagnosticsService.diagnoseAccount(account, forceRefresh = true)
                 }
@@ -244,7 +251,7 @@ class CopyTradingService(
             val copyTrading = CopyTrading(
                 accountId = request.accountId,
                 leaderId = request.leaderId,
-                enabled = request.enabled,
+                enabled = createEnabled,
                 copyMode = config.copyMode,
                 copyRatio = config.copyRatio,
                 fixedAmount = config.fixedAmount,
@@ -259,6 +266,14 @@ class CopyTradingService(
                 maxDailyLoss = config.maxDailyLoss,
                 maxDailyOrders = config.maxDailyOrders,
                 maxDailyVolume = config.maxDailyVolume,
+                buyCycleEnabled = config.buyCycleEnabled,
+                buyCycleRunSeconds = if (config.buyCycleEnabled) config.buyCycleRunSeconds else null,
+                buyCyclePauseSeconds = if (config.buyCycleEnabled) config.buyCyclePauseSeconds else null,
+                buyCycleAnchorStartedAt = if (createEnabled && config.buyCycleEnabled) {
+                    System.currentTimeMillis()
+                } else {
+                    null
+                },
                 smallOrderAggregationEnabled = config.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = config.smallOrderAggregationWindowSeconds,
                 repeatAddReductionEnabled = config.repeatAddReductionEnabled,
@@ -333,10 +348,30 @@ class CopyTradingService(
             } else {
                 copyTrading.configName
             }
+
+            val nextEnabled = request.enabled ?: copyTrading.enabled
+            val nextBuyCycleEnabled = request.buyCycleEnabled ?: copyTrading.buyCycleEnabled
+            val nextBuyCycleRunSeconds = when {
+                !nextBuyCycleEnabled -> null
+                request.buyCycleRunSeconds != null -> request.buyCycleRunSeconds
+                else -> copyTrading.buyCycleRunSeconds
+            }
+            val nextBuyCyclePauseSeconds = when {
+                !nextBuyCycleEnabled -> null
+                request.buyCyclePauseSeconds != null -> request.buyCyclePauseSeconds
+                else -> copyTrading.buyCyclePauseSeconds
+            }
+            val nextBuyCycleAnchorStartedAt = resolveBuyCycleAnchorStartedAt(
+                previousEnabled = copyTrading.enabled,
+                nextEnabled = nextEnabled,
+                previousBuyCycleEnabled = copyTrading.buyCycleEnabled,
+                nextBuyCycleEnabled = nextBuyCycleEnabled,
+                previousAnchorStartedAt = copyTrading.buyCycleAnchorStartedAt
+            )
             
             // 更新字段（只更新提供的字段）
             val updated = copyTrading.copy(
-                enabled = request.enabled ?: copyTrading.enabled,
+                enabled = nextEnabled,
                 copyMode = request.copyMode ?: copyTrading.copyMode,
                 copyRatio = request.copyRatio?.toSafeBigDecimal() ?: copyTrading.copyRatio,
                 fixedAmount = request.fixedAmount?.toSafeBigDecimal() ?: copyTrading.fixedAmount,
@@ -355,6 +390,10 @@ class CopyTradingService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: copyTrading.maxDailyLoss,
                 maxDailyOrders = request.maxDailyOrders ?: copyTrading.maxDailyOrders,
                 maxDailyVolume = mergeOptionalDecimal(request.maxDailyVolume, copyTrading.maxDailyVolume),
+                buyCycleEnabled = nextBuyCycleEnabled,
+                buyCycleRunSeconds = nextBuyCycleRunSeconds,
+                buyCyclePauseSeconds = nextBuyCyclePauseSeconds,
+                buyCycleAnchorStartedAt = nextBuyCycleAnchorStartedAt,
                 smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: copyTrading.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                     ?: copyTrading.smallOrderAggregationWindowSeconds,
@@ -493,6 +532,9 @@ class CopyTradingService(
                     maxDailyLoss = updated.maxDailyLoss,
                     maxDailyOrders = updated.maxDailyOrders,
                     maxDailyVolume = updated.maxDailyVolume,
+                    buyCycleEnabled = updated.buyCycleEnabled,
+                    buyCycleRunSeconds = updated.buyCycleRunSeconds,
+                    buyCyclePauseSeconds = updated.buyCyclePauseSeconds,
                     smallOrderAggregationEnabled = updated.smallOrderAggregationEnabled,
                     smallOrderAggregationWindowSeconds = updated.smallOrderAggregationWindowSeconds,
                     repeatAddReductionEnabled = updated.repeatAddReductionEnabled,
@@ -745,6 +787,10 @@ class CopyTradingService(
             maxDailyLoss = copyTrading.maxDailyLoss.toPlainString(),
             maxDailyOrders = copyTrading.maxDailyOrders,
             maxDailyVolume = copyTrading.maxDailyVolume?.toPlainString(),
+            buyCycleEnabled = copyTrading.buyCycleEnabled,
+            buyCycleRunSeconds = copyTrading.buyCycleRunSeconds,
+            buyCyclePauseSeconds = copyTrading.buyCyclePauseSeconds,
+            buyCycleAnchorStartedAt = copyTrading.buyCycleAnchorStartedAt,
             smallOrderAggregationEnabled = copyTrading.smallOrderAggregationEnabled,
             smallOrderAggregationWindowSeconds = copyTrading.smallOrderAggregationWindowSeconds,
             repeatAddReductionEnabled = copyTrading.repeatAddReductionEnabled,
@@ -857,6 +903,9 @@ class CopyTradingService(
         val maxDailyLoss: BigDecimal,
         val maxDailyOrders: Int,
         val maxDailyVolume: BigDecimal?,
+        val buyCycleEnabled: Boolean,
+        val buyCycleRunSeconds: Int?,
+        val buyCyclePauseSeconds: Int?,
         val smallOrderAggregationEnabled: Boolean,
         val smallOrderAggregationWindowSeconds: Int,
         val repeatAddReductionEnabled: Boolean,
@@ -928,6 +977,15 @@ class CopyTradingService(
             windowSeconds = config.smallOrderAggregationWindowSeconds
         ).firstOrNull()?.let { return it }
 
+        if (config.buyCycleEnabled) {
+            if (config.buyCycleRunSeconds == null || config.buyCycleRunSeconds <= 0) {
+                return "启用买单循环时，运行时长必须大于 0 秒"
+            }
+            if (config.buyCyclePauseSeconds == null || config.buyCyclePauseSeconds <= 0) {
+                return "启用买单循环时，暂停时长必须大于 0 秒"
+            }
+        }
+
         val marketCategoryMode = MarketFilterSupport.normalizeFilterMode(config.marketCategoryMode)
         MarketFilterSupport.validateFilterMode(marketCategoryMode, "marketCategoryMode")?.let { return it }
         MarketFilterSupport.validateFilterValues(
@@ -953,6 +1011,25 @@ class CopyTradingService(
         )?.let { return it }
 
         return null
+    }
+
+    private fun resolveBuyCycleAnchorStartedAt(
+        previousEnabled: Boolean,
+        nextEnabled: Boolean,
+        previousBuyCycleEnabled: Boolean,
+        nextBuyCycleEnabled: Boolean,
+        previousAnchorStartedAt: Long?
+    ): Long? {
+        if (!nextEnabled || !nextBuyCycleEnabled) {
+            return null
+        }
+        val justEnabled = !previousEnabled && nextEnabled
+        val cycleJustEnabled = !previousBuyCycleEnabled && nextBuyCycleEnabled
+        return if (justEnabled || cycleJustEnabled || previousAnchorStartedAt == null) {
+            System.currentTimeMillis()
+        } else {
+            previousAnchorStartedAt
+        }
     }
 
     private fun buildDiagnosticsFailureReason(diagnostics: AccountSetupStatusDto): String {

@@ -107,6 +107,9 @@ const EditModal: React.FC<EditModalProps> = ({
           maxDailyLoss: found.maxDailyLoss ? parseFloat(found.maxDailyLoss) : undefined,
           maxDailyOrders: found.maxDailyOrders,
           maxDailyVolume: found.maxDailyVolume ? parseFloat(found.maxDailyVolume) : undefined,
+          buyCycleEnabled: found.buyCycleEnabled ?? false,
+          buyCycleRunMinutes: found.buyCycleRunSeconds ? found.buyCycleRunSeconds / 60 : 45,
+          buyCyclePauseMinutes: found.buyCyclePauseSeconds ? found.buyCyclePauseSeconds / 60 : 30,
           repeatAddReductionEnabled: found.repeatAddReductionEnabled ?? false,
           repeatAddReductionStrategy: found.repeatAddReductionStrategy || 'UNIFORM',
           repeatAddReductionValueType: found.repeatAddReductionValueType || 'PERCENT',
@@ -261,6 +264,17 @@ const EditModal: React.FC<EditModalProps> = ({
       return
     }
 
+    if (values.buyCycleEnabled) {
+      if (!values.buyCycleRunMinutes || Number(values.buyCycleRunMinutes) <= 0) {
+        message.error('启用买单循环时，运行时长必须大于 0 分钟')
+        return
+      }
+      if (!values.buyCyclePauseMinutes || Number(values.buyCyclePauseMinutes) <= 0) {
+        message.error('启用买单循环时，暂停时长必须大于 0 分钟')
+        return
+      }
+    }
+
     const repeatAddReductionPayload: Pick<
       CopyTradingUpdateRequest,
       'repeatAddReductionEnabled' |
@@ -309,6 +323,13 @@ const EditModal: React.FC<EditModalProps> = ({
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume != null ? values.maxDailyVolume.toString() : '',
+        buyCycleEnabled: values.buyCycleEnabled ?? false,
+        buyCycleRunSeconds: values.buyCycleEnabled
+          ? Math.round(Number(values.buyCycleRunMinutes) * 60)
+          : undefined,
+        buyCyclePauseSeconds: values.buyCycleEnabled
+          ? Math.round(Number(values.buyCyclePauseMinutes) * 60)
+          : undefined,
         ...repeatAddReductionPayload,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
@@ -394,6 +415,9 @@ const EditModal: React.FC<EditModalProps> = ({
             marketIntervalMode: 'DISABLED',
             marketSeriesMode: 'DISABLED',
             multiplierMode: 'NONE',
+            buyCycleEnabled: false,
+            buyCycleRunMinutes: 45,
+            buyCyclePauseMinutes: 30,
             repeatAddReductionEnabled: false,
             repeatAddReductionStrategy: 'UNIFORM',
             repeatAddReductionValueType: 'PERCENT'
@@ -694,6 +718,44 @@ const EditModal: React.FC<EditModalProps> = ({
 
           <Form.Item label={t('copyTradingEdit.delaySeconds') || '跟单延迟 (秒)'} name="delaySeconds">
             <InputNumber min={0} step={1} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Divider>买单运行/暂停循环</Divider>
+
+          <Form.Item
+            label="启用买单运行/暂停循环"
+            name="buyCycleEnabled"
+            tooltip="仅影响买单：按“运行时长→暂停时长”循环；暂停窗口内不跟买，卖单不受影响。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues.buyCycleEnabled !== currentValues.buyCycleEnabled
+            }
+          >
+            {({ getFieldValue }) => getFieldValue('buyCycleEnabled') ? (
+              <>
+                <Form.Item
+                  label="运行时长 (分钟)"
+                  name="buyCycleRunMinutes"
+                  rules={[{ required: true, message: '请输入运行时长' }]}
+                >
+                  <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+
+                <Form.Item
+                  label="暂停时长 (分钟)"
+                  name="buyCyclePauseMinutes"
+                  rules={[{ required: true, message: '请输入暂停时长' }]}
+                >
+                  <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+              </>
+            ) : null}
           </Form.Item>
 
           <Form.Item label={t('copyTradingEdit.minOrderDepth') || '最小订单深度 (USDC)'} name="minOrderDepth">

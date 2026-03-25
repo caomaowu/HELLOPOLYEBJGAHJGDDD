@@ -107,6 +107,18 @@ data class CopyTrading(
     @Column(name = "max_daily_volume", precision = 20, scale = 8)
     val maxDailyVolume: BigDecimal? = null,  // 每日最大成交额（USDC），NULL表示不启用
 
+    @Column(name = "buy_cycle_enabled", nullable = false)
+    val buyCycleEnabled: Boolean = false,  // 是否启用买单运行/暂停循环
+
+    @Column(name = "buy_cycle_run_seconds")
+    val buyCycleRunSeconds: Int? = null,  // 运行时长（秒），仅 buyCycleEnabled=true 时生效
+
+    @Column(name = "buy_cycle_pause_seconds")
+    val buyCyclePauseSeconds: Int? = null,  // 暂停时长（秒），仅 buyCycleEnabled=true 时生效
+
+    @Column(name = "buy_cycle_anchor_started_at")
+    val buyCycleAnchorStartedAt: Long? = null,  // 循环锚点（毫秒时间戳）
+
     @Column(name = "small_order_aggregation_enabled", nullable = false)
     val smallOrderAggregationEnabled: Boolean = false,
 

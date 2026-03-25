@@ -25,6 +25,7 @@ import com.wrbug.polymarketbot.service.system.TelegramNotificationService
 import com.wrbug.polymarketbot.util.CryptoUtils
 import com.wrbug.polymarketbot.util.RetrofitFactory
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.`when`
@@ -162,6 +163,42 @@ class CopyOrderTrackingServiceTest {
         verify(marketService).getMarket("market-1")
     }
 
+    @Test
+    fun `resolveBuyCyclePauseReason should return null during run window`() {
+        val copyTrading = CopyTrading(
+            id = 1L,
+            accountId = 1L,
+            leaderId = 2L,
+            enabled = true,
+            buyCycleEnabled = true,
+            buyCycleRunSeconds = 2700,
+            buyCyclePauseSeconds = 1800,
+            buyCycleAnchorStartedAt = 1_000_000L
+        )
+
+        val reason = resolveBuyCyclePauseReason(copyTrading, 2_200_000L)
+
+        assertNull(reason)
+    }
+
+    @Test
+    fun `resolveBuyCyclePauseReason should return reason during pause window`() {
+        val copyTrading = CopyTrading(
+            id = 1L,
+            accountId = 1L,
+            leaderId = 2L,
+            enabled = true,
+            buyCycleEnabled = true,
+            buyCycleRunSeconds = 2700,
+            buyCyclePauseSeconds = 1800,
+            buyCycleAnchorStartedAt = 1_000_000L
+        )
+
+        val reason = resolveBuyCyclePauseReason(copyTrading, 4_000_000L)
+
+        assertNotNull(reason)
+    }
+
     private fun buildBuyExecutionPayload(
         marketSlug: String? = null,
         marketEventSlug: String? = null
@@ -204,6 +241,16 @@ class CopyOrderTrackingServiceTest {
             input = inputField.get(result) as MarketFilterInput,
             metadataSource = metadataSourceField.get(result) as String
         )
+    }
+
+    private fun resolveBuyCyclePauseReason(copyTrading: CopyTrading, nowMillis: Long): String? {
+        val method = CopyOrderTrackingService::class.java.getDeclaredMethod(
+            "resolveBuyCyclePauseReason",
+            CopyTrading::class.java,
+            Long::class.javaPrimitiveType
+        )
+        method.isAccessible = true
+        return method.invoke(service, copyTrading, nowMillis) as String?
     }
 
     private data class ResolvedMarketFilterInputView(

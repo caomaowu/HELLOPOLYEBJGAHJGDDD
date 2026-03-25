@@ -73,6 +73,7 @@ const FilteredOrdersList: React.FC = () => {
       'RISK_CONTROL': { color: 'volcano', label: '风险控制' },
       'ORDERBOOK': { color: 'gold', label: '订单簿不满足' },
       'EXECUTION_PRECHECK': { color: 'red', label: '执行前诊断失败' },
+      'BUY_CYCLE_PAUSED': { color: 'cyan', label: '买单循环暂停' },
       'UNKNOWN': { color: 'default', label: t('filteredOrdersList.filterTypes.unknown') || '未知原因' }
     }
     const config = typeMap[type] || typeMap['UNKNOWN']
@@ -226,6 +227,7 @@ const FilteredOrdersList: React.FC = () => {
               <Option value="RISK_CONTROL">风险控制</Option>
               <Option value="ORDERBOOK">订单簿不满足</Option>
               <Option value="EXECUTION_PRECHECK">执行前诊断失败</Option>
+              <Option value="BUY_CYCLE_PAUSED">买单循环暂停</Option>
             </Select>
           </Space>
         </div>

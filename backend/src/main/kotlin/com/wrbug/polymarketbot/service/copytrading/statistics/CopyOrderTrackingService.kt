@@ -404,15 +404,23 @@ open class CopyOrderTrackingService(
 
         var effectiveMarketId = trade.market
         var effectiveOutcomeIndex = trade.outcomeIndex
-        if (effectiveMarketId.isBlank() && !trade.tokenId.isNullOrBlank()) {
-            val infoByToken = marketService.getMarketInfoByTokenId(trade.tokenId)
+        if (!tokenId.isBlank() && (effectiveMarketId.isBlank() || effectiveOutcomeIndex == null)) {
+            val infoByToken = marketService.getMarketInfoByTokenId(tokenId)
             if (infoByToken != null) {
-                effectiveMarketId = infoByToken.conditionId
-                effectiveOutcomeIndex = infoByToken.outcomeIndex
+                if (effectiveMarketId.isBlank()) {
+                    effectiveMarketId = infoByToken.conditionId
+                }
+                if (effectiveOutcomeIndex == null) {
+                    effectiveOutcomeIndex = infoByToken.outcomeIndex
+                }
             }
         }
         if (effectiveMarketId.isBlank()) {
             logger.warn("无法确定市场(conditionId)，跳过: tradeId=${trade.id}, tokenId=${trade.tokenId}")
+            return null
+        }
+        if (effectiveOutcomeIndex == null) {
+            logger.warn("无法确定 outcomeIndex，跳过买入以避免风控失效: tradeId=${trade.id}, market=$effectiveMarketId, tokenId=$tokenId")
             return null
         }
 
@@ -819,6 +827,29 @@ open class CopyOrderTrackingService(
                 eventType = "ACCOUNT_DISABLED",
                 status = "error",
                 message = "账户已禁用，无法执行跟单"
+            )
+            return Result.success(Unit)
+        }
+
+        val buyCyclePauseReason = resolveBuyCyclePauseReason(copyTrading, System.currentTimeMillis())
+        if (buyCyclePauseReason != null) {
+            logger.info("买单运行/暂停循环命中暂停窗口，跳过创建订单: copyTradingId=${copyTrading.id}, reason=$buyCyclePauseReason")
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = buyCyclePauseReason,
+                filterType = "BUY_CYCLE_PAUSED",
+                calculatedQuantity = null
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "FILTER",
+                eventType = "BUY_CYCLE_PAUSED",
+                status = "info",
+                message = buyCyclePauseReason
             )
             return Result.success(Unit)
         }
@@ -2899,6 +2930,36 @@ open class CopyOrderTrackingService(
             FilterStatus.FAILED_MARKET_CATEGORY -> "MARKET_CATEGORY"
             FilterStatus.FAILED_MARKET_INTERVAL -> "MARKET_INTERVAL"
             FilterStatus.FAILED_MARKET_SERIES -> "MARKET_SERIES"
+        }
+    }
+
+    private fun resolveBuyCyclePauseReason(copyTrading: CopyTrading, nowMillis: Long): String? {
+        if (!copyTrading.buyCycleEnabled) {
+            return null
+        }
+        val runSeconds = copyTrading.buyCycleRunSeconds
+        val pauseSeconds = copyTrading.buyCyclePauseSeconds
+        val anchorStartedAt = copyTrading.buyCycleAnchorStartedAt
+        if (runSeconds == null || pauseSeconds == null || anchorStartedAt == null) {
+            return null
+        }
+        if (runSeconds <= 0 || pauseSeconds <= 0) {
+            return null
+        }
+
+        val elapsedSeconds = ((nowMillis - anchorStartedAt).coerceAtLeast(0L)) / 1000L
+        val periodSeconds = runSeconds.toLong() + pauseSeconds.toLong()
+        if (periodSeconds <= 0L) {
+            return null
+        }
+
+        val phaseSeconds = elapsedSeconds % periodSeconds
+        return if (phaseSeconds >= runSeconds.toLong()) {
+            val pausedElapsed = phaseSeconds - runSeconds.toLong()
+            val pausedRemaining = (pauseSeconds.toLong() - pausedElapsed).coerceAtLeast(0L)
+            "买单循环处于暂停窗口：运行 ${runSeconds}s / 暂停 ${pauseSeconds}s，暂停剩余 ${pausedRemaining}s"
+        } else {
+            null
         }
     }
 

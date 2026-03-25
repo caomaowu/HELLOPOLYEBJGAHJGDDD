@@ -808,6 +808,10 @@ export interface CopyTrading {
   maxDailyLoss: string
   maxDailyOrders: number
   maxDailyVolume?: string
+  buyCycleEnabled: boolean
+  buyCycleRunSeconds?: number
+  buyCyclePauseSeconds?: number
+  buyCycleAnchorStartedAt?: number
   repeatAddReductionEnabled?: boolean
   repeatAddReductionStrategy?: RepeatAddReductionStrategy
   repeatAddReductionValueType?: RepeatAddReductionValueType
@@ -879,6 +883,9 @@ export interface CopyTradingCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  buyCycleEnabled?: boolean
+  buyCycleRunSeconds?: number
+  buyCyclePauseSeconds?: number
   repeatAddReductionEnabled?: boolean
   repeatAddReductionStrategy?: RepeatAddReductionStrategy
   repeatAddReductionValueType?: RepeatAddReductionValueType
@@ -938,6 +945,9 @@ export interface CopyTradingUpdateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  buyCycleEnabled?: boolean
+  buyCycleRunSeconds?: number
+  buyCyclePauseSeconds?: number
   repeatAddReductionEnabled?: boolean
   repeatAddReductionStrategy?: RepeatAddReductionStrategy
   repeatAddReductionValueType?: RepeatAddReductionValueType
