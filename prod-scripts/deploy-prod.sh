@@ -65,6 +65,7 @@ wait_port() {
 command -v git >/dev/null 2>&1 || fail "未找到 git"
 command -v systemctl >/dev/null 2>&1 || fail "未找到 systemctl"
 command -v curl >/dev/null 2>&1 || fail "未找到 curl"
+command -v pkill >/dev/null 2>&1 || fail "未找到 pkill"
 
 SERVER_PORT="$(read_env_value "SERVER_PORT" "8008")"
 
@@ -91,6 +92,13 @@ HEALTH_RESPONSE="$(curl -sS -m 15 "http://127.0.0.1:${SERVER_PORT}/api/auth/chec
     systemctl status "$SERVICE_NAME" --no-pager -l || true
     fail "健康检查失败"
 }
+
+info "清理构建残留进程"
+(
+    cd "$PROJECT_ROOT/backend"
+    ./gradlew --stop >/dev/null 2>&1 || true
+)
+pkill -f 'org.jetbrains.kotlin.daemon.KotlinCompileDaemon' >/dev/null 2>&1 || true
 
 ok "部署完成"
 echo "服务状态:"

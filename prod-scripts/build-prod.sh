@@ -56,7 +56,11 @@ fi
 VITE_ENABLE_SYSTEM_UPDATE="$(read_env_value "VITE_ENABLE_SYSTEM_UPDATE" "false")"
 
 info "构建后端 JAR"
-(cd "$BACKEND_DIR" && ./gradlew clean bootJar)
+(
+    cd "$BACKEND_DIR"
+    ./gradlew --no-daemon -Dkotlin.compiler.execution.strategy=in-process clean bootJar
+    ./gradlew --stop >/dev/null 2>&1 || true
+)
 ok "后端构建完成"
 
 if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
