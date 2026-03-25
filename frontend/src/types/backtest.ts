@@ -8,6 +8,9 @@ export interface MultiplierTier {
   multiplier: string
 }
 
+export type RepeatAddReductionStrategy = 'UNIFORM' | 'PROGRESSIVE'
+export type RepeatAddReductionValueType = 'PERCENT' | 'FIXED'
+
 /**
  * 回测任务创建请求
  */
@@ -31,6 +34,11 @@ export interface BacktestCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   supportSell?: boolean
   minPrice?: string
   maxPrice?: string
@@ -259,6 +267,11 @@ export interface BacktestConfigDto {
   maxDailyLoss: string
   maxDailyOrders: number
   maxDailyVolume?: string | null
+  repeatAddReductionEnabled: boolean
+  repeatAddReductionStrategy: RepeatAddReductionStrategy
+  repeatAddReductionValueType: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string | null
+  repeatAddReductionFixedAmount?: string | null
   supportSell: boolean
   minPrice: string | null
   maxPrice: string | null

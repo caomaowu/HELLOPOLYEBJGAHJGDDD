@@ -603,6 +603,8 @@ export interface MultiplierTier {
 
 export type FilterMode = 'DISABLED' | 'WHITELIST' | 'BLACKLIST'
 export type MarketCategoryOption = 'sports' | 'crypto'
+export type RepeatAddReductionStrategy = 'UNIFORM' | 'PROGRESSIVE'
+export type RepeatAddReductionValueType = 'PERCENT' | 'FIXED'
 
 export interface CopyTradingTemplate {
   id: number
@@ -621,6 +623,11 @@ export interface CopyTradingTemplate {
   maxDailyLoss?: string
   maxDailyOrders: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
@@ -668,6 +675,11 @@ export interface TemplateCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -705,6 +717,11 @@ export interface TemplateUpdateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -742,6 +759,11 @@ export interface TemplateCopyRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -786,6 +808,11 @@ export interface CopyTrading {
   maxDailyLoss: string
   maxDailyOrders: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
@@ -852,6 +879,11 @@ export interface CopyTradingCreateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -906,6 +938,11 @@ export interface CopyTradingUpdateRequest {
   maxDailyLoss?: string
   maxDailyOrders?: number
   maxDailyVolume?: string
+  repeatAddReductionEnabled?: boolean
+  repeatAddReductionStrategy?: RepeatAddReductionStrategy
+  repeatAddReductionValueType?: RepeatAddReductionValueType
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string

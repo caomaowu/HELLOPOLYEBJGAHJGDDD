@@ -20,6 +20,7 @@ import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterServ
 import com.wrbug.polymarketbot.service.copytrading.configs.MarketFilterInput
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
 import com.wrbug.polymarketbot.service.copytrading.configs.FilterStatus
+import com.wrbug.polymarketbot.service.copytrading.configs.RepeatAddReductionInfo
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
 import com.wrbug.polymarketbot.service.copytrading.orders.OrderSigningService
 import com.wrbug.polymarketbot.service.common.BlockchainService
@@ -71,6 +72,7 @@ open class CopyOrderTrackingService(
     private val accountRepository: AccountRepository,
     private val filterService: CopyTradingFilterService,
     private val sizingService: CopyTradingSizingService,
+    private val repeatAddStateService: com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingRepeatAddStateService? = null,
     private val smallOrderAggregationService: SmallOrderAggregationService,
     private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService,
     private val executionEventService: CopyTradingExecutionEventService,
@@ -940,7 +942,8 @@ open class CopyOrderTrackingService(
                 },
                 status = "warning",
                 message = sizingResult.reason,
-                calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO }
+                calculatedQuantity = sizingResult.finalQuantity.takeIf { it > BigDecimal.ZERO },
+                detailJson = buildRepeatAddReductionDetailJson(sizingResult.repeatAddReductionInfo)
             )
             return Result.success(Unit)
         }
@@ -1283,6 +1286,15 @@ open class CopyOrderTrackingService(
             source = payload.source
         )
         copyOrderTrackingRepository.save(tracking)
+        val actualBuyAmount = buyPrice.multiply(finalBuyQuantity).setScale(8, RoundingMode.HALF_UP)
+        requireNotNull(repeatAddStateService) {
+            "CopyTradingRepeatAddStateService 未初始化"
+        }.recordSuccessfulBuy(
+            copyTradingId = copyTrading.id ?: return Result.success(Unit),
+            marketId = payload.marketId,
+            outcomeIndex = payload.outcomeIndex,
+            buyAmount = actualBuyAmount
+        )
         logger.info("买入订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realOrderId, copyTradingId=${copyTrading.id}")
         recordExecutionEvent(
             copyTrading = copyTrading,
@@ -1296,6 +1308,10 @@ open class CopyOrderTrackingService(
             orderPrice = buyPrice,
             orderQuantity = finalBuyQuantity,
             orderId = realOrderId,
+            detailJson = buildRepeatAddReductionDetailJson(
+                info = sizingResult.repeatAddReductionInfo,
+                actualBuyAmount = actualBuyAmount
+            ),
             orderCreateRequestedAt = orderCreateRequestedAt,
             orderCreateCompletedAt = orderCreateCompletedAt
         )
@@ -1631,6 +1647,27 @@ open class CopyOrderTrackingService(
             }
         }
         return detail.takeIf { it.isNotEmpty() }?.toJson()
+    }
+
+    private fun buildRepeatAddReductionDetailJson(
+        info: RepeatAddReductionInfo?,
+        actualBuyAmount: BigDecimal? = null
+    ): String? {
+        if (info == null) {
+            return null
+        }
+        return mapOf(
+            "repeatAddReductionHit" to true,
+            "buyIndex" to info.buyIndex,
+            "firstBuyAmount" to info.firstBuyAmount.stripTrailingZeros().toPlainString(),
+            "originalAmount" to info.originalAmount.stripTrailingZeros().toPlainString(),
+            "adjustedAmount" to info.adjustedAmount.stripTrailingZeros().toPlainString(),
+            "actualBuyAmount" to actualBuyAmount?.stripTrailingZeros()?.toPlainString(),
+            "strategy" to info.strategy,
+            "valueType" to info.valueType,
+            "percent" to info.percent?.stripTrailingZeros()?.toPlainString(),
+            "fixedAmount" to info.fixedAmount?.stripTrailingZeros()?.toPlainString()
+        ).toJson()
     }
 
     private suspend fun resolveSellTokenId(
@@ -2290,6 +2327,13 @@ open class CopyOrderTrackingService(
             val savedDetail = detail.copy(matchRecordId = savedRecord.id!!)
             sellMatchDetailRepository.save(savedDetail)
         }
+        requireNotNull(repeatAddStateService) {
+            "CopyTradingRepeatAddStateService 未初始化"
+        }.clearIfNoActivePosition(
+            copyTradingId = copyTrading.id ?: return,
+            marketId = leaderSellTrade.market,
+            outcomeIndex = leaderSellTrade.outcomeIndex
+        )
 
         logger.info("卖出订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realSellOrderId, copyTradingId=${copyTrading.id}")
         recordTradeExecutionEvent(

@@ -19,7 +19,8 @@ import java.time.ZoneId
 @Service
 class CopyTradingSizingService(
     private val copyOrderTrackingRepository: CopyOrderTrackingRepository? = null,
-    private val accountService: AccountService? = null
+    private val accountService: AccountService? = null,
+    private val repeatAddStateService: CopyTradingRepeatAddStateService? = null
 ) {
 
     private val logger = LoggerFactory.getLogger(CopyTradingSizingService::class.java)
@@ -43,6 +44,21 @@ class CopyTradingSizingService(
         val currentDailyVolume = getCurrentDailyVolume(
             copyTrading.id
         )
+        val repeatAddReductionContext = if (hasActivePosition) {
+            requireNotNull(repeatAddStateService) {
+                "CopyTradingRepeatAddStateService 未初始化"
+            }.getActiveState(copyTrading.id, marketId, outcomeIndex)?.let {
+                RepeatAddReductionContext(
+                    firstBuyAmount = it.firstBuyAmount,
+                    existingBuyCount = it.buyCount
+                )
+            }
+        } else {
+            requireNotNull(repeatAddStateService) {
+                "CopyTradingRepeatAddStateService 未初始化"
+            }.clearIfNoActivePosition(copyTrading.id, marketId, outcomeIndex)
+            null
+        }
         return calculate(
             config = copyTrading.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
@@ -50,7 +66,8 @@ class CopyTradingSizingService(
             currentPositionValue = currentPositionValue,
             currentDailyVolume = currentDailyVolume,
             currentActivePositionCount = currentActivePositionCount,
-            hasActivePosition = hasActivePosition
+            hasActivePosition = hasActivePosition,
+            repeatAddReductionContext = repeatAddReductionContext
         )
     }
 
@@ -59,14 +76,16 @@ class CopyTradingSizingService(
         leaderOrderAmount: BigDecimal,
         tradePrice: BigDecimal,
         currentPositionValue: BigDecimal,
-        currentDailyVolume: BigDecimal
+        currentDailyVolume: BigDecimal,
+        repeatAddReductionContext: RepeatAddReductionContext? = null
     ): CopyTradingSizingResult {
         return calculate(
             config = task.toSizingConfig(),
             leaderOrderAmount = leaderOrderAmount,
             tradePrice = tradePrice,
             currentPositionValue = currentPositionValue,
-            currentDailyVolume = currentDailyVolume
+            currentDailyVolume = currentDailyVolume,
+            repeatAddReductionContext = repeatAddReductionContext
         )
     }
 
@@ -77,7 +96,8 @@ class CopyTradingSizingService(
         currentPositionValue: BigDecimal,
         currentDailyVolume: BigDecimal,
         currentActivePositionCount: Int? = null,
-        hasActivePosition: Boolean = false
+        hasActivePosition: Boolean = false,
+        repeatAddReductionContext: RepeatAddReductionContext? = null
     ): CopyTradingSizingResult {
         if (tradePrice <= BigDecimal.ZERO) {
             return rejected("交易价格无效", SizingRejectionType.INVALID_INPUT)
@@ -101,12 +121,24 @@ class CopyTradingSizingService(
         val multipliedAmount = baseAmount.multi(appliedMultiplier)
         var finalAmount = multipliedAmount
         val reasons = mutableListOf<String>()
+        var repeatAddReductionInfo: RepeatAddReductionInfo? = null
 
         if (appliedAdaptiveRatio != null) {
             reasons += "自适应比例=${appliedAdaptiveRatio.stripTrailingZeros().toPlainString()}x"
         }
         if (appliedMultiplier != BigDecimal.ONE) {
             reasons += "multiplier=${appliedMultiplier.stripTrailingZeros().toPlainString()}x"
+        }
+
+        repeatAddReductionInfo = applyRepeatAddReduction(
+            config = config,
+            originalAmount = multipliedAmount,
+            hasActivePosition = hasActivePosition,
+            repeatAddReductionContext = repeatAddReductionContext
+        )
+        if (repeatAddReductionInfo != null) {
+            finalAmount = repeatAddReductionInfo.adjustedAmount
+            reasons += buildRepeatAddReductionReason(repeatAddReductionInfo)
         }
 
         if (finalAmount.gt(config.maxOrderSize)) {
@@ -124,7 +156,11 @@ class CopyTradingSizingService(
                     appliedAdaptiveRatio = appliedAdaptiveRatio,
                     appliedMultiplier = appliedMultiplier,
                     status = SizingStatus.REJECTED,
-                    reason = "超过最大活跃仓位数量限制: 当前活跃仓位=${currentActivePositionCount}, 上限=${config.maxPositionCount}",
+                    reason = appendReasons(
+                        reasons,
+                        "超过最大活跃仓位数量限制: 当前活跃仓位=${currentActivePositionCount}, 上限=${config.maxPositionCount}"
+                    ),
+                    repeatAddReductionInfo = repeatAddReductionInfo,
                     rejectionType = SizingRejectionType.MAX_POSITION_COUNT_LIMIT
                 )
             }
@@ -141,7 +177,11 @@ class CopyTradingSizingService(
                     appliedAdaptiveRatio = appliedAdaptiveRatio,
                     appliedMultiplier = appliedMultiplier,
                     status = SizingStatus.REJECTED,
-                    reason = "超过最大仓位金额限制: 当前仓位=${currentPositionValue.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额",
+                    reason = appendReasons(
+                        reasons,
+                        "超过最大仓位金额限制: 当前仓位=${currentPositionValue.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
+                    ),
+                    repeatAddReductionInfo = repeatAddReductionInfo,
                     rejectionType = SizingRejectionType.MAX_POSITION_LIMIT
                 )
             }
@@ -162,7 +202,11 @@ class CopyTradingSizingService(
                     appliedAdaptiveRatio = appliedAdaptiveRatio,
                     appliedMultiplier = appliedMultiplier,
                     status = SizingStatus.REJECTED,
-                    reason = "超过每日最大成交额限制: 已用=${currentDailyVolume.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额",
+                    reason = appendReasons(
+                        reasons,
+                        "超过每日最大成交额限制: 已用=${currentDailyVolume.stripTrailingZeros().toPlainString()} USDC, 剩余额度不足最小下单金额"
+                    ),
+                    repeatAddReductionInfo = repeatAddReductionInfo,
                     rejectionType = SizingRejectionType.MAX_DAILY_VOLUME_LIMIT
                 )
             }
@@ -181,7 +225,11 @@ class CopyTradingSizingService(
                 appliedAdaptiveRatio = appliedAdaptiveRatio,
                 appliedMultiplier = appliedMultiplier,
                 status = SizingStatus.REJECTED,
-                reason = "金额低于最小下单限制: ${finalAmount.stripTrailingZeros().toPlainString()} < ${config.minOrderSize.stripTrailingZeros().toPlainString()} USDC",
+                reason = appendReasons(
+                    reasons,
+                    "金额低于最小下单限制: ${finalAmount.stripTrailingZeros().toPlainString()} < ${config.minOrderSize.stripTrailingZeros().toPlainString()} USDC"
+                ),
+                repeatAddReductionInfo = repeatAddReductionInfo,
                 rejectionType = SizingRejectionType.BELOW_MIN_ORDER_SIZE
             )
         }
@@ -196,7 +244,8 @@ class CopyTradingSizingService(
                 appliedAdaptiveRatio = appliedAdaptiveRatio,
                 appliedMultiplier = appliedMultiplier,
                 status = SizingStatus.REJECTED,
-                reason = "最终数量无效",
+                reason = appendReasons(reasons, "最终数量无效"),
+                repeatAddReductionInfo = repeatAddReductionInfo,
                 rejectionType = SizingRejectionType.INVALID_FINAL_QUANTITY
             )
         }
@@ -213,7 +262,8 @@ class CopyTradingSizingService(
                 "通过 sizing 校验"
             } else {
                 reasons.joinToString("；")
-            }
+            },
+            repeatAddReductionInfo = repeatAddReductionInfo
         )
     }
 
@@ -345,7 +395,12 @@ class CopyTradingSizingService(
             minOrderSize = minOrderSize,
             maxPositionValue = maxPositionValue,
             maxPositionCount = maxPositionCount,
-            maxDailyVolume = maxDailyVolume
+            maxDailyVolume = maxDailyVolume,
+            repeatAddReductionEnabled = repeatAddReductionEnabled,
+            repeatAddReductionStrategy = repeatAddReductionStrategy,
+            repeatAddReductionValueType = repeatAddReductionValueType,
+            repeatAddReductionPercent = repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = repeatAddReductionFixedAmount
         )
     }
 
@@ -364,7 +419,12 @@ class CopyTradingSizingService(
             minOrderSize = minOrderSize,
             maxPositionValue = maxPositionValue,
             maxPositionCount = null,
-            maxDailyVolume = maxDailyVolume
+            maxDailyVolume = maxDailyVolume,
+            repeatAddReductionEnabled = repeatAddReductionEnabled,
+            repeatAddReductionStrategy = repeatAddReductionStrategy,
+            repeatAddReductionValueType = repeatAddReductionValueType,
+            repeatAddReductionPercent = repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = repeatAddReductionFixedAmount
         )
     }
 
@@ -378,8 +438,108 @@ class CopyTradingSizingService(
             appliedMultiplier = BigDecimal.ONE,
             status = SizingStatus.REJECTED,
             reason = reason,
+            repeatAddReductionInfo = null,
             rejectionType = rejectionType
         )
+    }
+
+    private fun applyRepeatAddReduction(
+        config: CopyTradingSizingConfig,
+        originalAmount: BigDecimal,
+        hasActivePosition: Boolean,
+        repeatAddReductionContext: RepeatAddReductionContext?
+    ): RepeatAddReductionInfo? {
+        if (!config.repeatAddReductionEnabled || !hasActivePosition || repeatAddReductionContext == null) {
+            return null
+        }
+
+        val buyIndex = repeatAddReductionContext.existingBuyCount + 1
+        if (buyIndex <= 1) {
+            return null
+        }
+
+        val firstBuyAmount = repeatAddReductionContext.firstBuyAmount
+        val adjustedAmount = when (config.repeatAddReductionStrategy) {
+            CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM -> {
+                when (config.repeatAddReductionValueType) {
+                    CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT -> {
+                        firstBuyAmount.multiply(normalizePercent(config.repeatAddReductionPercent))
+                    }
+
+                    CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED -> {
+                        config.repeatAddReductionFixedAmount ?: BigDecimal.ZERO
+                    }
+
+                    else -> originalAmount
+                }
+            }
+
+            CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_PROGRESSIVE -> {
+                when (config.repeatAddReductionValueType) {
+                    CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT -> {
+                        firstBuyAmount.multiply(
+                            pow(normalizePercent(config.repeatAddReductionPercent), buyIndex - 1)
+                        )
+                    }
+
+                    CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED -> {
+                        firstBuyAmount.subtract(
+                            (config.repeatAddReductionFixedAmount ?: BigDecimal.ZERO)
+                                .multiply(BigDecimal.valueOf((buyIndex - 1).toLong()))
+                        ).max(BigDecimal.ZERO)
+                    }
+
+                    else -> originalAmount
+                }
+            }
+
+            else -> originalAmount
+        }.setScale(8, RoundingMode.HALF_UP)
+
+        return RepeatAddReductionInfo(
+            buyIndex = buyIndex,
+            firstBuyAmount = firstBuyAmount,
+            originalAmount = originalAmount,
+            adjustedAmount = adjustedAmount,
+            strategy = config.repeatAddReductionStrategy,
+            valueType = config.repeatAddReductionValueType,
+            percent = config.repeatAddReductionPercent,
+            fixedAmount = config.repeatAddReductionFixedAmount
+        )
+    }
+
+    private fun buildRepeatAddReductionReason(info: RepeatAddReductionInfo): String {
+        val configValue = when (info.valueType) {
+            CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT -> {
+                "百分比=${info.percent?.stripTrailingZeros()?.toPlainString()}%"
+            }
+
+            CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED -> {
+                "固定值=${info.fixedAmount?.stripTrailingZeros()?.toPlainString()} USDC"
+            }
+
+            else -> info.valueType
+        }
+        return "同市场再次加仓缩量: 第${info.buyIndex}笔, 首笔=${info.firstBuyAmount.stripTrailingZeros().toPlainString()} USDC, 原金额=${info.originalAmount.stripTrailingZeros().toPlainString()} USDC, 策略=${info.strategy}, 类型=${info.valueType}, ${configValue}, 调整后=${info.adjustedAmount.stripTrailingZeros().toPlainString()} USDC"
+    }
+
+    private fun appendReasons(reasons: List<String>, terminalReason: String): String {
+        return (reasons + terminalReason).joinToString("；")
+    }
+
+    private fun normalizePercent(percent: BigDecimal?): BigDecimal {
+        return (percent ?: BigDecimal.ZERO).divide(BigDecimal("100"), 8, RoundingMode.HALF_UP)
+    }
+
+    private fun pow(base: BigDecimal, exponent: Int): BigDecimal {
+        if (exponent <= 0) {
+            return BigDecimal.ONE.setScale(8, RoundingMode.HALF_UP)
+        }
+        var result = BigDecimal.ONE.setScale(8, RoundingMode.HALF_UP)
+        repeat(exponent) {
+            result = result.multiply(base).setScale(8, RoundingMode.HALF_UP)
+        }
+        return result
     }
 
     private fun buildResult(
@@ -391,6 +551,7 @@ class CopyTradingSizingService(
         appliedMultiplier: BigDecimal,
         status: SizingStatus,
         reason: String,
+        repeatAddReductionInfo: RepeatAddReductionInfo? = null,
         rejectionType: SizingRejectionType? = null
     ): CopyTradingSizingResult {
         return CopyTradingSizingResult(
@@ -402,6 +563,7 @@ class CopyTradingSizingService(
             appliedMultiplier = appliedMultiplier,
             status = status,
             reason = reason,
+            repeatAddReductionInfo = repeatAddReductionInfo,
             rejectionType = rejectionType
         )
     }

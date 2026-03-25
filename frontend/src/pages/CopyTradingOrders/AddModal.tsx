@@ -10,7 +10,15 @@ import type {
   FilterMode,
   MarketCategoryOption,
 } from '../../types'
-import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../../utils'
+import {
+  buildRepeatAddReductionPayload,
+  formatCopyModeSummary,
+  formatMultiplierSummary,
+  formatRepeatAddReductionSummary,
+  formatUSDC,
+  validateAndNormalizeMultiplierTiers,
+  validateRepeatAddReductionConfig
+} from '../../utils'
 import { useMediaQuery } from 'react-responsive'
 import AccountImportForm from '../../components/AccountImportForm'
 import LeaderAddForm from '../../components/LeaderAddForm'
@@ -52,6 +60,11 @@ interface AddModalProps {
     maxDailyLoss?: number
     maxDailyOrders?: number
     maxDailyVolume?: number
+    repeatAddReductionEnabled?: boolean
+    repeatAddReductionStrategy?: 'UNIFORM' | 'PROGRESSIVE'
+    repeatAddReductionValueType?: 'PERCENT' | 'FIXED'
+    repeatAddReductionPercent?: number
+    repeatAddReductionFixedAmount?: number
     smallOrderAggregationEnabled?: boolean
     smallOrderAggregationWindowSeconds?: number
     supportSell?: boolean
@@ -168,6 +181,11 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: config.maxDailyLoss,
       maxDailyOrders: config.maxDailyOrders,
       maxDailyVolume: config.maxDailyVolume,
+      repeatAddReductionEnabled: config.repeatAddReductionEnabled ?? false,
+      repeatAddReductionStrategy: config.repeatAddReductionStrategy || 'UNIFORM',
+      repeatAddReductionValueType: config.repeatAddReductionValueType || 'PERCENT',
+      repeatAddReductionPercent: config.repeatAddReductionPercent,
+      repeatAddReductionFixedAmount: config.repeatAddReductionFixedAmount,
       smallOrderAggregationEnabled: config.smallOrderAggregationEnabled ?? false,
       smallOrderAggregationWindowSeconds: config.smallOrderAggregationWindowSeconds,
       supportSell: config.supportSell,
@@ -227,6 +245,9 @@ const AddModal: React.FC<AddModalProps> = ({
           minOrderSize: 1,
           maxDailyLoss: 10000,
           maxDailyOrders: 100,
+          repeatAddReductionEnabled: false,
+          repeatAddReductionStrategy: 'UNIFORM',
+          repeatAddReductionValueType: 'PERCENT',
           smallOrderAggregationEnabled: false,
           smallOrderAggregationWindowSeconds: 300,
           supportSell: true,
@@ -293,6 +314,11 @@ const AddModal: React.FC<AddModalProps> = ({
       maxDailyLoss: template.maxDailyLoss ? parseFloat(template.maxDailyLoss) : undefined,
       maxDailyOrders: template.maxDailyOrders,
       maxDailyVolume: template.maxDailyVolume ? parseFloat(template.maxDailyVolume) : undefined,
+      repeatAddReductionEnabled: template.repeatAddReductionEnabled ?? false,
+      repeatAddReductionStrategy: template.repeatAddReductionStrategy || 'UNIFORM',
+      repeatAddReductionValueType: template.repeatAddReductionValueType || 'PERCENT',
+      repeatAddReductionPercent: template.repeatAddReductionPercent ? parseFloat(template.repeatAddReductionPercent) : undefined,
+      repeatAddReductionFixedAmount: template.repeatAddReductionFixedAmount ? parseFloat(template.repeatAddReductionFixedAmount) : undefined,
       smallOrderAggregationEnabled: template.smallOrderAggregationEnabled ?? false,
       smallOrderAggregationWindowSeconds: template.smallOrderAggregationWindowSeconds ?? 300,
       priceTolerance: template.priceTolerance ? parseFloat(template.priceTolerance) : undefined,
@@ -442,6 +468,21 @@ const AddModal: React.FC<AddModalProps> = ({
       message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
       return
     }
+
+    const repeatAddReductionError = validateRepeatAddReductionConfig(values)
+    if (repeatAddReductionError) {
+      message.error(repeatAddReductionError)
+      return
+    }
+
+    const repeatAddReductionPayload: Pick<
+      CopyTradingCreateRequest,
+      'repeatAddReductionEnabled' |
+      'repeatAddReductionStrategy' |
+      'repeatAddReductionValueType' |
+      'repeatAddReductionPercent' |
+      'repeatAddReductionFixedAmount'
+    > = buildRepeatAddReductionPayload(values)
     
     // 计算市场截止时间（毫秒）
     let maxMarketEndDate: number | undefined
@@ -474,6 +515,7 @@ const AddModal: React.FC<AddModalProps> = ({
         maxDailyLoss: values.maxDailyLoss?.toString(),
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        ...repeatAddReductionPayload,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
           ? values.smallOrderAggregationWindowSeconds
@@ -979,6 +1021,94 @@ const AddModal: React.FC<AddModalProps> = ({
               style={{ width: '100%' }}
               placeholder={t('copyTradingAdd.maxDailyVolumePlaceholder') || '例如：5000（可选）'}
             />
+          </Form.Item>
+
+          <Divider>同市场再次加仓减金额</Divider>
+
+          <Form.Item
+            label="启用同市场再次加仓减金额"
+            name="repeatAddReductionEnabled"
+            tooltip="只针对同市场同方向的再次买入；首笔不受影响，仓位平掉后重新计数。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.repeatAddReductionEnabled !== currentValues.repeatAddReductionEnabled ||
+            prevValues.repeatAddReductionValueType !== currentValues.repeatAddReductionValueType
+          }>
+            {({ getFieldValue }) => getFieldValue('repeatAddReductionEnabled') ? (
+              <>
+                <Form.Item
+                  label="缩量策略"
+                  name="repeatAddReductionStrategy"
+                  rules={[{ required: true, message: '请选择缩量策略' }]}
+                >
+                  <Radio.Group>
+                    <Radio value="UNIFORM">第二笔起统一改小</Radio>
+                    <Radio value="PROGRESSIVE">逐次递减</Radio>
+                  </Radio.Group>
+                </Form.Item>
+
+                <Form.Item
+                  label="缩量类型"
+                  name="repeatAddReductionValueType"
+                  rules={[{ required: true, message: '请选择缩量类型' }]}
+                >
+                  <Radio.Group>
+                    <Radio value="PERCENT">百分比</Radio>
+                    <Radio value="FIXED">固定金额</Radio>
+                  </Radio.Group>
+                </Form.Item>
+
+                {getFieldValue('repeatAddReductionValueType') === 'FIXED' ? (
+                  <Form.Item
+                    label="固定金额 / 固定减额 (USDC)"
+                    name="repeatAddReductionFixedAmount"
+                    rules={[
+                      { required: true, message: '请输入固定金额' },
+                      {
+                        validator: (_, value) => {
+                          if (value === undefined || value === null || value === '') {
+                            return Promise.resolve()
+                          }
+                          return Number(value) > 0
+                            ? Promise.resolve()
+                            : Promise.reject(new Error('固定金额必须大于 0'))
+                        }
+                      }
+                    ]}
+                  >
+                    <InputNumber min={0.0001} step={0.0001} precision={4} style={{ width: '100%' }} />
+                  </Form.Item>
+                ) : (
+                  <Form.Item
+                    label="百分比 (%)"
+                    name="repeatAddReductionPercent"
+                    rules={[
+                      { required: true, message: '请输入百分比' },
+                      {
+                        validator: (_, value) => {
+                          if (value === undefined || value === null || value === '') {
+                            return Promise.resolve()
+                          }
+                          return Number(value) > 0 && Number(value) < 100
+                            ? Promise.resolve()
+                            : Promise.reject(new Error('百分比必须大于 0 且小于 100'))
+                        }
+                      }
+                    ]}
+                  >
+                    <InputNumber min={0.01} max={99.99} step={0.01} precision={2} style={{ width: '100%' }} addonAfter="%" />
+                  </Form.Item>
+                )}
+
+                <div style={{ marginTop: -8, marginBottom: 16, fontSize: 12, color: '#666' }}>
+                  说明：同市场=市场 + 方向；首笔不受影响；平仓后重新计数；最终仍会受最大仓位金额、最大活跃仓位数量、最小下单金额等限制。
+                </div>
+              </>
+            ) : null}
           </Form.Item>
 
           <Form.Item
@@ -1490,6 +1620,11 @@ const AddModal: React.FC<AddModalProps> = ({
                   {record.multiplierMode && record.multiplierMode !== 'NONE' && (
                     <div style={{ fontSize: 12, color: '#666' }}>
                       {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+                    </div>
+                  )}
+                  {record.repeatAddReductionEnabled && (
+                    <div style={{ fontSize: 12, color: '#666' }}>
+                      {formatRepeatAddReductionSummary(record)}
                     </div>
                   )}
                 </div>

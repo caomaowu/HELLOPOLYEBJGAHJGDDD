@@ -4,7 +4,15 @@ import { useSearchParams } from 'react-router-dom'
 import { Table, Card, Button, Select, Tag, Space, Modal, message, Row, Col, Form, Input, InputNumber, Switch, Statistic, Descriptions } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, StopOutlined, EyeOutlined, RedoOutlined, CopyOutlined, SyncOutlined } from '@ant-design/icons'
-import { formatCopyModeSummary, formatMultiplierSummary, formatUSDC, validateAndNormalizeMultiplierTiers } from '../utils'
+import {
+  buildRepeatAddReductionPayload,
+  formatCopyModeSummary,
+  formatMultiplierSummary,
+  formatRepeatAddReductionSummary,
+  formatUSDC,
+  validateAndNormalizeMultiplierTiers,
+  validateRepeatAddReductionConfig
+} from '../utils'
 import { backtestService, apiService } from '../services/api'
 import type {
   BacktestAuditEventDto,
@@ -411,6 +419,9 @@ const BacktestList: React.FC = () => {
       minOrderSize: 1,
       maxDailyLoss: 500,
       maxDailyOrders: 50,
+      repeatAddReductionEnabled: false,
+      repeatAddReductionStrategy: 'UNIFORM',
+      repeatAddReductionValueType: 'PERCENT',
       supportSell: true,
       keywordFilterMode: 'DISABLED',
       backtestDays: 7
@@ -431,6 +442,21 @@ const BacktestList: React.FC = () => {
         message.error(normalizedTierResult.message || '分层 multiplier 配置不合法')
         return
       }
+
+      const repeatAddReductionError = validateRepeatAddReductionConfig(values)
+      if (repeatAddReductionError) {
+        message.error(repeatAddReductionError)
+        return
+      }
+
+      const repeatAddReductionPayload: Pick<
+        BacktestCreateRequest,
+        'repeatAddReductionEnabled' |
+        'repeatAddReductionStrategy' |
+        'repeatAddReductionValueType' |
+        'repeatAddReductionPercent' |
+        'repeatAddReductionFixedAmount'
+      > = buildRepeatAddReductionPayload(values)
 
       setCreateLoading(true)
 
@@ -455,6 +481,7 @@ const BacktestList: React.FC = () => {
         maxDailyLoss: values.maxDailyLoss,
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
+        ...repeatAddReductionPayload,
         supportSell: values.supportSell,
         keywordFilterMode: values.keywordFilterMode,
         keywords: values.keywords,
@@ -519,6 +546,11 @@ const BacktestList: React.FC = () => {
           maxDailyLoss: parseFloat(taskConfig.maxDailyLoss),
           maxDailyOrders: taskConfig.maxDailyOrders,
           maxDailyVolume: taskConfig.maxDailyVolume ? parseFloat(taskConfig.maxDailyVolume) : undefined,
+          repeatAddReductionEnabled: taskConfig.repeatAddReductionEnabled ?? false,
+          repeatAddReductionStrategy: taskConfig.repeatAddReductionStrategy || 'UNIFORM',
+          repeatAddReductionValueType: taskConfig.repeatAddReductionValueType || 'PERCENT',
+          repeatAddReductionPercent: taskConfig.repeatAddReductionPercent ? parseFloat(taskConfig.repeatAddReductionPercent) : undefined,
+          repeatAddReductionFixedAmount: taskConfig.repeatAddReductionFixedAmount ? parseFloat(taskConfig.repeatAddReductionFixedAmount) : undefined,
           supportSell: taskConfig.supportSell,
           keywordFilterMode: taskConfig.keywordFilterMode || 'DISABLED',
           keywords: taskConfig.keywords || [],
@@ -1703,6 +1735,102 @@ const BacktestList: React.FC = () => {
               />
             </Form.Item>
 
+            <Card
+              size="small"
+              title="同市场再次加仓减金额"
+              style={{ marginBottom: 16 }}
+            >
+              <Form.Item
+                label="启用同市场再次加仓减金额"
+                name="repeatAddReductionEnabled"
+                tooltip="只针对同市场同方向的再次买入；首笔不受影响，仓位平掉后重新计数。"
+                valuePropName="checked"
+              >
+                <Switch />
+              </Form.Item>
+
+              <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+                prevValues.repeatAddReductionEnabled !== currentValues.repeatAddReductionEnabled ||
+                prevValues.repeatAddReductionValueType !== currentValues.repeatAddReductionValueType
+              }>
+                {({ getFieldValue }) => getFieldValue('repeatAddReductionEnabled') ? (
+                  <>
+                    <Form.Item
+                      label="缩量策略"
+                      name="repeatAddReductionStrategy"
+                      rules={[{ required: true, message: '请选择缩量策略' }]}
+                    >
+                      <Select
+                        options={[
+                          { label: '第二笔起统一改小', value: 'UNIFORM' },
+                          { label: '逐次递减', value: 'PROGRESSIVE' }
+                        ]}
+                      />
+                    </Form.Item>
+
+                    <Form.Item
+                      label="缩量类型"
+                      name="repeatAddReductionValueType"
+                      rules={[{ required: true, message: '请选择缩量类型' }]}
+                    >
+                      <Select
+                        options={[
+                          { label: '百分比', value: 'PERCENT' },
+                          { label: '固定金额', value: 'FIXED' }
+                        ]}
+                      />
+                    </Form.Item>
+
+                    {getFieldValue('repeatAddReductionValueType') === 'FIXED' ? (
+                      <Form.Item
+                        label="固定金额 / 固定减额 (USDC)"
+                        name="repeatAddReductionFixedAmount"
+                        rules={[
+                          { required: true, message: '请输入固定金额' },
+                          {
+                            validator: (_, value) => {
+                              if (value === undefined || value === null || value === '') {
+                                return Promise.resolve()
+                              }
+                              return Number(value) > 0
+                                ? Promise.resolve()
+                                : Promise.reject(new Error('固定金额必须大于 0'))
+                            }
+                          }
+                        ]}
+                      >
+                        <InputNumber style={{ width: '100%' }} precision={4} min={0.0001} />
+                      </Form.Item>
+                    ) : (
+                      <Form.Item
+                        label="百分比 (%)"
+                        name="repeatAddReductionPercent"
+                        rules={[
+                          { required: true, message: '请输入百分比' },
+                          {
+                            validator: (_, value) => {
+                              if (value === undefined || value === null || value === '') {
+                                return Promise.resolve()
+                              }
+                              return Number(value) > 0 && Number(value) < 100
+                                ? Promise.resolve()
+                                : Promise.reject(new Error('百分比必须大于 0 且小于 100'))
+                            }
+                          }
+                        ]}
+                      >
+                        <InputNumber style={{ width: '100%' }} precision={2} min={0.01} max={99.99} addonAfter="%" />
+                      </Form.Item>
+                    )}
+
+                    <div style={{ marginTop: -8, fontSize: 12, color: '#666' }}>
+                      说明：只影响同市场同方向的后续加仓；首笔保持原 sizing；最终仍会受最大仓位金额、最小下单金额等限制。
+                    </div>
+                  </>
+                ) : null}
+              </Form.Item>
+            </Card>
+
             <Form.Item
               label={t('backtest.maxPositionValue') + ' (USDC)'}
               name="maxPositionValue"
@@ -1859,6 +1987,11 @@ const BacktestList: React.FC = () => {
                   maxDailyLoss: parseFloat(detailConfig.maxDailyLoss),
                   maxDailyOrders: detailConfig.maxDailyOrders,
                   maxDailyVolume: detailConfig.maxDailyVolume ? parseFloat(detailConfig.maxDailyVolume) : undefined,
+                  repeatAddReductionEnabled: detailConfig.repeatAddReductionEnabled ?? false,
+                  repeatAddReductionStrategy: detailConfig.repeatAddReductionStrategy || 'UNIFORM',
+                  repeatAddReductionValueType: detailConfig.repeatAddReductionValueType || 'PERCENT',
+                  repeatAddReductionPercent: detailConfig.repeatAddReductionPercent ? parseFloat(detailConfig.repeatAddReductionPercent) : undefined,
+                  repeatAddReductionFixedAmount: detailConfig.repeatAddReductionFixedAmount ? parseFloat(detailConfig.repeatAddReductionFixedAmount) : undefined,
                   supportSell: detailConfig.supportSell,
                   keywordFilterMode: detailConfig.keywordFilterMode,
                   keywords: detailConfig.keywords || [],
@@ -2038,6 +2171,11 @@ const BacktestList: React.FC = () => {
                   {detailConfig.maxDailyVolume && (
                     <Descriptions.Item label={t('backtest.maxDailyVolume') || '每日最大成交额'}>
                       {formatUSDC(detailConfig.maxDailyVolume)} USDC
+                    </Descriptions.Item>
+                  )}
+                  {detailConfig.repeatAddReductionEnabled && (
+                    <Descriptions.Item label="重复加仓减金额">
+                      {formatRepeatAddReductionSummary(detailConfig)}
                     </Descriptions.Item>
                   )}
                   <Descriptions.Item label={t('backtest.supportSell')}>

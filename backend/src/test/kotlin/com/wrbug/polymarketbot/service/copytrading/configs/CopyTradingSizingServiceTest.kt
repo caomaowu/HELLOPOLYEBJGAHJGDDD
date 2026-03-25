@@ -2,6 +2,7 @@ package com.wrbug.polymarketbot.service.copytrading.configs
 
 import com.wrbug.polymarketbot.dto.MultiplierTierDto
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -173,6 +174,177 @@ class CopyTradingSizingServiceTest {
     }
 
     @Test
+    fun `repeat add reduction should not affect first buy`() {
+        val result = service.calculate(
+            config = config(
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = bd("50")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = BigDecimal.ZERO,
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = false
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertNull(result.repeatAddReductionInfo)
+        assertDecimalEquals("100", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should apply uniform percent from first buy amount`() {
+        val result = service.calculate(
+            config = config(
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = bd("50")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 1
+            )
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertNotNull(result.repeatAddReductionInfo)
+        assertEquals(2, result.repeatAddReductionInfo?.buyIndex)
+        assertDecimalEquals("40", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should apply uniform fixed amount`() {
+        val result = service.calculate(
+            config = config(
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED,
+                repeatAddReductionFixedAmount = bd("12")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 1
+            )
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("12", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should apply progressive percent`() {
+        val result = service.calculate(
+            config = config(
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_PROGRESSIVE,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = bd("50")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 2
+            )
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertEquals(3, result.repeatAddReductionInfo?.buyIndex)
+        assertDecimalEquals("20", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should apply progressive fixed amount`() {
+        val result = service.calculate(
+            config = config(
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_PROGRESSIVE,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED,
+                repeatAddReductionFixedAmount = bd("15")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 2
+            )
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("50", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should still respect downstream caps`() {
+        val result = service.calculate(
+            config = config(
+                maxPositionValue = bd("45"),
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = bd("50")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("10"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 1
+            )
+        )
+
+        assertEquals(SizingStatus.EXECUTABLE, result.status)
+        assertDecimalEquals("35", result.finalAmount)
+    }
+
+    @Test
+    fun `repeat add reduction should reject when adjusted amount falls below min order size`() {
+        val result = service.calculate(
+            config = config(
+                minOrderSize = bd("10"),
+                repeatAddReductionEnabled = true,
+                repeatAddReductionStrategy = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED,
+                repeatAddReductionFixedAmount = bd("5")
+            ),
+            leaderOrderAmount = bd("100"),
+            tradePrice = bd("0.5"),
+            currentPositionValue = bd("20"),
+            currentDailyVolume = BigDecimal.ZERO,
+            hasActivePosition = true,
+            repeatAddReductionContext = RepeatAddReductionContext(
+                firstBuyAmount = bd("80"),
+                existingBuyCount = 1
+            )
+        )
+
+        assertEquals(SizingStatus.REJECTED, result.status)
+        assertEquals(SizingRejectionType.BELOW_MIN_ORDER_SIZE, result.rejectionType)
+        assertDecimalEquals("5", result.finalAmount)
+    }
+
+    @Test
     fun `tiered multipliers should be serialized in ascending min order`() {
         val json = CopyTradingSizingSupport.serializeTieredMultipliers(
             listOf(
@@ -200,7 +372,12 @@ class CopyTradingSizingServiceTest {
         minOrderSize: BigDecimal = bd("1"),
         maxPositionValue: BigDecimal? = null,
         maxPositionCount: Int? = null,
-        maxDailyVolume: BigDecimal? = null
+        maxDailyVolume: BigDecimal? = null,
+        repeatAddReductionEnabled: Boolean = false,
+        repeatAddReductionStrategy: String = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+        repeatAddReductionValueType: String = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+        repeatAddReductionPercent: BigDecimal? = null,
+        repeatAddReductionFixedAmount: BigDecimal? = null
     ) = CopyTradingSizingConfig(
         copyMode = copyMode,
         copyRatio = copyRatio,
@@ -215,7 +392,12 @@ class CopyTradingSizingServiceTest {
         minOrderSize = minOrderSize,
         maxPositionValue = maxPositionValue,
         maxPositionCount = maxPositionCount,
-        maxDailyVolume = maxDailyVolume
+        maxDailyVolume = maxDailyVolume,
+        repeatAddReductionEnabled = repeatAddReductionEnabled,
+        repeatAddReductionStrategy = repeatAddReductionStrategy,
+        repeatAddReductionValueType = repeatAddReductionValueType,
+        repeatAddReductionPercent = repeatAddReductionPercent,
+        repeatAddReductionFixedAmount = repeatAddReductionFixedAmount
     )
 
     private fun bd(value: String) = BigDecimal(value)

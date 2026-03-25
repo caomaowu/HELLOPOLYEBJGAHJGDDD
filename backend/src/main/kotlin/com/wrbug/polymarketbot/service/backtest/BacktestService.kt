@@ -83,6 +83,13 @@ class BacktestService(
                 maxDailyLoss = request.maxDailyLoss?.toSafeBigDecimal() ?: "10000".toSafeBigDecimal(),
                 maxDailyOrders = request.maxDailyOrders ?: 100,
                 maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal(),
+                repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: false,
+                repeatAddReductionStrategy = request.repeatAddReductionStrategy
+                    ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = request.repeatAddReductionValueType
+                    ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal(),
+                repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal(),
                 supportSell = request.supportSell ?: true,
                 keywordFilterMode = request.keywordFilterMode ?: "DISABLED",
                 keywords = if (request.keywords != null && request.keywords.isNotEmpty()) {
@@ -473,6 +480,11 @@ class BacktestService(
                 maxDailyLoss = source.maxDailyLoss,
                 maxDailyOrders = source.maxDailyOrders,
                 maxDailyVolume = source.maxDailyVolume,
+                repeatAddReductionEnabled = source.repeatAddReductionEnabled,
+                repeatAddReductionStrategy = source.repeatAddReductionStrategy,
+                repeatAddReductionValueType = source.repeatAddReductionValueType,
+                repeatAddReductionPercent = source.repeatAddReductionPercent,
+                repeatAddReductionFixedAmount = source.repeatAddReductionFixedAmount,
                 supportSell = source.supportSell,
                 keywordFilterMode = source.keywordFilterMode,
                 keywords = source.keywords,
@@ -565,7 +577,12 @@ class BacktestService(
             minOrderSize = task.minOrderSize,
             maxPositionValue = task.maxPositionValue,
             maxPositionCount = null,
-            maxDailyVolume = task.maxDailyVolume
+            maxDailyVolume = task.maxDailyVolume,
+            repeatAddReductionEnabled = task.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = task.repeatAddReductionStrategy,
+            repeatAddReductionValueType = task.repeatAddReductionValueType,
+            repeatAddReductionPercent = task.repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = task.repeatAddReductionFixedAmount
         )
         return CopyTradingSizingSupport.validateConfig(config).firstOrNull()
     }
@@ -605,6 +622,11 @@ class BacktestService(
             "maxDailyLoss" to ("最大日亏损" to { item: BacktestCompareItemDto -> item.config.maxDailyLoss }),
             "maxDailyOrders" to ("最大日订单数" to { item: BacktestCompareItemDto -> item.config.maxDailyOrders.toString() }),
             "maxDailyVolume" to ("最大日成交额" to { item: BacktestCompareItemDto -> item.config.maxDailyVolume }),
+            "repeatAddReductionEnabled" to ("重复加仓缩量" to { item: BacktestCompareItemDto -> item.config.repeatAddReductionEnabled.toString() }),
+            "repeatAddReductionStrategy" to ("缩量策略" to { item: BacktestCompareItemDto -> item.config.repeatAddReductionStrategy }),
+            "repeatAddReductionValueType" to ("缩量类型" to { item: BacktestCompareItemDto -> item.config.repeatAddReductionValueType }),
+            "repeatAddReductionPercent" to ("缩量百分比" to { item: BacktestCompareItemDto -> item.config.repeatAddReductionPercent }),
+            "repeatAddReductionFixedAmount" to ("缩量固定值" to { item: BacktestCompareItemDto -> item.config.repeatAddReductionFixedAmount }),
             "supportSell" to ("跟随卖出" to { item: BacktestCompareItemDto -> item.config.supportSell.toString() }),
             "keywordFilterMode" to ("关键字过滤模式" to { item: BacktestCompareItemDto -> item.config.keywordFilterMode }),
             "keywords" to ("关键字" to { item: BacktestCompareItemDto -> item.config.keywords?.joinToString(",") }),
@@ -886,6 +908,11 @@ private fun BacktestTask.toConfigDto(): BacktestConfigDto {
         maxDailyLoss = this.maxDailyLoss.toPlainString(),
         maxDailyOrders = this.maxDailyOrders,
         maxDailyVolume = this.maxDailyVolume?.toPlainString(),
+        repeatAddReductionEnabled = this.repeatAddReductionEnabled,
+        repeatAddReductionStrategy = this.repeatAddReductionStrategy,
+        repeatAddReductionValueType = this.repeatAddReductionValueType,
+        repeatAddReductionPercent = this.repeatAddReductionPercent?.toPlainString(),
+        repeatAddReductionFixedAmount = this.repeatAddReductionFixedAmount?.toPlainString(),
         supportSell = this.supportSell,
         keywordFilterMode = this.keywordFilterMode,
         keywords = if (this.keywords != null) {

@@ -38,6 +38,7 @@ class CopyTradingService(
     private val monitorService: CopyTradingMonitorService,
     private val accountExecutionDiagnosticsService: AccountExecutionDiagnosticsService,
     private val smallOrderAggregationService: SmallOrderAggregationService,
+    private val repeatAddStateService: CopyTradingRepeatAddStateService,
     private val jsonUtils: JsonUtils,
     private val gson: Gson
 ) : ApplicationContextAware {
@@ -106,6 +107,13 @@ class CopyTradingService(
                     maxDailyVolume = request.maxDailyVolume?.toSafeBigDecimal() ?: template.maxDailyVolume,
                     smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: template.smallOrderAggregationEnabled,
                     smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds ?: template.smallOrderAggregationWindowSeconds,
+                    repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: template.repeatAddReductionEnabled,
+                    repeatAddReductionStrategy = request.repeatAddReductionStrategy ?: template.repeatAddReductionStrategy,
+                    repeatAddReductionValueType = request.repeatAddReductionValueType ?: template.repeatAddReductionValueType,
+                    repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal()
+                        ?: template.repeatAddReductionPercent,
+                    repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal()
+                        ?: template.repeatAddReductionFixedAmount,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                     delaySeconds = request.delaySeconds ?: template.delaySeconds,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -175,6 +183,13 @@ class CopyTradingService(
                     smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: false,
                     smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                         ?: SmallOrderAggregationSupport.DEFAULT_WINDOW_SECONDS,
+                    repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: false,
+                    repeatAddReductionStrategy = request.repeatAddReductionStrategy
+                        ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                    repeatAddReductionValueType = request.repeatAddReductionValueType
+                        ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                    repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal(),
+                    repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal(),
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                     delaySeconds = request.delaySeconds ?: 0,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -246,6 +261,11 @@ class CopyTradingService(
                 maxDailyVolume = config.maxDailyVolume,
                 smallOrderAggregationEnabled = config.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = config.smallOrderAggregationWindowSeconds,
+                repeatAddReductionEnabled = config.repeatAddReductionEnabled,
+                repeatAddReductionStrategy = config.repeatAddReductionStrategy,
+                repeatAddReductionValueType = config.repeatAddReductionValueType,
+                repeatAddReductionPercent = config.repeatAddReductionPercent,
+                repeatAddReductionFixedAmount = config.repeatAddReductionFixedAmount,
                 priceTolerance = config.priceTolerance,
                 delaySeconds = config.delaySeconds,
                 pollIntervalSeconds = config.pollIntervalSeconds,
@@ -338,6 +358,17 @@ class CopyTradingService(
                 smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: copyTrading.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                     ?: copyTrading.smallOrderAggregationWindowSeconds,
+                repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: copyTrading.repeatAddReductionEnabled,
+                repeatAddReductionStrategy = request.repeatAddReductionStrategy ?: copyTrading.repeatAddReductionStrategy,
+                repeatAddReductionValueType = request.repeatAddReductionValueType ?: copyTrading.repeatAddReductionValueType,
+                repeatAddReductionPercent = mergeOptionalDecimal(
+                    request.repeatAddReductionPercent,
+                    copyTrading.repeatAddReductionPercent
+                ),
+                repeatAddReductionFixedAmount = mergeOptionalDecimal(
+                    request.repeatAddReductionFixedAmount,
+                    copyTrading.repeatAddReductionFixedAmount
+                ),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: copyTrading.priceTolerance,
                 delaySeconds = request.delaySeconds ?: copyTrading.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: copyTrading.pollIntervalSeconds,
@@ -464,6 +495,11 @@ class CopyTradingService(
                     maxDailyVolume = updated.maxDailyVolume,
                     smallOrderAggregationEnabled = updated.smallOrderAggregationEnabled,
                     smallOrderAggregationWindowSeconds = updated.smallOrderAggregationWindowSeconds,
+                    repeatAddReductionEnabled = updated.repeatAddReductionEnabled,
+                    repeatAddReductionStrategy = updated.repeatAddReductionStrategy,
+                    repeatAddReductionValueType = updated.repeatAddReductionValueType,
+                    repeatAddReductionPercent = updated.repeatAddReductionPercent,
+                    repeatAddReductionFixedAmount = updated.repeatAddReductionFixedAmount,
                     priceTolerance = updated.priceTolerance,
                     delaySeconds = updated.delaySeconds,
                     pollIntervalSeconds = updated.pollIntervalSeconds,
@@ -616,6 +652,7 @@ class CopyTradingService(
             val leaderId = copyTrading.leaderId
             val accountId = copyTrading.accountId
             smallOrderAggregationService.clear(copyTradingId)
+            repeatAddStateService.clearAll(copyTradingId)
             copyTradingRepository.delete(copyTrading)
             
             // 更新 Leader 监听和账户监听（检查是否还有其他启用的跟单配置）
@@ -710,6 +747,11 @@ class CopyTradingService(
             maxDailyVolume = copyTrading.maxDailyVolume?.toPlainString(),
             smallOrderAggregationEnabled = copyTrading.smallOrderAggregationEnabled,
             smallOrderAggregationWindowSeconds = copyTrading.smallOrderAggregationWindowSeconds,
+            repeatAddReductionEnabled = copyTrading.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = copyTrading.repeatAddReductionStrategy,
+            repeatAddReductionValueType = copyTrading.repeatAddReductionValueType,
+            repeatAddReductionPercent = copyTrading.repeatAddReductionPercent?.toPlainString(),
+            repeatAddReductionFixedAmount = copyTrading.repeatAddReductionFixedAmount?.toPlainString(),
             priceTolerance = copyTrading.priceTolerance.toPlainString(),
             delaySeconds = copyTrading.delaySeconds,
             pollIntervalSeconds = copyTrading.pollIntervalSeconds,
@@ -817,6 +859,11 @@ class CopyTradingService(
         val maxDailyVolume: BigDecimal?,
         val smallOrderAggregationEnabled: Boolean,
         val smallOrderAggregationWindowSeconds: Int,
+        val repeatAddReductionEnabled: Boolean,
+        val repeatAddReductionStrategy: String,
+        val repeatAddReductionValueType: String,
+        val repeatAddReductionPercent: BigDecimal?,
+        val repeatAddReductionFixedAmount: BigDecimal?,
         val priceTolerance: BigDecimal,
         val delaySeconds: Int,
         val pollIntervalSeconds: Int,
@@ -868,7 +915,12 @@ class CopyTradingService(
             minOrderSize = config.minOrderSize,
             maxPositionValue = config.maxPositionValue,
             maxPositionCount = config.maxPositionCount,
-            maxDailyVolume = config.maxDailyVolume
+            maxDailyVolume = config.maxDailyVolume,
+            repeatAddReductionEnabled = config.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = config.repeatAddReductionStrategy,
+            repeatAddReductionValueType = config.repeatAddReductionValueType,
+            repeatAddReductionPercent = config.repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = config.repeatAddReductionFixedAmount
         )
         CopyTradingSizingSupport.validateConfig(sizingConfig).firstOrNull()?.let { return it }
         SmallOrderAggregationSupport.validateConfig(

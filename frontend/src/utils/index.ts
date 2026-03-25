@@ -211,6 +211,97 @@ export const formatCopyModeSummary = (config: {
   return `比例 ${formatNumber(config.copyRatio || '0', 4)}x`
 }
 
+type RepeatAddReductionConfig = {
+  repeatAddReductionEnabled?: boolean | null
+  repeatAddReductionStrategy?: string | null
+  repeatAddReductionValueType?: string | null
+  repeatAddReductionPercent?: string | number | null
+  repeatAddReductionFixedAmount?: string | number | null
+}
+
+const toOptionalNumber = (value: string | number | null | undefined): number | null => {
+  if (value === undefined || value === null || value === '') {
+    return null
+  }
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export const validateRepeatAddReductionConfig = (config: RepeatAddReductionConfig): string | null => {
+  if (!config.repeatAddReductionEnabled) {
+    return null
+  }
+
+  if (config.repeatAddReductionStrategy !== 'UNIFORM' && config.repeatAddReductionStrategy !== 'PROGRESSIVE') {
+    return '请选择重复加仓缩量策略'
+  }
+
+  if (config.repeatAddReductionValueType !== 'PERCENT' && config.repeatAddReductionValueType !== 'FIXED') {
+    return '请选择重复加仓缩量类型'
+  }
+
+  if (config.repeatAddReductionValueType === 'PERCENT') {
+    const percent = toOptionalNumber(config.repeatAddReductionPercent)
+    if (percent === null || percent <= 0 || percent >= 100) {
+      return '重复加仓缩量百分比必须大于 0 且小于 100'
+    }
+  }
+
+  if (config.repeatAddReductionValueType === 'FIXED') {
+    const fixedAmount = toOptionalNumber(config.repeatAddReductionFixedAmount)
+    if (fixedAmount === null || fixedAmount <= 0) {
+      return '重复加仓固定减额必须大于 0'
+    }
+  }
+
+  return null
+}
+
+export const buildRepeatAddReductionPayload = (config: RepeatAddReductionConfig): {
+  repeatAddReductionEnabled: boolean
+  repeatAddReductionStrategy?: 'UNIFORM' | 'PROGRESSIVE'
+  repeatAddReductionValueType?: 'PERCENT' | 'FIXED'
+  repeatAddReductionPercent?: string
+  repeatAddReductionFixedAmount?: string
+} => {
+  const enabled = Boolean(config.repeatAddReductionEnabled)
+  const strategy = config.repeatAddReductionStrategy === 'PROGRESSIVE' ? 'PROGRESSIVE' : 'UNIFORM'
+  const valueType = config.repeatAddReductionValueType === 'FIXED' ? 'FIXED' : 'PERCENT'
+
+  return {
+    repeatAddReductionEnabled: enabled,
+    repeatAddReductionStrategy: enabled ? strategy : undefined,
+    repeatAddReductionValueType: enabled ? valueType : undefined,
+    repeatAddReductionPercent: enabled && valueType === 'PERCENT' && config.repeatAddReductionPercent !== undefined && config.repeatAddReductionPercent !== null && config.repeatAddReductionPercent !== ''
+      ? String(config.repeatAddReductionPercent)
+      : undefined,
+    repeatAddReductionFixedAmount: enabled && valueType === 'FIXED' && config.repeatAddReductionFixedAmount !== undefined && config.repeatAddReductionFixedAmount !== null && config.repeatAddReductionFixedAmount !== ''
+      ? String(config.repeatAddReductionFixedAmount)
+      : undefined
+  }
+}
+
+export const formatRepeatAddReductionSummary = (config: RepeatAddReductionConfig): string => {
+  if (!config.repeatAddReductionEnabled) {
+    return ''
+  }
+
+  const strategy = config.repeatAddReductionStrategy || 'UNIFORM'
+  const valueType = config.repeatAddReductionValueType || 'PERCENT'
+
+  if (valueType === 'FIXED') {
+    const fixedAmount = formatUSDC(config.repeatAddReductionFixedAmount)
+    return strategy === 'PROGRESSIVE'
+      ? `重复加仓：每次比首笔少 ${fixedAmount} USDC`
+      : `重复加仓：后续固定 ${fixedAmount} USDC`
+  }
+
+  const percent = formatNumber(config.repeatAddReductionPercent ?? '', 4)
+  return strategy === 'PROGRESSIVE'
+    ? `重复加仓：第 n 笔=首笔×${percent}%^(n-1)`
+    : `重复加仓：后续固定为首笔 ${percent}%`
+}
+
 type MarketFilterSummaryConfig = {
   marketCategoryMode?: string | null
   marketCategories?: Array<string | null | undefined> | null

@@ -97,6 +97,21 @@ data class BacktestTask(
     @Column(name = "max_daily_volume", precision = 20, scale = 8)
     val maxDailyVolume: BigDecimal? = null,
 
+    @Column(name = "repeat_add_reduction_enabled", nullable = false)
+    val repeatAddReductionEnabled: Boolean = false,
+
+    @Column(name = "repeat_add_reduction_strategy", nullable = false, length = 20)
+    val repeatAddReductionStrategy: String = "UNIFORM",
+
+    @Column(name = "repeat_add_reduction_value_type", nullable = false, length = 20)
+    val repeatAddReductionValueType: String = "PERCENT",
+
+    @Column(name = "repeat_add_reduction_percent", precision = 10, scale = 4)
+    val repeatAddReductionPercent: BigDecimal? = null,
+
+    @Column(name = "repeat_add_reduction_fixed_amount", precision = 20, scale = 8)
+    val repeatAddReductionFixedAmount: BigDecimal? = null,
+
     @Column(name = "min_price", precision = 20, scale = 8)
     val minPrice: BigDecimal? = null,  // 最低价格（可选），NULL表示不限制最低价
 

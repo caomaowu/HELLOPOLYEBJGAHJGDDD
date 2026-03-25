@@ -25,6 +25,11 @@ data class BacktestCreateRequest(
     val maxDailyLoss: String? = null,
     val maxDailyOrders: Int? = null,
     val maxDailyVolume: String? = null,
+    val repeatAddReductionEnabled: Boolean? = null,
+    val repeatAddReductionStrategy: String? = null,
+    val repeatAddReductionValueType: String? = null,
+    val repeatAddReductionPercent: String? = null,
+    val repeatAddReductionFixedAmount: String? = null,
     val supportSell: Boolean? = null,
     val keywordFilterMode: String? = null,  // 关键字过滤模式：DISABLED（不启用）、WHITELIST（白名单）、BLACKLIST（黑名单）
     val keywords: List<String>? = null,  // 关键字列表
@@ -279,6 +284,11 @@ data class BacktestConfigDto(
     val maxDailyLoss: String,
     val maxDailyOrders: Int,
     val maxDailyVolume: String?,
+    val repeatAddReductionEnabled: Boolean,
+    val repeatAddReductionStrategy: String,
+    val repeatAddReductionValueType: String,
+    val repeatAddReductionPercent: String?,
+    val repeatAddReductionFixedAmount: String?,
     val supportSell: Boolean,
     val keywordFilterMode: String?,
     val keywords: List<String>?,

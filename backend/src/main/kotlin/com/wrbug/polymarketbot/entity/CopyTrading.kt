@@ -112,6 +112,21 @@ data class CopyTrading(
 
     @Column(name = "small_order_aggregation_window_seconds", nullable = false)
     val smallOrderAggregationWindowSeconds: Int = 300,
+
+    @Column(name = "repeat_add_reduction_enabled", nullable = false)
+    val repeatAddReductionEnabled: Boolean = false,
+
+    @Column(name = "repeat_add_reduction_strategy", nullable = false, length = 20)
+    val repeatAddReductionStrategy: String = "UNIFORM",
+
+    @Column(name = "repeat_add_reduction_value_type", nullable = false, length = 20)
+    val repeatAddReductionValueType: String = "PERCENT",
+
+    @Column(name = "repeat_add_reduction_percent", precision = 10, scale = 4)
+    val repeatAddReductionPercent: BigDecimal? = null,
+
+    @Column(name = "repeat_add_reduction_fixed_amount", precision = 20, scale = 8)
+    val repeatAddReductionFixedAmount: BigDecimal? = null,
     
     // 关键字过滤配置
     @Column(name = "keyword_filter_mode", nullable = false, length = 20)

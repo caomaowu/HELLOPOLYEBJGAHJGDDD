@@ -25,7 +25,12 @@ data class CopyTradingSizingConfig(
     val minOrderSize: BigDecimal,
     val maxPositionValue: BigDecimal?,
     val maxPositionCount: Int?,
-    val maxDailyVolume: BigDecimal?
+    val maxDailyVolume: BigDecimal?,
+    val repeatAddReductionEnabled: Boolean = false,
+    val repeatAddReductionStrategy: String = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+    val repeatAddReductionValueType: String = CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+    val repeatAddReductionPercent: BigDecimal? = null,
+    val repeatAddReductionFixedAmount: BigDecimal? = null
 )
 
 enum class SizingStatus {
@@ -51,7 +56,24 @@ data class CopyTradingSizingResult(
     val appliedMultiplier: BigDecimal,
     val status: SizingStatus,
     val reason: String,
+    val repeatAddReductionInfo: RepeatAddReductionInfo? = null,
     val rejectionType: SizingRejectionType? = null
+)
+
+data class RepeatAddReductionContext(
+    val firstBuyAmount: BigDecimal,
+    val existingBuyCount: Int
+)
+
+data class RepeatAddReductionInfo(
+    val buyIndex: Int,
+    val firstBuyAmount: BigDecimal,
+    val originalAmount: BigDecimal,
+    val adjustedAmount: BigDecimal,
+    val strategy: String,
+    val valueType: String,
+    val percent: BigDecimal? = null,
+    val fixedAmount: BigDecimal? = null
 )
 
 object CopyTradingSizingSupport {
@@ -62,6 +84,12 @@ object CopyTradingSizingSupport {
     const val MULTIPLIER_MODE_NONE = "NONE"
     const val MULTIPLIER_MODE_SINGLE = "SINGLE"
     const val MULTIPLIER_MODE_TIERED = "TIERED"
+
+    const val REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM = "UNIFORM"
+    const val REPEAT_ADD_REDUCTION_STRATEGY_PROGRESSIVE = "PROGRESSIVE"
+
+    const val REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT = "PERCENT"
+    const val REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED = "FIXED"
 
     fun validateConfig(config: CopyTradingSizingConfig): List<String> {
         val errors = mutableListOf<String>()
@@ -134,6 +162,38 @@ object CopyTradingSizingSupport {
 
         if (config.maxDailyVolume != null && config.maxDailyVolume <= BigDecimal.ZERO) {
             errors += "maxDailyVolume 必须大于 0"
+        }
+
+        if (config.repeatAddReductionEnabled) {
+            if (config.repeatAddReductionStrategy !in setOf(
+                    REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                    REPEAT_ADD_REDUCTION_STRATEGY_PROGRESSIVE
+                )
+            ) {
+                errors += "repeatAddReductionStrategy 必须是 UNIFORM 或 PROGRESSIVE"
+            }
+
+            if (config.repeatAddReductionValueType !in setOf(
+                    REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                    REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED
+                )
+            ) {
+                errors += "repeatAddReductionValueType 必须是 PERCENT 或 FIXED"
+            }
+
+            if (config.repeatAddReductionValueType == REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT) {
+                val percent = config.repeatAddReductionPercent
+                if (percent == null || percent <= BigDecimal.ZERO || percent >= BigDecimal("100")) {
+                    errors += "repeatAddReductionPercent 必须在 (0, 100) 范围内"
+                }
+            }
+
+            if (config.repeatAddReductionValueType == REPEAT_ADD_REDUCTION_VALUE_TYPE_FIXED) {
+                val fixedAmount = config.repeatAddReductionFixedAmount
+                if (fixedAmount == null || fixedAmount <= BigDecimal.ZERO) {
+                    errors += "repeatAddReductionFixedAmount 必须大于 0"
+                }
+            }
         }
 
         return errors

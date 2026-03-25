@@ -69,6 +69,13 @@ class CopyTradingTemplateService(
                 smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: false,
                 smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                     ?: SmallOrderAggregationSupport.DEFAULT_WINDOW_SECONDS,
+                repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: false,
+                repeatAddReductionStrategy = request.repeatAddReductionStrategy
+                    ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_STRATEGY_UNIFORM,
+                repeatAddReductionValueType = request.repeatAddReductionValueType
+                    ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
+                repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal(),
+                repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal(),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                 delaySeconds = request.delaySeconds ?: 0,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -155,6 +162,14 @@ class CopyTradingTemplateService(
                 smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: template.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                     ?: template.smallOrderAggregationWindowSeconds,
+                repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: template.repeatAddReductionEnabled,
+                repeatAddReductionStrategy = request.repeatAddReductionStrategy ?: template.repeatAddReductionStrategy,
+                repeatAddReductionValueType = request.repeatAddReductionValueType ?: template.repeatAddReductionValueType,
+                repeatAddReductionPercent = mergeOptionalDecimal(request.repeatAddReductionPercent, template.repeatAddReductionPercent),
+                repeatAddReductionFixedAmount = mergeOptionalDecimal(
+                    request.repeatAddReductionFixedAmount,
+                    template.repeatAddReductionFixedAmount
+                ),
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                 delaySeconds = request.delaySeconds ?: template.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -256,6 +271,13 @@ class CopyTradingTemplateService(
                 smallOrderAggregationEnabled = request.smallOrderAggregationEnabled ?: sourceTemplate.smallOrderAggregationEnabled,
                 smallOrderAggregationWindowSeconds = request.smallOrderAggregationWindowSeconds
                     ?: sourceTemplate.smallOrderAggregationWindowSeconds,
+                repeatAddReductionEnabled = request.repeatAddReductionEnabled ?: sourceTemplate.repeatAddReductionEnabled,
+                repeatAddReductionStrategy = request.repeatAddReductionStrategy ?: sourceTemplate.repeatAddReductionStrategy,
+                repeatAddReductionValueType = request.repeatAddReductionValueType ?: sourceTemplate.repeatAddReductionValueType,
+                repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal()
+                    ?: sourceTemplate.repeatAddReductionPercent,
+                repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal()
+                    ?: sourceTemplate.repeatAddReductionFixedAmount,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: sourceTemplate.priceTolerance,
                 delaySeconds = request.delaySeconds ?: sourceTemplate.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: sourceTemplate.pollIntervalSeconds,
@@ -368,6 +390,11 @@ class CopyTradingTemplateService(
             maxDailyVolume = template.maxDailyVolume?.toPlainString(),
             smallOrderAggregationEnabled = template.smallOrderAggregationEnabled,
             smallOrderAggregationWindowSeconds = template.smallOrderAggregationWindowSeconds,
+            repeatAddReductionEnabled = template.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = template.repeatAddReductionStrategy,
+            repeatAddReductionValueType = template.repeatAddReductionValueType,
+            repeatAddReductionPercent = template.repeatAddReductionPercent?.toPlainString(),
+            repeatAddReductionFixedAmount = template.repeatAddReductionFixedAmount?.toPlainString(),
             priceTolerance = template.priceTolerance.toPlainString(),
             delaySeconds = template.delaySeconds,
             pollIntervalSeconds = template.pollIntervalSeconds,
@@ -444,7 +471,12 @@ class CopyTradingTemplateService(
             minOrderSize = template.minOrderSize,
             maxPositionValue = null,
             maxPositionCount = null,
-            maxDailyVolume = template.maxDailyVolume
+            maxDailyVolume = template.maxDailyVolume,
+            repeatAddReductionEnabled = template.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = template.repeatAddReductionStrategy,
+            repeatAddReductionValueType = template.repeatAddReductionValueType,
+            repeatAddReductionPercent = template.repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = template.repeatAddReductionFixedAmount
         )
         CopyTradingSizingSupport.validateConfig(config).firstOrNull()?.let { return it }
         SmallOrderAggregationSupport.validateConfig(

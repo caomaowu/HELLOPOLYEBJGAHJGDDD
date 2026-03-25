@@ -11,6 +11,7 @@ import com.wrbug.polymarketbot.repository.BacktestTaskRepository
 import com.wrbug.polymarketbot.service.common.MarketPriceService
 import com.wrbug.polymarketbot.service.common.MarketService
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingFilterService
+import com.wrbug.polymarketbot.service.copytrading.configs.RepeatAddReductionContext
 import com.wrbug.polymarketbot.service.copytrading.configs.CopyTradingSizingService
 import com.wrbug.polymarketbot.service.copytrading.configs.SizingStatus
 import com.wrbug.polymarketbot.util.gt
@@ -52,6 +53,12 @@ class BacktestExecutionService(
         val marketEndDate: Long? = null
     )
 
+    data class BacktestRepeatAddState(
+        val firstBuyAmount: BigDecimal,
+        val buyCount: Int,
+        val lastBuyAmount: BigDecimal
+    )
+
     /**
      * 将回测任务转换为虚拟的 CopyTrading 配置用于执行
      * 注意：回测场景使用历史数据，不需要实时跟单的相关配置
@@ -86,6 +93,11 @@ class BacktestExecutionService(
             maxSpread = null,  // 回测无实时价差数据
             maxPositionValue = task.maxPositionValue,
             maxDailyVolume = task.maxDailyVolume,
+            repeatAddReductionEnabled = task.repeatAddReductionEnabled,
+            repeatAddReductionStrategy = task.repeatAddReductionStrategy,
+            repeatAddReductionValueType = task.repeatAddReductionValueType,
+            repeatAddReductionPercent = task.repeatAddReductionPercent,
+            repeatAddReductionFixedAmount = task.repeatAddReductionFixedAmount,
             minPrice = task.minPrice,  // 最低价格
             maxPrice = task.maxPrice,  // 最高价格
             keywordFilterMode = task.keywordFilterMode,
@@ -128,6 +140,7 @@ class BacktestExecutionService(
             val dailyOrderCountCache = mutableMapOf<String, Int>()
             val dailyBuyVolumeCache = mutableMapOf<String, BigDecimal>()
             val dailyLossCache = mutableMapOf<String, BigDecimal>()
+            val repeatAddStates = mutableMapOf<String, BacktestRepeatAddState>()
             val seenTradeIds = mutableSetOf<String>()
 
             // 3. 回测时间范围：首次执行以当前时间为基准取最近 backtestDays 天；断点续跑保留原 startTime，仅 endTime 延到当前
@@ -314,7 +327,15 @@ class BacktestExecutionService(
                         try {
                             // 5.1 实时检查并结算已到期的市场
                             val tradesBeforeSettlement = currentPageTrades.size
-                            currentBalance = settleExpiredPositions(task, positions, currentBalance, trades, leaderTrade.timestamp, currentPageTrades)
+                            currentBalance = settleExpiredPositions(
+                                task = task,
+                                positions = positions,
+                                repeatAddStates = repeatAddStates,
+                                currentBalance = currentBalance,
+                                trades = trades,
+                                currentTime = leaderTrade.timestamp,
+                                batchTradesToSave = currentPageTrades
+                            )
                             val settledCount = currentPageTrades.size - tradesBeforeSettlement
                             if (settledCount > 0) {
                                 addAuditEvent(
@@ -438,18 +459,32 @@ class BacktestExecutionService(
                             if (leaderTrade.side == "BUY") {
                                 val positionKey = "${leaderTrade.marketId}:${leaderTrade.outcomeIndex ?: 0}"
                                 val currentPosition = positions[positionKey]
+                                if (currentPosition == null) {
+                                    repeatAddStates.remove(positionKey)
+                                }
                                 val currentPositionValue = if (currentPosition != null) {
                                     currentPosition.quantity.multiply(currentPosition.avgPrice)
                                 } else {
                                     BigDecimal.ZERO
                                 }
                                 val currentDailyVolume = dailyBuyVolumeCache.getOrDefault(tradeDate, BigDecimal.ZERO)
+                                val repeatAddReductionContext = if (currentPosition != null) {
+                                    repeatAddStates[positionKey]?.let {
+                                        RepeatAddReductionContext(
+                                            firstBuyAmount = it.firstBuyAmount,
+                                            existingBuyCount = it.buyCount
+                                        )
+                                    }
+                                } else {
+                                    null
+                                }
                                 val sizingResult = copyTradingSizingService.calculateBacktestBuySizing(
                                     task = task,
                                     leaderOrderAmount = leaderTrade.amount,
                                     tradePrice = leaderTrade.price,
                                     currentPositionValue = currentPositionValue,
-                                    currentDailyVolume = currentDailyVolume
+                                    currentDailyVolume = currentDailyVolume,
+                                    repeatAddReductionContext = repeatAddReductionContext
                                 )
                                 if (sizingResult.status != SizingStatus.EXECUTABLE) {
                                     logger.info("回测 sizing 拒绝买单: tradeId=${leaderTrade.tradeId}, reason=${sizingResult.reason}")
@@ -461,7 +496,17 @@ class BacktestExecutionService(
                                         decision = "SKIP",
                                         leaderTrade = leaderTrade,
                                         reasonCode = "SIZING_${sizingResult.status.name}",
-                                        reasonMessage = sizingResult.reason
+                                        reasonMessage = sizingResult.reason,
+                                        detail = sizingResult.repeatAddReductionInfo?.let {
+                                            mapOf(
+                                                "repeatAddReductionHit" to true,
+                                                "buyIndex" to it.buyIndex,
+                                                "firstBuyAmount" to it.firstBuyAmount.toPlainString(),
+                                                "adjustedAmount" to it.adjustedAmount.toPlainString(),
+                                                "strategy" to it.strategy,
+                                                "valueType" to it.valueType
+                                            )
+                                        }
                                     )
                                     continue
                                 }
@@ -507,6 +552,14 @@ class BacktestExecutionService(
                                     continue
                                 }
                                 val totalCost = actualBuyAmount
+                                val nextRepeatAddState = repeatAddStates[positionKey]?.copy(
+                                    buyCount = (repeatAddStates[positionKey]?.buyCount ?: 0) + 1,
+                                    lastBuyAmount = actualBuyAmount
+                                ) ?: BacktestRepeatAddState(
+                                    firstBuyAmount = actualBuyAmount,
+                                    buyCount = 1,
+                                    lastBuyAmount = actualBuyAmount
+                                )
 
                                 // 更新余额和持仓（同市场同 outcome 多次买入合并：数量相加、加权均价、leaderBuyQuantity 相加）
                                 currentBalance -= totalCost
@@ -543,6 +596,7 @@ class BacktestExecutionService(
                                         marketEndDate = market?.endDate
                                     )
                                 }
+                                repeatAddStates[positionKey] = nextRepeatAddState
 
                                 // 记录交易到当前页列表
                                 currentPageTrades.add(BacktestTrade(
@@ -576,7 +630,17 @@ class BacktestExecutionService(
                                     detail = mapOf(
                                         "amount" to actualBuyAmount.toPlainString(),
                                         "quantity" to quantity.toPlainString(),
-                                        "balanceAfter" to currentBalance.toPlainString()
+                                        "balanceAfter" to currentBalance.toPlainString(),
+                                        "repeatAddReductionHit" to (sizingResult.repeatAddReductionInfo != null),
+                                        "repeatAddReduction" to sizingResult.repeatAddReductionInfo?.let {
+                                            mapOf(
+                                                "buyIndex" to it.buyIndex,
+                                                "firstBuyAmount" to it.firstBuyAmount.toPlainString(),
+                                                "adjustedAmount" to it.adjustedAmount.toPlainString(),
+                                                "strategy" to it.strategy,
+                                                "valueType" to it.valueType
+                                            )
+                                        }
                                     )
                                 )
 
@@ -707,6 +771,7 @@ class BacktestExecutionService(
                                 }
                                 if (position.quantity <= BigDecimal.ZERO) {
                                     positions.remove(positionKey)
+                                    repeatAddStates.remove(positionKey)
                                 }
 
                                 // 记录交易到当前页列表
@@ -842,7 +907,15 @@ class BacktestExecutionService(
 
             // 6. 处理回测结束时仍未到期的持仓
             val remainingSettlements = mutableListOf<BacktestTrade>()
-            currentBalance = settleRemainingPositions(task, positions, currentBalance, trades, endTime, remainingSettlements)
+            currentBalance = settleRemainingPositions(
+                task = task,
+                positions = positions,
+                repeatAddStates = repeatAddStates,
+                currentBalance = currentBalance,
+                trades = trades,
+                currentTime = endTime,
+                settlementsToSave = remainingSettlements
+            )
             if (remainingSettlements.isNotEmpty()) {
                 backtestTradeRepository.saveAll(remainingSettlements)
                 logger.info("回测结束结算剩余持仓，持久化 ${remainingSettlements.size} 笔 SETTLEMENT(CLOSED)")
@@ -941,6 +1014,7 @@ class BacktestExecutionService(
     private suspend fun settleExpiredPositions(
         task: BacktestTask,
         positions: MutableMap<String, Position>,
+        repeatAddStates: MutableMap<String, BacktestRepeatAddState>,
         currentBalance: BigDecimal,
         trades: MutableList<BacktestTrade>,
         currentTime: Long,
@@ -1001,6 +1075,7 @@ class BacktestExecutionService(
 
                 // 移除已结算的持仓
                 positions.remove(positionKey)
+                repeatAddStates.remove(positionKey)
             } catch (e: Exception) {
                 logger.error("结算市场失败: marketId=${position.marketId}, outcomeIndex=${position.outcomeIndex}", e)
             }
@@ -1016,6 +1091,7 @@ class BacktestExecutionService(
     private suspend fun settleRemainingPositions(
         task: BacktestTask,
         positions: MutableMap<String, Position>,
+        repeatAddStates: MutableMap<String, BacktestRepeatAddState>,
         currentBalance: BigDecimal,
         trades: MutableList<BacktestTrade>,
         currentTime: Long,
@@ -1055,6 +1131,7 @@ class BacktestExecutionService(
         }
 
         positions.clear()
+        repeatAddStates.clear()
         return balance
     }
 

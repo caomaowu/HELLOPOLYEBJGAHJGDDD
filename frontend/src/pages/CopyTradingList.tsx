@@ -8,7 +8,7 @@ import { apiService } from '../services/api'
 import { useAccountStore } from '../store/accountStore'
 import type { CopyTrading, Leader, CopyTradingStatistics } from '../types'
 import { useMediaQuery } from 'react-responsive'
-import { formatCopyModeSummary, formatMarketFilterSummary, formatMultiplierSummary, formatUSDC } from '../utils'
+import { formatCopyModeSummary, formatMarketFilterSummary, formatMultiplierSummary, formatRepeatAddReductionSummary, formatUSDC } from '../utils'
 import CopyTradingOrdersModal from './CopyTradingOrders/index'
 import StatisticsModal from './CopyTradingOrders/StatisticsModal'
 import FilteredOrdersModal from './CopyTradingOrders/FilteredOrdersModal'
@@ -298,6 +298,11 @@ const CopyTradingList: React.FC = () => {
               {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
             </div>
           )}
+          {record.repeatAddReductionEnabled && (
+            <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>
+              {formatRepeatAddReductionSummary(record)}
+            </div>
+          )}
           {renderAggregationSummary(record)}
           {renderMarketFilterSummary(record)}
         </div>
@@ -576,6 +581,11 @@ const CopyTradingList: React.FC = () => {
                         {record.multiplierMode && record.multiplierMode !== 'NONE' && (
                           <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
                             {formatMultiplierSummary(record.multiplierMode, record.tradeMultiplier, record.tieredMultipliers)}
+                          </div>
+                        )}
+                        {record.repeatAddReductionEnabled && (
+                          <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
+                            {formatRepeatAddReductionSummary(record)}
                           </div>
                         )}
                         <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
