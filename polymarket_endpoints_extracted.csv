@@ -1,0 +1,97 @@
+﻿method,name,url_or_path,doc_url
+GET,List events,https://gamma-api.polymarket.com/events,https://docs.polymarket.com/api-reference/events/list-events
+GET,Get event by id,https://gamma-api.polymarket.com/events/{id},https://docs.polymarket.com/api-reference/events/get-event-by-id
+GET,Get event by slug,https://gamma-api.polymarket.com/events/slug/{slug},https://docs.polymarket.com/api-reference/events/get-event-by-slug
+GET,Get event tags,https://gamma-api.polymarket.com/events/{id}/tags,https://docs.polymarket.com/api-reference/events/get-event-tags
+GET,List markets,https://gamma-api.polymarket.com/markets,https://docs.polymarket.com/api-reference/markets/list-markets
+GET,Get market by id,https://gamma-api.polymarket.com/markets/{id},https://docs.polymarket.com/api-reference/markets/get-market-by-id
+GET,Get market by slug,https://gamma-api.polymarket.com/markets/slug/{slug},https://docs.polymarket.com/api-reference/markets/get-market-by-slug
+GET,Get market tags by id,https://gamma-api.polymarket.com/markets/{id}/tags,https://docs.polymarket.com/api-reference/markets/get-market-tags-by-id
+GET,Get top holders for markets,https://data-api.polymarket.com/holders,https://docs.polymarket.com/api-reference/core/get-top-holders-for-markets
+GET,Get open interest,https://data-api.polymarket.com/oi,https://docs.polymarket.com/api-reference/misc/get-open-interest
+GET,Get live volume for an event,https://data-api.polymarket.com/live-volume,https://docs.polymarket.com/api-reference/misc/get-live-volume-for-an-event
+GET,Get order book,https://clob.polymarket.com/book,https://docs.polymarket.com/api-reference/market-data/get-order-book
+POST,Get order books (request body),https://clob.polymarket.com/books,https://docs.polymarket.com/api-reference/market-data/get-order-books-request-body
+GET,Get market price,https://clob.polymarket.com/price,https://docs.polymarket.com/api-reference/market-data/get-market-price
+GET,Get market prices (query parameters),https://clob.polymarket.com/prices,https://docs.polymarket.com/api-reference/market-data/get-market-prices-query-parameters
+POST,Get market prices (request body),https://clob.polymarket.com/prices,https://docs.polymarket.com/api-reference/market-data/get-market-prices-request-body
+GET,Get midpoint price,https://clob.polymarket.com/midpoint,https://docs.polymarket.com/api-reference/data/get-midpoint-price
+GET,Get midpoint prices (query parameters),https://clob.polymarket.com/midpoints,https://docs.polymarket.com/api-reference/market-data/get-midpoint-prices-query-parameters
+POST,Get midpoint prices (request body),https://clob.polymarket.com/midpoints,https://docs.polymarket.com/api-reference/market-data/get-midpoint-prices-request-body
+GET,Get spread,https://clob.polymarket.com/spread,https://docs.polymarket.com/api-reference/market-data/get-spread
+POST,Get spreads,https://clob.polymarket.com/spreads,https://docs.polymarket.com/api-reference/market-data/get-spreads
+GET,Get last trade price,https://clob.polymarket.com/last-trade-price,https://docs.polymarket.com/api-reference/market-data/get-last-trade-price
+GET,Get last trade prices (query parameters),https://clob.polymarket.com/last-trades-prices,https://docs.polymarket.com/api-reference/market-data/get-last-trade-prices-query-parameters
+POST,Get last trade prices (request body),https://clob.polymarket.com/last-trades-prices,https://docs.polymarket.com/api-reference/market-data/get-last-trade-prices-request-body
+GET,Get prices history,https://clob.polymarket.com/prices-history,https://docs.polymarket.com/api-reference/markets/get-prices-history
+GET,Get fee rate,https://clob.polymarket.com/fee-rate,https://docs.polymarket.com/api-reference/market-data/get-fee-rate
+GET,Get fee rate by path parameter,https://clob.polymarket.com/fee-rate/{token_id},https://docs.polymarket.com/api-reference/market-data/get-fee-rate-by-path-parameter
+GET,Get tick size,https://clob.polymarket.com/tick-size,https://docs.polymarket.com/api-reference/market-data/get-tick-size
+GET,Get tick size by path parameter,https://clob.polymarket.com/tick-size/{token_id},https://docs.polymarket.com/api-reference/market-data/get-tick-size-by-path-parameter
+GET,Get server time,https://clob.polymarket.com/time,https://docs.polymarket.com/api-reference/data/get-server-time
+POST,Post a new order,https://clob.polymarket.com/order,https://docs.polymarket.com/api-reference/trade/post-a-new-order
+DEL,Cancel single order,https://clob.polymarket.com/order,https://docs.polymarket.com/api-reference/trade/cancel-single-order
+GET,Get single order by ID,https://clob.polymarket.com/order/{orderID},https://docs.polymarket.com/api-reference/trade/get-single-order-by-id
+POST,Post multiple orders,https://clob.polymarket.com/orders,https://docs.polymarket.com/api-reference/trade/post-multiple-orders
+GET,Get user orders,https://clob.polymarket.com/orders,https://docs.polymarket.com/api-reference/trade/get-user-orders
+DEL,Cancel multiple orders,https://clob.polymarket.com/orders,https://docs.polymarket.com/api-reference/trade/cancel-multiple-orders
+DEL,Cancel all orders,https://clob.polymarket.com/cancel-all,https://docs.polymarket.com/api-reference/trade/cancel-all-orders
+DEL,Cancel orders for a market,https://clob.polymarket.com/cancel-market-orders,https://docs.polymarket.com/api-reference/trade/cancel-orders-for-a-market
+GET,Get order scoring status,https://clob.polymarket.com/order-scoring,https://docs.polymarket.com/api-reference/trade/get-order-scoring-status
+POST,Send heartbeat,https://clob.polymarket.com/heartbeats,https://docs.polymarket.com/api-reference/trade/send-heartbeat
+GET,Get trades,https://clob.polymarket.com/trades,https://docs.polymarket.com/api-reference/trade/get-trades
+GET,Get builder trades,https://clob.polymarket.com/builder/trades,https://docs.polymarket.com/api-reference/trade/get-builder-trades
+GET,Get simplified markets,https://clob.polymarket.com/simplified-markets,https://docs.polymarket.com/api-reference/markets/get-simplified-markets
+GET,Get sampling markets,https://clob.polymarket.com/sampling-markets,https://docs.polymarket.com/api-reference/markets/get-sampling-markets
+GET,Get sampling simplified markets,https://clob.polymarket.com/sampling-simplified-markets,https://docs.polymarket.com/api-reference/markets/get-sampling-simplified-markets
+GET,Get current rebated fees for a maker,https://clob.polymarket.com/rebates/current,https://docs.polymarket.com/api-reference/rebates/get-current-rebated-fees-for-a-maker
+GET,Get current active rewards configurations,https://clob.polymarket.com/rewards/markets/current,https://docs.polymarket.com/api-reference/rewards/get-current-active-rewards-configurations
+GET,Get raw rewards for a specific market,https://clob.polymarket.com/rewards/markets/{condition_id},https://docs.polymarket.com/api-reference/rewards/get-raw-rewards-for-a-specific-market
+GET,Get multiple markets with rewards,https://clob.polymarket.com/rewards/markets/multi,https://docs.polymarket.com/api-reference/rewards/get-multiple-markets-with-rewards
+GET,Get earnings for user by date,https://clob.polymarket.com/rewards/user,https://docs.polymarket.com/api-reference/rewards/get-earnings-for-user-by-date
+GET,Get total earnings for user by date,https://clob.polymarket.com/rewards/user/total,https://docs.polymarket.com/api-reference/rewards/get-total-earnings-for-user-by-date
+GET,Get reward percentages for user,https://clob.polymarket.com/rewards/user/percentages,https://docs.polymarket.com/api-reference/rewards/get-reward-percentages-for-user
+GET,Get user earnings and markets configuration,https://clob.polymarket.com/rewards/user/markets,https://docs.polymarket.com/api-reference/rewards/get-user-earnings-and-markets-configuration
+GET,Get public profile by wallet address,https://gamma-api.polymarket.com/public-profile,https://docs.polymarket.com/api-reference/profiles/get-public-profile-by-wallet-address
+GET,Get current positions for a user,https://data-api.polymarket.com/positions,https://docs.polymarket.com/api-reference/core/get-current-positions-for-a-user
+GET,Get closed positions for a user,https://data-api.polymarket.com/closed-positions,https://docs.polymarket.com/api-reference/core/get-closed-positions-for-a-user
+GET,Get user activity,https://data-api.polymarket.com/activity,https://docs.polymarket.com/api-reference/core/get-user-activity
+GET,Get total value of a user's positions,https://data-api.polymarket.com/value,https://docs.polymarket.com/api-reference/core/get-total-value-of-a-users-positions
+GET,Get trades for a user or markets,https://data-api.polymarket.com/trades,https://docs.polymarket.com/api-reference/core/get-trades-for-a-user-or-markets
+GET,Get total markets a user has traded,https://data-api.polymarket.com/traded,https://docs.polymarket.com/api-reference/misc/get-total-markets-a-user-has-traded
+GET,Get positions for a market,https://data-api.polymarket.com/v1/market-positions,https://docs.polymarket.com/api-reference/core/get-positions-for-a-market
+GET,Download an accounting snapshot (ZIP of CSVs),https://data-api.polymarket.com/v1/accounting/snapshot,https://docs.polymarket.com/api-reference/misc/download-an-accounting-snapshot-zip-of-csvs
+GET,Get trader leaderboard rankings,https://data-api.polymarket.com/v1/leaderboard,https://docs.polymarket.com/api-reference/core/get-trader-leaderboard-rankings
+GET,Get aggregated builder leaderboard,https://data-api.polymarket.com/v1/builders/leaderboard,https://docs.polymarket.com/api-reference/builders/get-aggregated-builder-leaderboard
+GET,Get daily builder volume time-series,https://data-api.polymarket.com/v1/builders/volume,https://docs.polymarket.com/api-reference/builders/get-daily-builder-volume-time-series
+GET,"Search markets, events, and profiles",https://gamma-api.polymarket.com/public-search,https://docs.polymarket.com/api-reference/search/search-markets-events-and-profiles
+GET,List tags,https://gamma-api.polymarket.com/tags,https://docs.polymarket.com/api-reference/tags/list-tags
+GET,Get tag by id,https://gamma-api.polymarket.com/tags/{id},https://docs.polymarket.com/api-reference/tags/get-tag-by-id
+GET,Get tag by slug,https://gamma-api.polymarket.com/tags/slug/{slug},https://docs.polymarket.com/api-reference/tags/get-tag-by-slug
+GET,Get related tags (relationships) by tag id,https://gamma-api.polymarket.com/tags/{id}/related-tags,https://docs.polymarket.com/api-reference/tags/get-related-tags-relationships-by-tag-id
+GET,Get related tags (relationships) by tag slug,https://gamma-api.polymarket.com/tags/slug/{slug}/related-tags,https://docs.polymarket.com/api-reference/tags/get-related-tags-relationships-by-tag-slug
+GET,Get tags related to a tag id,https://gamma-api.polymarket.com/tags/{id}/related-tags/tags,https://docs.polymarket.com/api-reference/tags/get-tags-related-to-a-tag-id
+GET,Get tags related to a tag slug,https://gamma-api.polymarket.com/tags/slug/{slug}/related-tags/tags,https://docs.polymarket.com/api-reference/tags/get-tags-related-to-a-tag-slug
+GET,List series,https://gamma-api.polymarket.com/series,https://docs.polymarket.com/api-reference/series/list-series
+GET,Get series by id,https://gamma-api.polymarket.com/series/{id},https://docs.polymarket.com/api-reference/series/get-series-by-id
+GET,List comments,https://gamma-api.polymarket.com/comments,https://docs.polymarket.com/api-reference/comments/list-comments
+GET,Get comments by comment id,https://gamma-api.polymarket.com/comments/{id},https://docs.polymarket.com/api-reference/comments/get-comments-by-comment-id
+GET,Get comments by user address,https://gamma-api.polymarket.com/comments/user_address/{user_address},https://docs.polymarket.com/api-reference/comments/get-comments-by-user-address
+GET,Get sports metadata information,https://gamma-api.polymarket.com/sports,https://docs.polymarket.com/api-reference/sports/get-sports-metadata-information
+GET,Get valid sports market types,https://gamma-api.polymarket.com/sports/market-types,https://docs.polymarket.com/api-reference/sports/get-valid-sports-market-types
+GET,List teams,https://gamma-api.polymarket.com/teams,https://docs.polymarket.com/api-reference/sports/list-teams
+GET,Get supported assets,https://bridge.polymarket.com/supported-assets,https://docs.polymarket.com/api-reference/bridge/get-supported-assets
+POST,Create deposit addresses,https://bridge.polymarket.com/deposit,https://docs.polymarket.com/api-reference/bridge/create-deposit-addresses
+POST,Get a quote,https://bridge.polymarket.com/quote,https://docs.polymarket.com/api-reference/bridge/get-a-quote
+GET,Get transaction status,https://bridge.polymarket.com/status/{address},https://docs.polymarket.com/api-reference/bridge/get-transaction-status
+POST,Create withdrawal addresses,https://bridge.polymarket.com/withdraw,https://docs.polymarket.com/api-reference/bridge/create-withdrawal-addresses
+POST,Submit a transaction,https://relayer-v2.polymarket.com/submit,https://docs.polymarket.com/api-reference/relayer/submit-a-transaction
+GET,Get a transaction by ID,https://relayer-v2.polymarket.com/transaction,https://docs.polymarket.com/api-reference/relayer/get-a-transaction-by-id
+GET,Get recent transactions for a user,https://relayer-v2.polymarket.com/transactions,https://docs.polymarket.com/api-reference/relayer/get-recent-transactions-for-a-user
+GET,Get current nonce for a user,https://relayer-v2.polymarket.com/nonce,https://docs.polymarket.com/api-reference/relayer/get-current-nonce-for-a-user
+GET,Get relayer address and nonce,https://relayer-v2.polymarket.com/relay-payload,https://docs.polymarket.com/api-reference/relayer/get-relayer-address-and-nonce
+GET,Check if a safe is deployed,https://relayer-v2.polymarket.com/deployed,https://docs.polymarket.com/api-reference/relayer/check-if-a-safe-is-deployed
+GET,Get all relayer API keys,https://relayer-v2.polymarket.com/relayer/api/keys,https://docs.polymarket.com/api-reference/relayer-api-keys/get-all-relayer-api-keys
+WSS,Market Channel,,https://docs.polymarket.com/api-reference/wss/market
+WSS,User Channel,,https://docs.polymarket.com/api-reference/wss/user
+WSS,Sports Channel,,https://docs.polymarket.com/api-reference/wss/sports
