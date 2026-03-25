@@ -2932,7 +2932,30 @@ open class CopyOrderTrackingService(
         }
 
         return try {
-            val market = marketService.getMarket(payload.marketId)
+            var market = marketService.getMarket(payload.marketId)
+            var metadataSource = if (market != null) {
+                "payload+market-cache"
+            } else {
+                "payload+market-cache-miss"
+            }
+
+            if (market != null && shouldRefreshMarketFilterMetadata(
+                    market = market,
+                    needStoredTitle = needStoredTitle,
+                    needStoredCategory = needStoredCategory,
+                    needStoredEndDate = needStoredEndDate,
+                    needStoredSeries = needStoredSeries,
+                    needStoredInterval = needStoredInterval,
+                    marketFilterInput = marketFilterInput
+                )
+            ) {
+                val refreshed = marketService.refreshMarket(payload.marketId)
+                if (refreshed != null) {
+                    market = refreshed
+                    metadataSource = "payload+market-cache-refreshed"
+                }
+            }
+
             ResolvedMarketFilterInput(
                 input = marketFilterInput.copy(
                     title = market?.title,
@@ -2941,11 +2964,7 @@ open class CopyOrderTrackingService(
                     seriesSlugPrefix = marketFilterInput.seriesSlugPrefix ?: market?.seriesSlugPrefix,
                     intervalSeconds = marketFilterInput.intervalSeconds ?: market?.intervalSeconds
                 ),
-                metadataSource = if (market != null) {
-                    "payload+market-cache"
-                } else {
-                    "payload+market-cache-miss"
-                }
+                metadataSource = metadataSource
             )
         } catch (e: Exception) {
             logger.warn("获取市场信息失败（过滤检查需要）: ${e.message}", e)
@@ -2954,6 +2973,39 @@ open class CopyOrderTrackingService(
                 metadataSource = "payload+market-cache-error"
             )
         }
+    }
+
+    private fun shouldRefreshMarketFilterMetadata(
+        market: Market,
+        needStoredTitle: Boolean,
+        needStoredCategory: Boolean,
+        needStoredEndDate: Boolean,
+        needStoredSeries: Boolean,
+        needStoredInterval: Boolean,
+        marketFilterInput: MarketFilterInput
+    ): Boolean {
+        if (needStoredTitle && market.title.isBlank()) {
+            return true
+        }
+        if (needStoredCategory && market.category.isNullOrBlank()) {
+            return true
+        }
+        if (needStoredEndDate && market.endDate == null) {
+            return true
+        }
+        if (needStoredSeries &&
+            marketFilterInput.seriesSlugPrefix.isNullOrBlank() &&
+            market.seriesSlugPrefix.isNullOrBlank()
+        ) {
+            return true
+        }
+        if (needStoredInterval &&
+            (marketFilterInput.intervalSeconds == null || marketFilterInput.intervalSeconds <= 0) &&
+            (market.intervalSeconds == null || market.intervalSeconds <= 0)
+        ) {
+            return true
+        }
+        return false
     }
 
     /**

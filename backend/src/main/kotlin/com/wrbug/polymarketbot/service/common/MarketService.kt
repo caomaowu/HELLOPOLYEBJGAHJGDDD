@@ -10,6 +10,7 @@ import com.wrbug.polymarketbot.util.RetrofitFactory
 import com.wrbug.polymarketbot.util.getEventSlug
 import com.wrbug.polymarketbot.util.parseStringArray
 import com.wrbug.polymarketbot.util.MarketFilterSupport
+import com.wrbug.polymarketbot.util.CategoryValidator
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -67,6 +68,29 @@ class MarketService(
         // 再次从数据库查询（API可能已经保存）
         return marketRepository.findByMarketId(marketId)?.also {
             marketCache.put(marketId, it)
+        }
+    }
+
+    /**
+     * 强制刷新单个市场信息。
+     * 用于过滤链路发现缓存字段缺失时，主动回源 Gamma 重新拉取。
+     */
+    fun refreshMarket(marketId: String): Market? {
+        val normalizedMarketId = marketId.trim()
+        if (normalizedMarketId.isBlank()) {
+            return null
+        }
+
+        marketCache.invalidate(normalizedMarketId)
+        return runBlocking {
+            try {
+                fetchAndSaveMarket(normalizedMarketId)
+            } catch (e: Exception) {
+                logger.warn("强制刷新市场信息失败: marketId=$normalizedMarketId, error=${e.message}")
+                null
+            }
+        } ?: marketRepository.findByMarketId(normalizedMarketId)?.also {
+            marketCache.put(normalizedMarketId, it)
         }
     }
     
@@ -165,6 +189,9 @@ class MarketService(
     private fun saveMarketFromResponse(marketId: String, marketResponse: MarketResponse): Market? {
         return try {
             val existingMarket = marketRepository.findByMarketId(marketId)
+            val resolvedCategory = normalizeMarketCategory(
+                marketResponse.category ?: marketResponse.events?.firstOrNull()?.category
+            )
             
             // 保存原来的 slug（用于显示）
             val slug = marketResponse.slug
@@ -185,7 +212,7 @@ class MarketService(
                     intervalSeconds = seriesMetadata.intervalSeconds ?: existingMarket.intervalSeconds,
                     marketSourceType = seriesMetadata.marketSourceType.takeIf { it != "GENERIC" }
                         ?: existingMarket.marketSourceType,
-                    category = marketResponse.category ?: existingMarket.category,
+                    category = resolvedCategory ?: existingMarket.category,
                     icon = marketResponse.icon ?: existingMarket.icon,
                     image = marketResponse.image ?: existingMarket.image,
                     description = marketResponse.description ?: existingMarket.description,
@@ -205,7 +232,7 @@ class MarketService(
                     seriesSlugPrefix = seriesMetadata.seriesSlugPrefix,
                     intervalSeconds = seriesMetadata.intervalSeconds,
                     marketSourceType = seriesMetadata.marketSourceType,
-                    category = marketResponse.category,
+                    category = resolvedCategory,
                     icon = marketResponse.icon,
                     image = marketResponse.image,
                     description = marketResponse.description,
@@ -225,6 +252,17 @@ class MarketService(
             logger.error("保存市场信息失败: marketId=$marketId, error=${e.message}", e)
             null
         }
+    }
+
+    private fun normalizeMarketCategory(rawCategory: String?): String? {
+        if (rawCategory.isNullOrBlank()) {
+            return null
+        }
+        val trimmed = rawCategory.trim()
+        if (trimmed.isBlank()) {
+            return null
+        }
+        return CategoryValidator.normalizeCategory(trimmed) ?: trimmed.lowercase()
     }
     
     /**
