@@ -124,6 +124,15 @@ open class CopyOrderTrackingService(
         private const val RETRY_DELAY_SHORT_MS = 180L
         private const val RETRY_DELAY_MEDIUM_MS = 420L
         private const val RETRY_DELAY_LONG_MS = 850L
+        // 跟单卖出（跟随 Leader）统一参数：
+        // - 4 秒窗口内每 200ms 重试一次 FAK
+        // - 卖价按 bestBid 下浮 1%
+        // - 最低卖价保护为 0.05，避免自杀式滑点到 0.01
+        private const val SELL_FOLLOW_RETRY_INTERVAL_MS = 200L
+        private const val SELL_FOLLOW_MAX_WAIT_MS = 4000L
+        private const val SELL_FOLLOW_MAX_ATTEMPTS = 20
+        private val SELL_FOLLOW_SLIPPAGE_PERCENT = BigDecimal("1.0")
+        private val SELL_FOLLOW_MIN_PRICE = BigDecimal("0.05")
         private val RETRYABLE_HTTP_STATUS_CODES = setOf(408, 409, 425, 429)
         private val NON_RETRYABLE_ORDER_ERROR_MARKERS = listOf(
             "no orders found to match with fak order",
@@ -2174,24 +2183,9 @@ open class CopyOrderTrackingService(
             aggregationTradeCount = aggregationTradeCount
         ) ?: return
 
-        // 5. 计算卖出价格（优先使用订单簿 bestBid，失败则使用 Leader 价格，固定按90%计算）
-        // 注意：需要先计算卖出价格，因为后续创建 matchDetails 需要使用实际卖出价格
+        // 5. 卖价基准（先使用 Leader 价格计算一个保护价作为占位，最终以下单时实时价格为准）
         val leaderPrice = leaderSellTrade.price.toSafeBigDecimal()
-        val orderbookFetchStartedAt = System.currentTimeMillis()
-        val orderbookForSell = runCatching {
-            clobService.getOrderbookByTokenId(tokenId).getOrNull()
-        }
-            .onFailure { e -> logger.warn("获取订单簿或计算 bestBid 失败，使用 Leader 价格: tokenId=$tokenId, error=${e.message}") }
-            .getOrNull()
-        val orderbookFetchMs = (System.currentTimeMillis() - orderbookFetchStartedAt).coerceAtLeast(0)
-        updateTradeLatencyContext(
-            leaderId = copyTrading.leaderId,
-            tradeId = leaderSellTrade.id,
-            source = source,
-            orderbookFetchMs = orderbookFetchMs
-        )
-        val sellPrice = orderbookForSell?.let { calculateMarketSellPrice(it) }
-            ?: calculateFallbackSellPrice(leaderPrice)
+        val estimatedSellPrice = calculateFallbackSellPrice(leaderPrice)
 
         // 6. 按FIFO顺序匹配，计算实际可以卖出的数量
         // 使用计算出的实际卖出价格（而不是 Leader 价格）来创建匹配明细
@@ -2211,7 +2205,7 @@ open class CopyOrderTrackingService(
 
             // 计算盈亏（使用实际卖出价格）
             val buyPrice = order.price.toSafeBigDecimal()
-            val realizedPnl = sellPrice.subtract(buyPrice).multi(matchQty)
+            val realizedPnl = estimatedSellPrice.subtract(buyPrice).multi(matchQty)
 
             // 创建匹配明细（使用实际卖出价格）
             val detail = SellMatchDetail(
@@ -2220,7 +2214,7 @@ open class CopyOrderTrackingService(
                 buyOrderId = order.buyOrderId,
                 matchedQuantity = matchQty,
                 buyPrice = buyPrice,
-                sellPrice = sellPrice,  // 使用实际卖出价格，与 SellMatchRecord 保持一致
+                sellPrice = estimatedSellPrice,  // 占位值，后续以下单实际价格重算
                 realizedPnl = realizedPnl
             )
             matchDetails.add(detail)
@@ -2381,55 +2375,114 @@ open class CopyOrderTrackingService(
             account.walletAddress
         )
 
-        val sellOrderCreateRequestedAt = System.currentTimeMillis()
-        recordTradeExecutionEvent(
-            copyTrading = copyTrading,
-            accountId = account.id ?: copyTrading.accountId,
-            trade = leaderSellTrade,
-            stage = "EXECUTION",
-            eventType = "ORDER_SUBMITTING",
-            status = "info",
-            message = "准备提交卖出订单",
-            calculatedQuantity = totalMatched,
-            orderPrice = sellPrice,
-            orderQuantity = totalMatched,
-            source = source,
-            orderCreateRequestedAt = sellOrderCreateRequestedAt
-        )
+        // 11. 4 秒窗口内快速跟卖：每 200ms 重试一次 FAK。
+        // 超时后保留仓位（KEEP_POSITION），不继续降价到极端水平。
+        val sellLoopStartedAt = System.currentTimeMillis()
+        var sellAttempt = 0
+        var sellOrderCreateRequestedAt = 0L
+        var sellOrderCreateCompletedAt = sellLoopStartedAt
+        var actualSellPrice = estimatedSellPrice
+        var realSellOrderId: String? = null
+        var lastSellCreateError: Exception? = null
 
-        // 13. 调用API创建卖出订单（带重试机制，重试时会重新生成salt并重新签名）
-        val createOrderResult = createOrderWithRetry(
-            clobApi = clobApi,
-            privateKey = decryptedPrivateKey,
-            makerAddress = account.proxyAddress,
-            walletAddress = account.walletAddress,
-            exchangeContract = exchangeContractSell,
-            tokenId = tokenId,
-            side = "SELL",
-            price = sellPrice.toString(),
-            size = totalMatched.toString(),
-            owner = account.apiKey,
-            copyTradingId = copyTrading.id,
-            tradeId = leaderSellTrade.id,
-            feeRateBps = feeRateBps,
-            signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
-        )
-        val sellOrderCreateCompletedAt = System.currentTimeMillis()
+        while (sellAttempt < SELL_FOLLOW_MAX_ATTEMPTS && realSellOrderId == null) {
+            sellAttempt++
 
-        if (createOrderResult.isFailure) {
-            // 创建订单失败，记录错误日志
+            val orderbookFetchStartedAt = System.currentTimeMillis()
+            val orderbookForSell = runCatching {
+                clobService.getOrderbookByTokenId(tokenId).getOrNull()
+            }
+                .onFailure { e ->
+                    logger.warn("获取订单簿失败，使用降级卖价: tokenId=$tokenId, attempt=$sellAttempt, error=${e.message}")
+                }
+                .getOrNull()
+            val orderbookFetchMs = (System.currentTimeMillis() - orderbookFetchStartedAt).coerceAtLeast(0)
+            updateTradeLatencyContext(
+                leaderId = copyTrading.leaderId,
+                tradeId = leaderSellTrade.id,
+                source = source,
+                orderbookFetchMs = orderbookFetchMs
+            )
+            actualSellPrice = orderbookForSell?.let { calculateMarketSellPrice(it) }
+                ?: calculateFallbackSellPrice(leaderPrice)
+
+            sellOrderCreateRequestedAt = System.currentTimeMillis()
+            recordTradeExecutionEvent(
+                copyTrading = copyTrading,
+                accountId = account.id ?: copyTrading.accountId,
+                trade = leaderSellTrade,
+                stage = "EXECUTION",
+                eventType = "ORDER_SUBMITTING",
+                status = "info",
+                message = if (sellAttempt == 1) {
+                    "准备提交卖出订单"
+                } else {
+                    "卖出重试中（第 ${sellAttempt} 次）"
+                },
+                calculatedQuantity = totalMatched,
+                orderPrice = actualSellPrice,
+                orderQuantity = totalMatched,
+                source = source,
+                orderCreateRequestedAt = sellOrderCreateRequestedAt
+            )
+
+            val createOrderResult = createOrderWithRetry(
+                clobApi = clobApi,
+                privateKey = decryptedPrivateKey,
+                makerAddress = account.proxyAddress,
+                walletAddress = account.walletAddress,
+                exchangeContract = exchangeContractSell,
+                tokenId = tokenId,
+                side = "SELL",
+                price = actualSellPrice.toString(),
+                size = totalMatched.toString(),
+                owner = account.apiKey,
+                copyTradingId = copyTrading.id,
+                tradeId = leaderSellTrade.id,
+                feeRateBps = feeRateBps,
+                signatureType = orderSigningService.getSignatureTypeForWalletType(account.walletType)
+            )
+            sellOrderCreateCompletedAt = System.currentTimeMillis()
+
+            if (createOrderResult.isSuccess) {
+                realSellOrderId = createOrderResult.getOrNull()
+                break
+            }
+
             val exception = createOrderResult.exceptionOrNull()
-            logger.error("创建卖出订单失败: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, error=${exception?.message}")
+            lastSellCreateError = Exception(exception?.message ?: "创建卖出订单失败", exception)
+            logger.warn(
+                "卖出订单尝试失败，将在窗口内继续重试: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, attempt=$sellAttempt/$SELL_FOLLOW_MAX_ATTEMPTS, error=${exception?.message}"
+            )
+
+            val elapsedMs = (System.currentTimeMillis() - sellLoopStartedAt).coerceAtLeast(0)
+            if (elapsedMs >= SELL_FOLLOW_MAX_WAIT_MS) {
+                break
+            }
+
+            val remainingMs = (SELL_FOLLOW_MAX_WAIT_MS - elapsedMs).coerceAtLeast(0)
+            if (remainingMs > 0 && sellAttempt < SELL_FOLLOW_MAX_ATTEMPTS) {
+                delay(minOf(SELL_FOLLOW_RETRY_INTERVAL_MS, remainingMs))
+            }
+        }
+
+        if (realSellOrderId.isNullOrBlank()) {
+            val elapsedMs = (System.currentTimeMillis() - sellLoopStartedAt).coerceAtLeast(0)
+            val timeoutMessage = "卖出订单在 ${elapsedMs}ms 窗口内未成功提交，保留仓位等待下次信号"
+            val message = lastSellCreateError?.message?.let { "$timeoutMessage，lastError=$it" } ?: timeoutMessage
+            logger.warn(
+                "跟卖超时保留仓位: copyTradingId=${copyTrading.id}, tradeId=${leaderSellTrade.id}, attempts=$sellAttempt, elapsedMs=$elapsedMs"
+            )
             recordTradeExecutionEvent(
                 copyTrading = copyTrading,
                 accountId = account.id ?: copyTrading.accountId,
                 trade = leaderSellTrade,
                 stage = "EXECUTION",
                 eventType = "ORDER_FAILED",
-                status = "error",
-                message = exception?.message ?: "创建卖出订单失败",
+                status = "warning",
+                message = message,
                 calculatedQuantity = totalMatched,
-                orderPrice = sellPrice,
+                orderPrice = actualSellPrice,
                 orderQuantity = totalMatched,
                 source = source,
                 orderCreateRequestedAt = sellOrderCreateRequestedAt,
@@ -2438,19 +2491,16 @@ open class CopyOrderTrackingService(
             return
         }
 
-        val realSellOrderId = createOrderResult.getOrNull() ?: return
+        val finalSellOrderId = realSellOrderId
 
         // 12. 下单时直接使用下单价格保存，等待定时任务更新实际成交价
         // priceUpdated 统一由定时任务更新，下单时统一设置为 false（非0x开头的除外）
-        val priceUpdated = !realSellOrderId.startsWith("0x", ignoreCase = true)
+        val priceUpdated = !finalSellOrderId.startsWith("0x", ignoreCase = true)
         if (priceUpdated) {
-            logger.debug("卖出订单ID非0x开头，标记为已更新: orderId=$realSellOrderId")
+            logger.debug("卖出订单ID非0x开头，标记为已更新: orderId=$finalSellOrderId")
         } else {
-            logger.debug("卖出订单ID为0x开头，等待定时任务更新价格: orderId=$realSellOrderId")
+            logger.debug("卖出订单ID为0x开头，等待定时任务更新价格: orderId=$finalSellOrderId")
         }
-
-        // 使用下单价格，等待定时任务更新实际成交价
-        val actualSellPrice = sellPrice
 
         // 13. 更新买入订单跟踪状态
         for (order in unmatchedOrders) {
@@ -2479,7 +2529,7 @@ open class CopyOrderTrackingService(
 
         val matchRecord = SellMatchRecord(
             copyTradingId = copyTrading.id,
-            sellOrderId = realSellOrderId,  // 使用真实订单ID
+            sellOrderId = finalSellOrderId,  // 使用真实订单ID
             leaderSellTradeId = leaderSellTrade.id,
             marketId = leaderSellTrade.market,
             side = leaderSellTrade.outcomeIndex.toString(),  // 使用outcomeIndex作为side（兼容旧数据）
@@ -2505,7 +2555,7 @@ open class CopyOrderTrackingService(
             outcomeIndex = leaderSellTrade.outcomeIndex
         )
 
-        logger.info("卖出订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$realSellOrderId, copyTradingId=${copyTrading.id}")
+        logger.info("卖出订单已保存，等待轮询任务获取实际数据后发送通知: orderId=$finalSellOrderId, copyTradingId=${copyTrading.id}")
         recordTradeExecutionEvent(
             copyTrading = copyTrading,
             accountId = account.id ?: copyTrading.accountId,
@@ -2515,9 +2565,9 @@ open class CopyOrderTrackingService(
             status = "success",
             message = "卖出订单创建成功，已进入订单跟踪",
             calculatedQuantity = totalMatched,
-            orderPrice = sellPrice,
+            orderPrice = actualSellPrice,
             orderQuantity = totalMatched,
-            orderId = realSellOrderId,
+            orderId = finalSellOrderId,
             source = source,
             orderCreateRequestedAt = sellOrderCreateRequestedAt,
             orderCreateCompletedAt = sellOrderCreateCompletedAt
@@ -2891,7 +2941,7 @@ open class CopyOrderTrackingService(
     }
 
     /**
-     * 计算市价卖出价格（使用订单簿的 bestBid，固定按90%计算）
+     * 计算跟卖卖出价格（基于订单簿 bestBid 下浮固定滑点，并应用最低卖价保护）
      */
     private fun calculateMarketSellPrice(
         orderbook: com.wrbug.polymarketbot.api.OrderbookResponse
@@ -2902,15 +2952,27 @@ open class CopyOrderTrackingService(
             .maxOrNull()
             ?: throw IllegalStateException("订单簿 bids 为空，无法获取 bestBid")
 
-        // 卖出：bestBid * 0.9（固定按90%计算，确保能立即成交）
-        return calculateFallbackSellPrice(bestBid)
+        return applyFollowSellPricingGuard(bestBid)
     }
 
     /**
-     * 计算降级卖出价格（固定按90%计算）
+     * 计算降级卖出价格（基于 Leader 价格应用相同滑点和最低价保护）
      */
     private fun calculateFallbackSellPrice(price: BigDecimal): BigDecimal {
-        return price.multi(BigDecimal("0.9")).coerceAtLeast(BigDecimal("0.01"))
+        return applyFollowSellPricingGuard(price)
+    }
+
+    /**
+     * 跟卖价格保护：
+     * - 按固定滑点下浮，提升快速成交概率
+     * - 使用最低卖价保护，避免跌到极端低价（如 0.01）
+     */
+    private fun applyFollowSellPricingGuard(basePrice: BigDecimal): BigDecimal {
+        val slippageRatio = BigDecimal.ONE.subtract(SELL_FOLLOW_SLIPPAGE_PERCENT.div(100))
+        return basePrice
+            .multi(slippageRatio)
+            .coerceAtLeast(SELL_FOLLOW_MIN_PRICE)
+            .coerceAtMost(BigDecimal("0.99"))
     }
 
     /**

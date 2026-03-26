@@ -3,6 +3,7 @@ package com.wrbug.polymarketbot.controller.accounts
 import com.wrbug.polymarketbot.dto.*
 import com.wrbug.polymarketbot.enums.ErrorCode
 import com.wrbug.polymarketbot.service.accounts.AccountService
+import com.wrbug.polymarketbot.service.accounts.PositionActivityService
 import com.wrbug.polymarketbot.util.toSafeBigDecimal
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
@@ -18,6 +19,7 @@ import java.math.BigDecimal
 @RequestMapping("/api/accounts")
 class AccountController(
     private val accountService: AccountService,
+    private val positionActivityService: PositionActivityService,
     private val messageSource: MessageSource
 ) {
 
@@ -375,6 +377,57 @@ class AccountController(
         } catch (e: Exception) {
             logger.error("查询仓位列表异常: ${e.message}", e)
             ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ACCOUNT_POSITIONS_FETCH_FAILED, e.message, messageSource))
+        }
+    }
+
+    /**
+     * 查询单个仓位流水
+     */
+    @PostMapping("/positions/activity")
+    fun getPositionActivity(@RequestBody request: PositionActivityRequest): ResponseEntity<ApiResponse<PositionActivityResponse>> {
+        return try {
+            if (request.accountId <= 0L) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ACCOUNT_ID_INVALID, messageSource = messageSource))
+            }
+            if (request.marketId.isBlank()) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_MARKET_ID_EMPTY, messageSource = messageSource))
+            }
+            if (request.side.isBlank()) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_SIDE_EMPTY, messageSource = messageSource))
+            }
+            if (request.page <= 0 || request.pageSize <= 0) {
+                return ResponseEntity.ok(ApiResponse.error(ErrorCode.PARAM_ERROR, "page/pageSize 必须大于 0", messageSource))
+            }
+
+            val result = runBlocking { positionActivityService.getPositionActivities(request) }
+            result.fold(
+                onSuccess = { response ->
+                    ResponseEntity.ok(ApiResponse.success(response))
+                },
+                onFailure = { e ->
+                    logger.error("查询仓位流水失败: ${e.message}", e)
+                    when (e) {
+                        is IllegalArgumentException -> ResponseEntity.ok(
+                            ApiResponse.error(
+                                ErrorCode.PARAM_ERROR,
+                                e.message,
+                                messageSource
+                            )
+                        )
+
+                        else -> ResponseEntity.ok(
+                            ApiResponse.error(
+                                ErrorCode.SERVER_ERROR,
+                                e.message,
+                                messageSource
+                            )
+                        )
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            logger.error("查询仓位流水异常: ${e.message}", e)
+            ResponseEntity.ok(ApiResponse.error(ErrorCode.SERVER_ERROR, e.message, messageSource))
         }
     }
 

@@ -258,6 +258,12 @@ export const apiService = {
      */
     positionsList: () => 
       apiClient.post<ApiResponse<any>>('/accounts/positions/list', {}),
+
+    /**
+     * 查询单个仓位流水
+     */
+    positionActivity: (data: import('../types').PositionActivityRequest) =>
+      apiClient.post<ApiResponse<import('../types').PositionActivityResponse>>('/accounts/positions/activity', data),
     
     /**
      * 卖出仓位

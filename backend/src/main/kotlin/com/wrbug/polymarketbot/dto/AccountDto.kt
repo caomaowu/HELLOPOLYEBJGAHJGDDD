@@ -209,6 +209,45 @@ data class PositionListResponse(
 )
 
 /**
+ * 仓位流水查询请求（单仓位）
+ */
+data class PositionActivityRequest(
+    val accountId: Long,
+    val marketId: String,
+    val outcomeIndex: Int? = null,
+    val side: String,
+    val page: Int = 1,
+    val pageSize: Int = 20
+)
+
+/**
+ * 仓位流水项
+ */
+data class PositionActivityItemDto(
+    val eventType: String,          // OPEN / ADD / REDUCE / CLOSE
+    val tradeSide: String,          // BUY / SELL
+    val eventTime: Long,            // 毫秒时间戳
+    val price: String,
+    val quantity: String,
+    val actualAmount: String,       // 实际投入/减少金额：price * quantity
+    val fee: String,                // 实际手续费
+    val remainingQuantity: String,  // 成交后剩余数量
+    val source: String,             // CLOB_TRADE / SYSTEM_ORDER
+    val tradeId: String? = null,
+    val orderId: String? = null
+)
+
+/**
+ * 仓位流水响应
+ */
+data class PositionActivityResponse(
+    val list: List<PositionActivityItemDto>,
+    val total: Long,
+    val page: Int,
+    val pageSize: Int
+)
+
+/**
  * 仓位卖出请求
  */
 data class PositionSellRequest(

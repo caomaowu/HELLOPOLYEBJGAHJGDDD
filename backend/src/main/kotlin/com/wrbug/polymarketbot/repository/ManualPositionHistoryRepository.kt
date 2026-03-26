@@ -7,4 +7,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface ManualPositionHistoryRepository : JpaRepository<ManualPositionHistory, Long> {
     fun findAllByOrderByCreatedAtDesc(): List<ManualPositionHistory>
+
+    fun findByAccountIdOrderByCreatedAtAsc(accountId: Long): List<ManualPositionHistory>
 }

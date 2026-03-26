@@ -3,7 +3,19 @@ import { Card, Table, Tag, message, Space, Input, Radio, Select, Button, Row, Co
 import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { apiService } from '../services/api'
-import type { AccountPosition, Account, PositionPushMessage, PositionSellRequest, MarketPriceResponse, RedeemablePositionsSummary, PositionRedeemRequest, PositionCloseRequest, PositionCloseResponse } from '../types'
+import type {
+  AccountPosition,
+  Account,
+  PositionPushMessage,
+  PositionSellRequest,
+  MarketPriceResponse,
+  RedeemablePositionsSummary,
+  PositionRedeemRequest,
+  PositionCloseRequest,
+  PositionCloseResponse,
+  PositionActivityItem,
+  PositionActivityRequest
+} from '../types'
 import { getPositionKey } from '../types'
 import { useMediaQuery } from 'react-responsive'
 import { useWebSocketSubscription } from '../hooks/useWebSocket'
@@ -46,6 +58,13 @@ const PositionList: React.FC = () => {
   const [closingPositions, setClosingPositions] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [activityModalVisible, setActivityModalVisible] = useState(false)
+  const [activityLoading, setActivityLoading] = useState(false)
+  const [activityPosition, setActivityPosition] = useState<AccountPosition | null>(null)
+  const [activityItems, setActivityItems] = useState<PositionActivityItem[]>([])
+  const [activityPage, setActivityPage] = useState(1)
+  const [activityPageSize, setActivityPageSize] = useState(20)
+  const [activityTotal, setActivityTotal] = useState(0)
 
   useEffect(() => {
     fetchAccounts()
@@ -681,6 +700,83 @@ const PositionList: React.FC = () => {
     return calculatePnl(sellQuantity, price)
   }, [selectedPosition, sellQuantity, calculatePnl, getCurrentSellPrice])
 
+  const formatActivityTime = (timestamp: number) => {
+    if (!timestamp) return '-'
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) return '-'
+    return date.toLocaleString()
+  }
+
+  const formatActivityEventType = (eventType: string) => {
+    switch ((eventType || '').toUpperCase()) {
+      case 'OPEN':
+        return '开仓'
+      case 'ADD':
+        return '加仓'
+      case 'REDUCE':
+        return '减仓'
+      case 'CLOSE':
+        return '平仓'
+      default:
+        return eventType || '-'
+    }
+  }
+
+  const formatActivitySource = (source: string) => {
+    switch ((source || '').toUpperCase()) {
+      case 'CLOB_TRADE':
+        return 'CLOB成交'
+      case 'SYSTEM_ORDER':
+        return '系统订单'
+      default:
+        return source || '-'
+    }
+  }
+
+  const fetchPositionActivity = useCallback(async (
+    position: AccountPosition,
+    page: number,
+    size: number
+  ) => {
+    const payload: PositionActivityRequest = {
+      accountId: position.accountId,
+      marketId: position.marketId,
+      outcomeIndex: position.outcomeIndex,
+      side: position.side,
+      page,
+      pageSize: size
+    }
+    setActivityLoading(true)
+    try {
+      const response = await apiService.accounts.positionActivity(payload)
+      if (response.data.code === 0 && response.data.data) {
+        const data = response.data.data
+        setActivityItems(data.list || [])
+        setActivityTotal(data.total || 0)
+        setActivityPage(data.page || page)
+        setActivityPageSize(data.pageSize || size)
+      } else {
+        setActivityItems([])
+        setActivityTotal(0)
+        message.error(response.data.msg || '获取仓位流水失败')
+      }
+    } catch (error: any) {
+      setActivityItems([])
+      setActivityTotal(0)
+      message.error(error.message || '获取仓位流水失败')
+    } finally {
+      setActivityLoading(false)
+    }
+  }, [])
+
+  const handleActivityClick = useCallback(async (position: AccountPosition) => {
+    setActivityPosition(position)
+    setActivityModalVisible(true)
+    setActivityPage(1)
+    setActivityPageSize(20)
+    await fetchPositionActivity(position, 1, 20)
+  }, [fetchPositionActivity])
+
   // 渲染卡片视图
   const renderCardView = () => {
     if (paginatedPositions.length === 0) {
@@ -933,18 +1029,26 @@ const PositionList: React.FC = () => {
                 )}
 
                 {/* 操作按钮（移动端折叠时隐藏） */}
-                {positionFilter === 'current' && !shouldCollapse && (
+                {!shouldCollapse && (
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                    <Button
+                      size="small"
+                      onClick={() => handleActivityClick(position)}
+                    >
+                      流水
+                    </Button>
                     {!position.redeemable && (
-                      <Button
-                        type="primary"
-                        danger
-                        size="small"
-                        block={isMobile}
-                        onClick={() => handleSellClick(position)}
-                      >
-                        卖出
-                      </Button>
+                      positionFilter === 'current' ? (
+                        <Button
+                          type="primary"
+                          danger
+                          size="small"
+                          block={isMobile}
+                          onClick={() => handleSellClick(position)}
+                        >
+                          卖出
+                        </Button>
+                      ) : null
                     )}
                   </div>
                 )}
@@ -1222,32 +1326,115 @@ const PositionList: React.FC = () => {
       })
     }
 
-    // 只有当前仓位才显示操作列
-    if (positionFilter === 'current') {
-      baseColumns.push({
-        title: '操作',
-        key: 'action',
-        render: (_: any, record: AccountPosition) => (
-          <Space size="small">
-            {!record.redeemable && (
-              <Button
-                type="primary"
-                danger
-                size="small"
-                onClick={() => handleSellClick(record)}
-              >
-                卖出
-              </Button>
-            )}
-          </Space>
-        ),
-        width: 150,
-        fixed: isMobile ? ('right' as const) : undefined
-      })
-    }
+    baseColumns.push({
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: AccountPosition) => (
+        <Space size="small">
+          <Button
+            size="small"
+            onClick={() => handleActivityClick(record)}
+          >
+            流水
+          </Button>
+          {positionFilter === 'current' && !record.redeemable && (
+            <Button
+              type="primary"
+              danger
+              size="small"
+              onClick={() => handleSellClick(record)}
+            >
+              卖出
+            </Button>
+          )}
+        </Space>
+      ),
+      width: positionFilter === 'current' ? 200 : 110,
+      fixed: isMobile ? ('right' as const) : undefined
+    })
 
     return baseColumns
-  }, [positionFilter, isMobile, handleSellClick])
+  }, [positionFilter, isMobile, handleSellClick, handleActivityClick])
+
+  const activityColumns = useMemo(() => ([
+    {
+      title: '时间',
+      dataIndex: 'eventTime',
+      key: 'eventTime',
+      width: 180,
+      render: (value: number) => formatActivityTime(value)
+    },
+    {
+      title: '动作',
+      dataIndex: 'eventType',
+      key: 'eventType',
+      width: 90,
+      render: (value: string) => formatActivityEventType(value)
+    },
+    {
+      title: '方向',
+      dataIndex: 'tradeSide',
+      key: 'tradeSide',
+      width: 80,
+      render: (value: string) => <Tag color={value === 'BUY' ? 'green' : 'red'}>{value}</Tag>
+    },
+    {
+      title: '成交价格',
+      dataIndex: 'price',
+      key: 'price',
+      width: 110,
+      align: 'right' as const,
+      render: (value: string) => formatNumber(value, 4)
+    },
+    {
+      title: '成交数量',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 120,
+      align: 'right' as const,
+      render: (value: string) => formatNumber(value, 4)
+    },
+    {
+      title: '实际投入/减少金额',
+      dataIndex: 'actualAmount',
+      key: 'actualAmount',
+      width: 170,
+      align: 'right' as const,
+      render: (value: string) => `${formatUSDC(value)} USDC`
+    },
+    {
+      title: '手续费',
+      dataIndex: 'fee',
+      key: 'fee',
+      width: 120,
+      align: 'right' as const,
+      render: (value: string) => `${formatUSDC(value)} USDC`
+    },
+    {
+      title: '剩余数量',
+      dataIndex: 'remainingQuantity',
+      key: 'remainingQuantity',
+      width: 110,
+      align: 'right' as const,
+      render: (value: string) => formatNumber(value, 4)
+    },
+    {
+      title: '来源',
+      dataIndex: 'source',
+      key: 'source',
+      width: 100,
+      render: (value: string) => formatActivitySource(value)
+    },
+    {
+      title: '成交ID/订单ID',
+      key: 'tradeOrOrderId',
+      width: 240,
+      render: (_: any, record: PositionActivityItem) => {
+        const value = record.tradeId || record.orderId || '-'
+        return <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{value}</span>
+      }
+    }
+  ]), [])
 
   // 统计当前和历史仓位数量（根据账户筛选）
   const filteredCurrentPositions = useMemo(() => {
@@ -1780,6 +1967,41 @@ const PositionList: React.FC = () => {
             )}
           </Form>
         )}
+      </Modal>
+
+      <Modal
+        title={`仓位流水 - ${activityPosition?.marketTitle || activityPosition?.marketId || ''}`}
+        open={activityModalVisible}
+        onCancel={() => setActivityModalVisible(false)}
+        footer={null}
+        width={isMobile ? '94%' : 1180}
+        destroyOnClose
+      >
+        {activityPosition && (
+          <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+            账户：{activityPosition.accountName || `账户 ${activityPosition.accountId}`} | 方向：{activityPosition.side}
+          </div>
+        )}
+        <Table
+          dataSource={activityItems}
+          columns={activityColumns}
+          rowKey={(record, index) => `${record.tradeId || record.orderId || 'row'}-${record.eventTime}-${index}`}
+          loading={activityLoading}
+          size="small"
+          pagination={{
+            current: activityPage,
+            pageSize: activityPageSize,
+            total: activityTotal,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50'],
+            showTotal: (total) => `共 ${total} 条流水`,
+            onChange: (page, size) => {
+              if (!activityPosition) return
+              fetchPositionActivity(activityPosition, page, size)
+            }
+          }}
+          scroll={{ x: 1200, y: 420 }}
+        />
       </Modal>
 
       <Modal

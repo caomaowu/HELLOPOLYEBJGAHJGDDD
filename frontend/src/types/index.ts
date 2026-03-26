@@ -1104,6 +1104,36 @@ export interface PositionListResponse {
   historyPositions: AccountPosition[]
 }
 
+export interface PositionActivityRequest {
+  accountId: number
+  marketId: string
+  outcomeIndex?: number
+  side: string
+  page?: number
+  pageSize?: number
+}
+
+export interface PositionActivityItem {
+  eventType: 'OPEN' | 'ADD' | 'REDUCE' | 'CLOSE' | string
+  tradeSide: 'BUY' | 'SELL' | string
+  eventTime: number
+  price: string
+  quantity: string
+  actualAmount: string
+  fee: string
+  remainingQuantity: string
+  source: string
+  tradeId?: string
+  orderId?: string
+}
+
+export interface PositionActivityResponse {
+  list: PositionActivityItem[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 /**
  * 仓位卖出请求
  */

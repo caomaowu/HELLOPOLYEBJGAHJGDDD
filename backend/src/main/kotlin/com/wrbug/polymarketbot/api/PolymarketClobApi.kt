@@ -333,6 +333,7 @@ data class TradeResponse(
     val side: String,  // BUY 或 SELL
     val price: String,
     val size: String,
+    val fee: String? = null,  // 成交手续费（若上游返回）
     val timestamp: String,  // ISO 8601 格式字符串或时间戳
     val user: String?,
     val outcomeIndex: Int? = null,  // 结果索引（0=YES, 1=NO）
@@ -388,4 +389,3 @@ data class LatestPriceResponse(
     val bestBid: String?,  // 最高买入价
     val bestAsk: String?   // 最低卖出价
 )
-
