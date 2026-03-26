@@ -80,6 +80,12 @@ const TemplateAdd: React.FC = () => {
       message.error(repeatAddReductionError)
       return
     }
+    if (values.repeatAddCooldownEnabled) {
+      if (!values.repeatAddCooldownSeconds || Number(values.repeatAddCooldownSeconds) <= 0) {
+        message.error('启用同市场同方向加仓冷却时，冷却秒数必须大于 0')
+        return
+      }
+    }
 
     const normalizedTierResult = values.multiplierMode === 'TIERED'
       ? validateAndNormalizeMultiplierTiers(values.tieredMultipliers)
@@ -132,6 +138,10 @@ const TemplateAdd: React.FC = () => {
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
         ...buildRepeatAddReductionPayload(values),
+        repeatAddCooldownEnabled: values.repeatAddCooldownEnabled ?? false,
+        repeatAddCooldownSeconds: values.repeatAddCooldownEnabled
+          ? values.repeatAddCooldownSeconds
+          : undefined,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
           ? values.smallOrderAggregationWindowSeconds
@@ -193,6 +203,8 @@ const TemplateAdd: React.FC = () => {
             repeatAddReductionEnabled: false,
             repeatAddReductionStrategy: 'UNIFORM',
             repeatAddReductionValueType: 'PERCENT',
+            repeatAddCooldownEnabled: false,
+            repeatAddCooldownSeconds: 60,
             smallOrderAggregationEnabled: false,
             smallOrderAggregationWindowSeconds: 300,
             priceTolerance: 5,
@@ -475,6 +487,29 @@ const TemplateAdd: React.FC = () => {
           </Form.Item>
 
           <Form.Item
+            label="启用同市场同方向加仓冷却"
+            name="repeatAddCooldownEnabled"
+            tooltip="仅 BUY 生效；同市场同方向已有活跃仓位时，距离上次成功买入不足设定秒数将跳过本次加仓。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.repeatAddCooldownEnabled !== currentValues.repeatAddCooldownEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('repeatAddCooldownEnabled') ? (
+              <Form.Item
+                label="加仓冷却秒数"
+                name="repeatAddCooldownSeconds"
+                rules={[{ required: true, message: '请输入冷却秒数' }]}
+              >
+                <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} placeholder="默认 60 秒" />
+              </Form.Item>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
             label="启用小额订单聚合"
             name="smallOrderAggregationEnabled"
             tooltip="当计算出的下单金额低于最小下单金额时，先在短窗口内聚合，再尝试执行"
@@ -739,4 +774,3 @@ const TemplateAdd: React.FC = () => {
 }
 
 export default TemplateAdd
-

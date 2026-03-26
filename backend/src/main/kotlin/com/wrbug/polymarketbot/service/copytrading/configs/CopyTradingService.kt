@@ -117,6 +117,8 @@ class CopyTradingService(
                         ?: template.repeatAddReductionPercent,
                     repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal()
                         ?: template.repeatAddReductionFixedAmount,
+                    repeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: template.repeatAddCooldownEnabled,
+                    repeatAddCooldownSeconds = request.repeatAddCooldownSeconds ?: template.repeatAddCooldownSeconds,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                     delaySeconds = request.delaySeconds ?: template.delaySeconds,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -205,6 +207,8 @@ class CopyTradingService(
                         ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
                     repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal(),
                     repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal(),
+                    repeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: false,
+                    repeatAddCooldownSeconds = request.repeatAddCooldownSeconds,
                     priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                     delaySeconds = request.delaySeconds ?: 0,
                     pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -295,6 +299,8 @@ class CopyTradingService(
                 repeatAddReductionValueType = config.repeatAddReductionValueType,
                 repeatAddReductionPercent = config.repeatAddReductionPercent,
                 repeatAddReductionFixedAmount = config.repeatAddReductionFixedAmount,
+                repeatAddCooldownEnabled = config.repeatAddCooldownEnabled,
+                repeatAddCooldownSeconds = if (config.repeatAddCooldownEnabled) config.repeatAddCooldownSeconds else null,
                 priceTolerance = config.priceTolerance,
                 delaySeconds = config.delaySeconds,
                 pollIntervalSeconds = config.pollIntervalSeconds,
@@ -377,6 +383,12 @@ class CopyTradingService(
                 request.buyCyclePauseSeconds != null -> request.buyCyclePauseSeconds
                 else -> copyTrading.buyCyclePauseSeconds
             }
+            val nextRepeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: copyTrading.repeatAddCooldownEnabled
+            val nextRepeatAddCooldownSeconds = when {
+                !nextRepeatAddCooldownEnabled -> null
+                request.repeatAddCooldownSeconds != null -> request.repeatAddCooldownSeconds
+                else -> copyTrading.repeatAddCooldownSeconds
+            }
             val nextBuyCycleAnchorStartedAt = resolveBuyCycleAnchorStartedAt(
                 previousEnabled = copyTrading.enabled,
                 nextEnabled = nextEnabled,
@@ -424,6 +436,8 @@ class CopyTradingService(
                     request.repeatAddReductionFixedAmount,
                     copyTrading.repeatAddReductionFixedAmount
                 ),
+                repeatAddCooldownEnabled = nextRepeatAddCooldownEnabled,
+                repeatAddCooldownSeconds = nextRepeatAddCooldownSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: copyTrading.priceTolerance,
                 delaySeconds = request.delaySeconds ?: copyTrading.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: copyTrading.pollIntervalSeconds,
@@ -565,6 +579,8 @@ class CopyTradingService(
                     repeatAddReductionValueType = updated.repeatAddReductionValueType,
                     repeatAddReductionPercent = updated.repeatAddReductionPercent,
                     repeatAddReductionFixedAmount = updated.repeatAddReductionFixedAmount,
+                    repeatAddCooldownEnabled = updated.repeatAddCooldownEnabled,
+                    repeatAddCooldownSeconds = updated.repeatAddCooldownSeconds,
                     priceTolerance = updated.priceTolerance,
                     delaySeconds = updated.delaySeconds,
                     pollIntervalSeconds = updated.pollIntervalSeconds,
@@ -823,6 +839,8 @@ class CopyTradingService(
             repeatAddReductionValueType = copyTrading.repeatAddReductionValueType,
             repeatAddReductionPercent = copyTrading.repeatAddReductionPercent?.toPlainString(),
             repeatAddReductionFixedAmount = copyTrading.repeatAddReductionFixedAmount?.toPlainString(),
+            repeatAddCooldownEnabled = copyTrading.repeatAddCooldownEnabled,
+            repeatAddCooldownSeconds = copyTrading.repeatAddCooldownSeconds,
             priceTolerance = copyTrading.priceTolerance.toPlainString(),
             delaySeconds = copyTrading.delaySeconds,
             pollIntervalSeconds = copyTrading.pollIntervalSeconds,
@@ -949,6 +967,8 @@ class CopyTradingService(
         val repeatAddReductionValueType: String,
         val repeatAddReductionPercent: BigDecimal?,
         val repeatAddReductionFixedAmount: BigDecimal?,
+        val repeatAddCooldownEnabled: Boolean,
+        val repeatAddCooldownSeconds: Int?,
         val priceTolerance: BigDecimal,
         val delaySeconds: Int,
         val pollIntervalSeconds: Int,
@@ -1021,6 +1041,11 @@ class CopyTradingService(
             }
             if (config.buyCyclePauseSeconds == null || config.buyCyclePauseSeconds <= 0) {
                 return "启用买单循环时，暂停时长必须大于 0 秒"
+            }
+        }
+        if (config.repeatAddCooldownEnabled) {
+            if (config.repeatAddCooldownSeconds == null || config.repeatAddCooldownSeconds <= 0) {
+                return "启用同市场同方向加仓冷却时，冷却秒数必须大于 0"
             }
         }
 

@@ -49,7 +49,8 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     AGGREGATION_DISABLED: { color: 'default', text: t('filteredOrdersList.filterTypes.aggregationDisabled') || '聚合取消' },
     RISK_CONTROL: { color: 'volcano', text: t('filteredOrdersList.filterTypes.riskControl') || '风险控制' },
     ORDERBOOK: { color: 'gold', text: t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足' },
-    EXECUTION_PRECHECK: { color: 'red', text: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败' }
+    EXECUTION_PRECHECK: { color: 'red', text: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败' },
+    REPEAT_ADD_COOLDOWN: { color: 'blue', text: '同向加仓冷却' }
   }
 
   const readableReasonMap: Record<string, string> = {
@@ -60,7 +61,8 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     SIZING: t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝',
     RISK_CONTROL: t('filteredOrdersList.filterTypes.riskControl') || '风险控制',
     ORDERBOOK: t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足',
-    EXECUTION_PRECHECK: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败'
+    EXECUTION_PRECHECK: t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败',
+    REPEAT_ADD_COOLDOWN: '同向加仓冷却'
   }
   
   const fetchFilteredOrders = useCallback(async () => {
@@ -214,6 +216,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
           <Option value="RISK_CONTROL">{t('filteredOrdersList.filterTypes.riskControl') || '风险控制'}</Option>
           <Option value="ORDERBOOK">{t('filteredOrdersList.filterTypes.orderbook') || '订单簿不满足'}</Option>
           <Option value="EXECUTION_PRECHECK">{t('filteredOrdersList.filterTypes.executionPrecheck') || '执行前诊断失败'}</Option>
+          <Option value="REPEAT_ADD_COOLDOWN">同向加仓冷却</Option>
         </Select>
       </div>
       

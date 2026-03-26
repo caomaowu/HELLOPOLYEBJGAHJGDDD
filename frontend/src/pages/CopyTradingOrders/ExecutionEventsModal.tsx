@@ -142,6 +142,7 @@ const ExecutionEventsModal: React.FC<ExecutionEventsModalProps> = ({
     ONCHAIN_TRADE_PARSE_FAILED: { color: 'orange', text: '链上交易解析失败' },
     ONCHAIN_TRADE_PROCESSING_FAILED: { color: 'red', text: '链上交易处理失败' },
     EXECUTION_PRECHECK_REJECTED: { color: 'red', text: t('copyTradingOrders.executionEventTypes.executionPrecheckRejected') || '执行前诊断拒绝' },
+    REPEAT_ADD_COOLDOWN_HIT: { color: 'blue', text: '同向加仓冷却命中' },
     ACCOUNT_CREDENTIALS_MISSING: { color: 'red', text: t('copyTradingOrders.executionEventTypes.accountCredentialsMissing') || '账户凭证缺失' },
     ACCOUNT_DISABLED: { color: 'red', text: t('copyTradingOrders.executionEventTypes.accountDisabled') || '账户已禁用' },
     ORDER_CREATED: { color: 'green', text: t('copyTradingOrders.executionEventTypes.orderCreated') || '订单已创建' },

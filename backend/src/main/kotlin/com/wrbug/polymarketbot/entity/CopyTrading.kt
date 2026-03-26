@@ -139,6 +139,12 @@ data class CopyTrading(
 
     @Column(name = "repeat_add_reduction_fixed_amount", precision = 20, scale = 8)
     val repeatAddReductionFixedAmount: BigDecimal? = null,
+
+    @Column(name = "repeat_add_cooldown_enabled", nullable = false)
+    val repeatAddCooldownEnabled: Boolean = false,
+
+    @Column(name = "repeat_add_cooldown_seconds")
+    val repeatAddCooldownSeconds: Int? = null,
     
     // 关键字过滤配置
     @Column(name = "keyword_filter_mode", nullable = false, length = 20)

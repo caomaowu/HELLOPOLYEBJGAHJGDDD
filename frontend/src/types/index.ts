@@ -628,6 +628,8 @@ export interface CopyTradingTemplate {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
@@ -682,6 +684,8 @@ export interface TemplateCreateRequest {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -726,6 +730,8 @@ export interface TemplateUpdateRequest {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -770,6 +776,8 @@ export interface TemplateCopyRequest {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -823,6 +831,8 @@ export interface CopyTrading {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance: string
@@ -899,6 +909,8 @@ export interface CopyTradingCreateRequest {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string
@@ -963,6 +975,8 @@ export interface CopyTradingUpdateRequest {
   repeatAddReductionValueType?: RepeatAddReductionValueType
   repeatAddReductionPercent?: string
   repeatAddReductionFixedAmount?: string
+  repeatAddCooldownEnabled?: boolean
+  repeatAddCooldownSeconds?: number
   smallOrderAggregationEnabled?: boolean
   smallOrderAggregationWindowSeconds?: number
   priceTolerance?: string

@@ -416,6 +416,7 @@ class TelegramNotificationService(
             "PRICE_VALIDITY" -> messageSource.getMessage("notification.filter.type.price_validity", null, "价格不合理", locale)
             "MARKET_STATUS" -> messageSource.getMessage("notification.filter.type.market_status", null, "市场状态不可交易", locale)
             "BUY_CYCLE_PAUSED" -> messageSource.getMessage("notification.filter.type.buy_cycle_paused", null, "买单循环暂停", locale)
+            "REPEAT_ADD_COOLDOWN" -> messageSource.getMessage("notification.filter.type.repeat_add_cooldown", null, "同向加仓冷却", locale)
             else -> filterType
         }
         
@@ -1210,4 +1211,3 @@ $positionsText
         return "${address.substring(0, 6)}...${address.substring(address.length - 4)}"
     }
 }
-

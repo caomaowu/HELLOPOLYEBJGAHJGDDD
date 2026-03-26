@@ -77,6 +77,8 @@ interface AddModalProps {
     repeatAddReductionValueType?: 'PERCENT' | 'FIXED'
     repeatAddReductionPercent?: number
     repeatAddReductionFixedAmount?: number
+    repeatAddCooldownEnabled?: boolean
+    repeatAddCooldownSeconds?: number
     smallOrderAggregationEnabled?: boolean
     smallOrderAggregationWindowSeconds?: number
     supportSell?: boolean
@@ -203,6 +205,8 @@ const AddModal: React.FC<AddModalProps> = ({
       repeatAddReductionValueType: config.repeatAddReductionValueType || 'PERCENT',
       repeatAddReductionPercent: config.repeatAddReductionPercent,
       repeatAddReductionFixedAmount: config.repeatAddReductionFixedAmount,
+      repeatAddCooldownEnabled: config.repeatAddCooldownEnabled ?? false,
+      repeatAddCooldownSeconds: config.repeatAddCooldownSeconds ?? 60,
       smallOrderAggregationEnabled: config.smallOrderAggregationEnabled ?? false,
       smallOrderAggregationWindowSeconds: config.smallOrderAggregationWindowSeconds,
       supportSell: config.supportSell,
@@ -292,6 +296,8 @@ const AddModal: React.FC<AddModalProps> = ({
           repeatAddReductionEnabled: false,
           repeatAddReductionStrategy: 'UNIFORM',
           repeatAddReductionValueType: 'PERCENT',
+          repeatAddCooldownEnabled: false,
+          repeatAddCooldownSeconds: 60,
           smallOrderAggregationEnabled: false,
           smallOrderAggregationWindowSeconds: 300,
           supportSell: true,
@@ -345,6 +351,8 @@ const AddModal: React.FC<AddModalProps> = ({
       repeatAddReductionValueType: template.repeatAddReductionValueType || 'PERCENT',
       repeatAddReductionPercent: template.repeatAddReductionPercent ? parseFloat(template.repeatAddReductionPercent) : undefined,
       repeatAddReductionFixedAmount: template.repeatAddReductionFixedAmount ? parseFloat(template.repeatAddReductionFixedAmount) : undefined,
+      repeatAddCooldownEnabled: template.repeatAddCooldownEnabled ?? false,
+      repeatAddCooldownSeconds: template.repeatAddCooldownSeconds ?? 60,
       smallOrderAggregationEnabled: template.smallOrderAggregationEnabled ?? false,
       smallOrderAggregationWindowSeconds: template.smallOrderAggregationWindowSeconds ?? 300,
       priceTolerance: template.priceTolerance ? parseFloat(template.priceTolerance) : undefined,
@@ -510,6 +518,12 @@ const AddModal: React.FC<AddModalProps> = ({
       message.error(repeatAddReductionError)
       return
     }
+    if (values.repeatAddCooldownEnabled) {
+      if (!values.repeatAddCooldownSeconds || Number(values.repeatAddCooldownSeconds) <= 0) {
+        message.error('启用同市场同方向加仓冷却时，冷却秒数必须大于 0')
+        return
+      }
+    }
 
     if (values.buyCycleEnabled) {
       if (!values.buyCycleRunMinutes || Number(values.buyCycleRunMinutes) <= 0) {
@@ -570,6 +584,10 @@ const AddModal: React.FC<AddModalProps> = ({
           ? Math.round(Number(values.buyCyclePauseMinutes) * 60)
           : undefined,
         ...repeatAddReductionPayload,
+        repeatAddCooldownEnabled: values.repeatAddCooldownEnabled ?? false,
+        repeatAddCooldownSeconds: values.repeatAddCooldownEnabled
+          ? values.repeatAddCooldownSeconds
+          : undefined,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
           ? values.smallOrderAggregationWindowSeconds
@@ -658,6 +676,8 @@ const AddModal: React.FC<AddModalProps> = ({
             buyCycleEnabled: false,
             buyCycleRunMinutes: 45,
             buyCyclePauseMinutes: 30,
+            repeatAddCooldownEnabled: false,
+            repeatAddCooldownSeconds: 60,
             smallOrderAggregationEnabled: false,
             smallOrderAggregationWindowSeconds: 300,
             priceTolerance: 5,
@@ -1170,6 +1190,29 @@ const AddModal: React.FC<AddModalProps> = ({
                   说明：同市场=市场 + 方向；首笔不受影响；平仓后重新计数；最终仍会受最大仓位金额、最大活跃仓位数量、最小下单金额等限制。
                 </div>
               </>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label="启用同市场同方向加仓冷却"
+            name="repeatAddCooldownEnabled"
+            tooltip="仅 BUY 生效；同市场同方向已有活跃仓位时，距离上次成功买入不足设定秒数将跳过本次加仓。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.repeatAddCooldownEnabled !== currentValues.repeatAddCooldownEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('repeatAddCooldownEnabled') ? (
+              <Form.Item
+                label="加仓冷却秒数"
+                name="repeatAddCooldownSeconds"
+                rules={[{ required: true, message: '请输入冷却秒数' }]}
+              >
+                <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} placeholder="默认 60 秒" />
+              </Form.Item>
             ) : null}
           </Form.Item>
 

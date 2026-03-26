@@ -123,6 +123,8 @@ const EditModal: React.FC<EditModalProps> = ({
           repeatAddReductionValueType: found.repeatAddReductionValueType || 'PERCENT',
           repeatAddReductionPercent: found.repeatAddReductionPercent ? parseFloat(found.repeatAddReductionPercent) : undefined,
           repeatAddReductionFixedAmount: found.repeatAddReductionFixedAmount ? parseFloat(found.repeatAddReductionFixedAmount) : undefined,
+          repeatAddCooldownEnabled: found.repeatAddCooldownEnabled ?? false,
+          repeatAddCooldownSeconds: found.repeatAddCooldownSeconds ?? 60,
           smallOrderAggregationEnabled: found.smallOrderAggregationEnabled ?? false,
           smallOrderAggregationWindowSeconds: found.smallOrderAggregationWindowSeconds ?? 300,
           priceTolerance: found.priceTolerance ? parseFloat(found.priceTolerance) : undefined,
@@ -281,6 +283,12 @@ const EditModal: React.FC<EditModalProps> = ({
       message.error(repeatAddReductionError)
       return
     }
+    if (values.repeatAddCooldownEnabled) {
+      if (!values.repeatAddCooldownSeconds || Number(values.repeatAddCooldownSeconds) <= 0) {
+        message.error('启用同市场同方向加仓冷却时，冷却秒数必须大于 0')
+        return
+      }
+    }
 
     if (values.buyCycleEnabled) {
       if (!values.buyCycleRunMinutes || Number(values.buyCycleRunMinutes) <= 0) {
@@ -349,6 +357,10 @@ const EditModal: React.FC<EditModalProps> = ({
           ? Math.round(Number(values.buyCyclePauseMinutes) * 60)
           : undefined,
         ...repeatAddReductionPayload,
+        repeatAddCooldownEnabled: values.repeatAddCooldownEnabled ?? false,
+        repeatAddCooldownSeconds: values.repeatAddCooldownEnabled
+          ? values.repeatAddCooldownSeconds
+          : undefined,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
           ? values.smallOrderAggregationWindowSeconds
@@ -443,7 +455,9 @@ const EditModal: React.FC<EditModalProps> = ({
             buyCyclePauseMinutes: 30,
             repeatAddReductionEnabled: false,
             repeatAddReductionStrategy: 'UNIFORM',
-            repeatAddReductionValueType: 'PERCENT'
+            repeatAddReductionValueType: 'PERCENT',
+            repeatAddCooldownEnabled: false,
+            repeatAddCooldownSeconds: 60
           }}
         >
           <Form.Item
@@ -709,6 +723,29 @@ const EditModal: React.FC<EditModalProps> = ({
                   说明：同市场=市场 + 方向；首笔不受影响；平仓后重新计数；最终仍会受最大仓位金额、最大活跃仓位数量、最小下单金额等限制。
                 </div>
               </>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label="启用同市场同方向加仓冷却"
+            name="repeatAddCooldownEnabled"
+            tooltip="仅 BUY 生效；同市场同方向已有活跃仓位时，距离上次成功买入不足设定秒数将跳过本次加仓。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.repeatAddCooldownEnabled !== currentValues.repeatAddCooldownEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('repeatAddCooldownEnabled') ? (
+              <Form.Item
+                label="加仓冷却秒数"
+                name="repeatAddCooldownSeconds"
+                rules={[{ required: true, message: '请输入冷却秒数' }]}
+              >
+                <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
             ) : null}
           </Form.Item>
 

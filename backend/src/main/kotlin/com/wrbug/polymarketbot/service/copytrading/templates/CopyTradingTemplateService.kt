@@ -76,6 +76,12 @@ class CopyTradingTemplateService(
                     ?: CopyTradingSizingSupport.REPEAT_ADD_REDUCTION_VALUE_TYPE_PERCENT,
                 repeatAddReductionPercent = request.repeatAddReductionPercent?.toSafeBigDecimal(),
                 repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal(),
+                repeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: false,
+                repeatAddCooldownSeconds = if (request.repeatAddCooldownEnabled == true) {
+                    request.repeatAddCooldownSeconds
+                } else {
+                    null
+                },
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: "5".toSafeBigDecimal(),
                 delaySeconds = request.delaySeconds ?: 0,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: 5,
@@ -144,6 +150,12 @@ class CopyTradingTemplateService(
             }
             
             // 验证 copyMode
+            val nextRepeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: template.repeatAddCooldownEnabled
+            val nextRepeatAddCooldownSeconds = when {
+                !nextRepeatAddCooldownEnabled -> null
+                request.repeatAddCooldownSeconds != null -> request.repeatAddCooldownSeconds
+                else -> template.repeatAddCooldownSeconds
+            }
             val updated = template.copy(
                 templateName = request.templateName ?: template.templateName,
                 copyMode = request.copyMode ?: template.copyMode,
@@ -175,6 +187,8 @@ class CopyTradingTemplateService(
                     request.repeatAddReductionFixedAmount,
                     template.repeatAddReductionFixedAmount
                 ),
+                repeatAddCooldownEnabled = nextRepeatAddCooldownEnabled,
+                repeatAddCooldownSeconds = nextRepeatAddCooldownSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: template.priceTolerance,
                 delaySeconds = request.delaySeconds ?: template.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: template.pollIntervalSeconds,
@@ -263,6 +277,12 @@ class CopyTradingTemplateService(
             }
             
             // 创建新模板
+            val nextRepeatAddCooldownEnabled = request.repeatAddCooldownEnabled ?: sourceTemplate.repeatAddCooldownEnabled
+            val nextRepeatAddCooldownSeconds = when {
+                !nextRepeatAddCooldownEnabled -> null
+                request.repeatAddCooldownSeconds != null -> request.repeatAddCooldownSeconds
+                else -> sourceTemplate.repeatAddCooldownSeconds
+            }
             val newTemplate = CopyTradingTemplate(
                 templateName = request.templateName,
                 copyMode = request.copyMode ?: sourceTemplate.copyMode,
@@ -290,6 +310,8 @@ class CopyTradingTemplateService(
                     ?: sourceTemplate.repeatAddReductionPercent,
                 repeatAddReductionFixedAmount = request.repeatAddReductionFixedAmount?.toSafeBigDecimal()
                     ?: sourceTemplate.repeatAddReductionFixedAmount,
+                repeatAddCooldownEnabled = nextRepeatAddCooldownEnabled,
+                repeatAddCooldownSeconds = nextRepeatAddCooldownSeconds,
                 priceTolerance = request.priceTolerance?.toSafeBigDecimal() ?: sourceTemplate.priceTolerance,
                 delaySeconds = request.delaySeconds ?: sourceTemplate.delaySeconds,
                 pollIntervalSeconds = request.pollIntervalSeconds ?: sourceTemplate.pollIntervalSeconds,
@@ -416,6 +438,8 @@ class CopyTradingTemplateService(
             repeatAddReductionValueType = template.repeatAddReductionValueType,
             repeatAddReductionPercent = template.repeatAddReductionPercent?.toPlainString(),
             repeatAddReductionFixedAmount = template.repeatAddReductionFixedAmount?.toPlainString(),
+            repeatAddCooldownEnabled = template.repeatAddCooldownEnabled,
+            repeatAddCooldownSeconds = template.repeatAddCooldownSeconds,
             priceTolerance = template.priceTolerance.toPlainString(),
             delaySeconds = template.delaySeconds,
             pollIntervalSeconds = template.pollIntervalSeconds,
@@ -515,6 +539,11 @@ class CopyTradingTemplateService(
             enabled = template.smallOrderAggregationEnabled,
             windowSeconds = template.smallOrderAggregationWindowSeconds
         ).firstOrNull()?.let { return it }
+        if (template.repeatAddCooldownEnabled) {
+            if (template.repeatAddCooldownSeconds == null || template.repeatAddCooldownSeconds <= 0) {
+                return "启用同市场同方向加仓冷却时，冷却秒数必须大于 0"
+            }
+        }
 
         val marketCategoryMode = MarketFilterSupport.normalizeFilterMode(template.marketCategoryMode)
         MarketFilterSupport.validateFilterMode(marketCategoryMode, "marketCategoryMode")?.let { return it }

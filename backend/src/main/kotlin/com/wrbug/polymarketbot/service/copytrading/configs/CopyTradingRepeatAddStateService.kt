@@ -10,7 +10,8 @@ import java.math.BigDecimal
 data class RepeatAddStateSnapshot(
     val firstBuyAmount: BigDecimal,
     val buyCount: Int,
-    val lastBuyAmount: BigDecimal
+    val lastBuyAmount: BigDecimal,
+    val updatedAt: Long
 )
 
 @Service
@@ -37,7 +38,8 @@ class CopyTradingRepeatAddStateService(
         return RepeatAddStateSnapshot(
             firstBuyAmount = state.firstBuyAmount,
             buyCount = state.buyCount,
-            lastBuyAmount = state.lastBuyAmount
+            lastBuyAmount = state.lastBuyAmount,
+            updatedAt = state.updatedAt
         )
     }
 

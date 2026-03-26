@@ -141,6 +141,12 @@ data class CopyTradingTemplate(
     @Column(name = "repeat_add_reduction_fixed_amount", precision = 20, scale = 8)
     val repeatAddReductionFixedAmount: BigDecimal? = null,
 
+    @Column(name = "repeat_add_cooldown_enabled", nullable = false)
+    val repeatAddCooldownEnabled: Boolean = false,
+
+    @Column(name = "repeat_add_cooldown_seconds")
+    val repeatAddCooldownSeconds: Int? = null,
+
     @Column(name = "created_at", nullable = false)
     val createdAt: Long = System.currentTimeMillis(),
     

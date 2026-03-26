@@ -144,6 +144,8 @@ const TemplateList: React.FC = () => {
       repeatAddReductionValueType: sourceTemplate.repeatAddReductionValueType || 'PERCENT',
       repeatAddReductionPercent: sourceTemplate.repeatAddReductionPercent ? parseFloat(sourceTemplate.repeatAddReductionPercent) : undefined,
       repeatAddReductionFixedAmount: sourceTemplate.repeatAddReductionFixedAmount ? parseFloat(sourceTemplate.repeatAddReductionFixedAmount) : undefined,
+      repeatAddCooldownEnabled: sourceTemplate.repeatAddCooldownEnabled ?? false,
+      repeatAddCooldownSeconds: sourceTemplate.repeatAddCooldownSeconds ?? 60,
       smallOrderAggregationEnabled: sourceTemplate.smallOrderAggregationEnabled ?? false,
       smallOrderAggregationWindowSeconds: sourceTemplate.smallOrderAggregationWindowSeconds ?? 300,
       priceTolerance: parseFloat(sourceTemplate.priceTolerance),
@@ -193,6 +195,12 @@ const TemplateList: React.FC = () => {
     if (repeatAddReductionError) {
       message.error(repeatAddReductionError)
       return
+    }
+    if (values.repeatAddCooldownEnabled) {
+      if (!values.repeatAddCooldownSeconds || Number(values.repeatAddCooldownSeconds) <= 0) {
+        message.error('启用同市场同方向加仓冷却时，冷却秒数必须大于 0')
+        return
+      }
     }
 
     const normalizedTierResult = values.multiplierMode === 'TIERED'
@@ -246,6 +254,10 @@ const TemplateList: React.FC = () => {
         maxDailyOrders: values.maxDailyOrders,
         maxDailyVolume: values.maxDailyVolume?.toString(),
         ...buildRepeatAddReductionPayload(values),
+        repeatAddCooldownEnabled: values.repeatAddCooldownEnabled ?? false,
+        repeatAddCooldownSeconds: values.repeatAddCooldownEnabled
+          ? values.repeatAddCooldownSeconds
+          : undefined,
         smallOrderAggregationEnabled: values.smallOrderAggregationEnabled ?? false,
         smallOrderAggregationWindowSeconds: values.smallOrderAggregationEnabled
           ? values.smallOrderAggregationWindowSeconds
@@ -354,6 +366,11 @@ const TemplateList: React.FC = () => {
             {record.repeatAddReductionEnabled && (
               <div style={{ fontSize: 12, color: '#666' }}>
                 {formatRepeatAddReductionSummary(record)}
+              </div>
+            )}
+            {record.repeatAddCooldownEnabled && (
+              <div style={{ fontSize: 12, color: '#666' }}>
+                同向加仓冷却: {record.repeatAddCooldownSeconds || 60}s
               </div>
             )}
             {renderMarketFilterSummary(record)}
@@ -528,6 +545,11 @@ const TemplateList: React.FC = () => {
                         {template.repeatAddReductionEnabled && (
                           <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
                             {formatRepeatAddReductionSummary(template)}
+                          </div>
+                        )}
+                        {template.repeatAddCooldownEnabled && (
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                            同向加仓冷却: {template.repeatAddCooldownSeconds || 60}s
                           </div>
                         )}
                         {renderMarketFilterSummary(template)}
@@ -884,6 +906,29 @@ const TemplateList: React.FC = () => {
                   说明：只针对同市场同方向；首笔不变；仓位平掉后重新计数；仍会继续受最大仓位金额、最小下单金额等限制。
                 </div>
               </>
+            ) : null}
+          </Form.Item>
+
+          <Form.Item
+            label="启用同市场同方向加仓冷却"
+            name="repeatAddCooldownEnabled"
+            tooltip="仅 BUY 生效；同市场同方向已有活跃仓位时，距离上次成功买入不足设定秒数将跳过本次加仓。"
+            valuePropName="checked"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) =>
+            prevValues.repeatAddCooldownEnabled !== currentValues.repeatAddCooldownEnabled
+          }>
+            {({ getFieldValue }) => getFieldValue('repeatAddCooldownEnabled') ? (
+              <Form.Item
+                label="加仓冷却秒数"
+                name="repeatAddCooldownSeconds"
+                rules={[{ required: true, message: '请输入冷却秒数' }]}
+              >
+                <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} placeholder="默认 60 秒" />
+              </Form.Item>
             ) : null}
           </Form.Item>
 

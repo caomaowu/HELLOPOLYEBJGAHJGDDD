@@ -863,6 +863,31 @@ open class CopyOrderTrackingService(
             return Result.success(Unit)
         }
 
+        val repeatAddCooldownHit = resolveRepeatAddCooldownHit(copyTrading, payload, System.currentTimeMillis())
+        if (repeatAddCooldownHit != null) {
+            logger.info(
+                "同市场同方向加仓冷却命中，跳过创建订单: copyTradingId=${copyTrading.id}, marketId=${payload.marketId}, outcomeIndex=${payload.outcomeIndex}, remainingSeconds=${repeatAddCooldownHit.remainingSeconds}"
+            )
+            recordFilteredBuyPayloadAsync(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                filterReason = repeatAddCooldownHit.reason,
+                filterType = "REPEAT_ADD_COOLDOWN",
+                calculatedQuantity = null
+            )
+            recordExecutionEvent(
+                copyTrading = copyTrading,
+                account = account,
+                payload = payload,
+                stage = "FILTER",
+                eventType = "REPEAT_ADD_COOLDOWN_HIT",
+                status = "info",
+                message = repeatAddCooldownHit.reason
+            )
+            return Result.success(Unit)
+        }
+
         val marketMetaResolveStartedAt = System.currentTimeMillis()
         val resolvedMarketFilterInput = resolveMarketFilterInput(copyTrading, payload)
         val marketMetaResolveMs = (System.currentTimeMillis() - marketMetaResolveStartedAt).coerceAtLeast(0)
@@ -3024,6 +3049,45 @@ open class CopyOrderTrackingService(
         } else {
             null
         }
+    }
+
+    private data class RepeatAddCooldownHit(
+        val remainingSeconds: Long,
+        val reason: String
+    )
+
+    private fun resolveRepeatAddCooldownHit(
+        copyTrading: CopyTrading,
+        payload: BuyExecutionPayload,
+        nowMillis: Long
+    ): RepeatAddCooldownHit? {
+        if (!copyTrading.repeatAddCooldownEnabled) {
+            return null
+        }
+        val cooldownSeconds = copyTrading.repeatAddCooldownSeconds
+        if (cooldownSeconds == null || cooldownSeconds <= 0) {
+            return null
+        }
+        val copyTradingId = copyTrading.id ?: return null
+        val activeState = requireNotNull(repeatAddStateService) {
+            "CopyTradingRepeatAddStateService 未初始化"
+        }.getActiveState(
+            copyTradingId = copyTradingId,
+            marketId = payload.marketId,
+            outcomeIndex = payload.outcomeIndex
+        ) ?: return null
+
+        val cooldownMillis = cooldownSeconds * 1000L
+        val elapsedMillis = (nowMillis - activeState.updatedAt).coerceAtLeast(0L)
+        if (elapsedMillis >= cooldownMillis) {
+            return null
+        }
+        val remainingMillis = (cooldownMillis - elapsedMillis).coerceAtLeast(0L)
+        val remainingSeconds = (remainingMillis + 999L) / 1000L
+        return RepeatAddCooldownHit(
+            remainingSeconds = remainingSeconds,
+            reason = "同市场同方向加仓冷却中，剩余 ${remainingSeconds} 秒"
+        )
     }
 
     private fun resolveMarketFilterInput(
