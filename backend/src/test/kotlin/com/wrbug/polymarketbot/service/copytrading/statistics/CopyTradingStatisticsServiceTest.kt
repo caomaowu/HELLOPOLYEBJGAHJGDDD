@@ -4,6 +4,8 @@ import com.wrbug.polymarketbot.dto.ExecutionLatencySummary
 import com.wrbug.polymarketbot.entity.CopyOrderTracking
 import com.wrbug.polymarketbot.entity.CopyTrading
 import com.wrbug.polymarketbot.entity.CopyTradingExecutionEvent
+import com.wrbug.polymarketbot.entity.SellMatchDetail
+import com.wrbug.polymarketbot.entity.SellMatchRecord
 import com.wrbug.polymarketbot.repository.AccountRepository
 import com.wrbug.polymarketbot.repository.CopyOrderTrackingRepository
 import com.wrbug.polymarketbot.repository.CopyTradingExecutionEventRepository
@@ -108,6 +110,86 @@ class CopyTradingStatisticsServiceTest {
         val response = service.getStatistics(1L).getOrThrow()
 
         assertNull(response.executionLatencySummary)
+    }
+
+    @Test
+    fun `getStatistics should calculate totalPnlPercent by matched buy cost`() = runTest {
+        `when`(copyTradingRepository.findById(1L)).thenReturn(Optional.of(copyTrading()))
+        `when`(accountRepository.findById(1L)).thenReturn(Optional.empty())
+        `when`(leaderRepository.findById(2L)).thenReturn(Optional.empty())
+        `when`(copyOrderTrackingRepository.findByCopyTradingId(1L)).thenReturn(
+            listOf(
+                CopyOrderTracking(
+                    id = 1L,
+                    copyTradingId = 1L,
+                    accountId = 1L,
+                    leaderId = 2L,
+                    marketId = "market-1",
+                    side = "YES",
+                    buyOrderId = "buy-1",
+                    leaderBuyTradeId = "leader-buy-1",
+                    quantity = BigDecimal("10"),
+                    price = BigDecimal("1"),
+                    matchedQuantity = BigDecimal("2"),
+                    remainingQuantity = BigDecimal("8"),
+                    status = "partially_matched",
+                    source = "activity-ws"
+                ),
+                CopyOrderTracking(
+                    id = 2L,
+                    copyTradingId = 1L,
+                    accountId = 1L,
+                    leaderId = 2L,
+                    marketId = "market-2",
+                    side = "NO",
+                    buyOrderId = "buy-2",
+                    leaderBuyTradeId = "leader-buy-2",
+                    quantity = BigDecimal("10"),
+                    price = BigDecimal("1"),
+                    matchedQuantity = BigDecimal.ZERO,
+                    remainingQuantity = BigDecimal("10"),
+                    status = "filled",
+                    source = "activity-ws"
+                )
+            )
+        )
+        `when`(sellMatchRecordRepository.findByCopyTradingId(1L)).thenReturn(
+            listOf(
+                SellMatchRecord(
+                    id = 1L,
+                    copyTradingId = 1L,
+                    sellOrderId = "sell-1",
+                    leaderSellTradeId = "leader-sell-1",
+                    marketId = "market-1",
+                    side = "0",
+                    outcomeIndex = 0,
+                    totalMatchedQuantity = BigDecimal("2"),
+                    sellPrice = BigDecimal("1.2"),
+                    totalRealizedPnl = BigDecimal("0.4"),
+                    priceUpdated = true
+                )
+            )
+        )
+        `when`(sellMatchDetailRepository.findByCopyTradingId(1L)).thenReturn(
+            listOf(
+                SellMatchDetail(
+                    id = 1L,
+                    matchRecordId = 1L,
+                    trackingId = 1L,
+                    buyOrderId = "buy-1",
+                    matchedQuantity = BigDecimal("2"),
+                    buyPrice = BigDecimal("1"),
+                    sellPrice = BigDecimal("1.2"),
+                    realizedPnl = BigDecimal("0.4")
+                )
+            )
+        )
+        `when`(copyTradingExecutionEventRepository.findTop100ByCopyTradingIdOrderByCreatedAtDesc(1L)).thenReturn(emptyList())
+
+        val response = service.getStatistics(1L).getOrThrow()
+
+        assertEquals("0.4", response.totalPnl)
+        assertEquals("20.00", response.totalPnlPercent)
     }
 
     private fun copyTrading() = CopyTrading(

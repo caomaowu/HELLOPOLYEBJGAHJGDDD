@@ -90,6 +90,24 @@ wait_port() {
     return 1
 }
 
+export_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line//[[:space:]]/}" ]] && continue
+            [[ "$line" != *"="* ]] && continue
+
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+
+            [[ -n "$key" ]] || continue
+            export "$key=$value"
+        done < "$ENV_FILE"
+    fi
+}
+
 [[ -f "$ENV_FILE" ]] || fail "未找到根目录 .env，请先执行 ./prod-scripts/init-prod-env.sh"
 
 mkdir -p "$RUN_DIR"
@@ -113,10 +131,7 @@ if is_port_listening "$SERVER_PORT"; then
     fail "端口 $SERVER_PORT 已被占用，请先释放端口或修改 .env"
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+export_env_file
 
 info "启动生产后端"
 nohup bash -lc "cd \"$PROJECT_ROOT\" && exec java $JAVA_OPTS_VALUE -jar \"$JAR_PATH\"" >"$LOG_FILE" 2>"$ERR_FILE" &

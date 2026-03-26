@@ -60,6 +60,8 @@ class TraderCandidatePoolService(
     private val traderActivityEventHistoryRepository: TraderActivityEventHistoryRepository,
     private val leaderRepository: LeaderRepository,
     private val marketService: MarketService,
+    @Value("\${copy.trading.discovery.realtime.enabled:false}")
+    private val realtimeDiscoveryEnabled: Boolean,
     @Value("\${copy.trading.discovery.activity-history.store-raw-payload:false}")
     private val storeRawPayloadJson: Boolean
 ) {
@@ -80,7 +82,7 @@ class TraderCandidatePoolService(
     private val pendingMarketActivities = ConcurrentHashMap<String, PendingMarketActivity>()
     private val pendingActivityEvents = ConcurrentHashMap<String, PendingActivityEvent>()
 
-    fun isRealtimeDiscoveryEnabled(): Boolean = true
+    fun isRealtimeDiscoveryEnabled(): Boolean = realtimeDiscoveryEnabled
 
     fun recordActivityTrade(payload: ActivityTradePayload) {
         val pendingEvent = buildPendingActivityEvent(payload, source = "activity-ws", receivedAt = System.currentTimeMillis()) ?: return

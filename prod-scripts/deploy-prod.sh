@@ -34,16 +34,50 @@ read_env_value() {
     local key="$1"
     local default_value="$2"
 
-    if [[ -f "$ENV_FILE" ]]; then
-        local line
-        line="$(grep -E "^${key}=" "$ENV_FILE" | tail -n 1 || true)"
-        if [[ -n "$line" ]]; then
-            echo "${line#*=}"
-            return
+    if [[ ! -f "$ENV_FILE" ]]; then
+        echo "$default_value"
+        return
+    fi
+
+    local line current_key value=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+        [[ "$line" != *"="* ]] && continue
+
+        current_key="${line%%=*}"
+        current_key="${current_key#"${current_key%%[![:space:]]*}"}"
+        current_key="${current_key%"${current_key##*[![:space:]]}"}"
+
+        if [[ "$current_key" == "$key" ]]; then
+            value="${line#*=}"
         fi
+    done < "$ENV_FILE"
+
+    if [[ -n "$value" ]]; then
+        echo "$value"
+        return
     fi
 
     echo "$default_value"
+}
+
+export_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line//[[:space:]]/}" ]] && continue
+            [[ "$line" != *"="* ]] && continue
+
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+
+            [[ -n "$key" ]] || continue
+            export "$key=$value"
+        done < "$ENV_FILE"
+    fi
 }
 
 wait_port() {
@@ -68,6 +102,7 @@ command -v curl >/dev/null 2>&1 || fail "未找到 curl"
 command -v pkill >/dev/null 2>&1 || fail "未找到 pkill"
 
 SERVER_PORT="$(read_env_value "SERVER_PORT" "8008")"
+export_env_file
 
 info "检查生产环境配置"
 "$PROJECT_ROOT/prod-scripts/init-prod-env.sh"

@@ -55,10 +55,19 @@ load_frontend_port() {
 
 export_env_file() {
     if [[ -f "$ENV_FILE" ]]; then
-        set -a
-        # shellcheck disable=SC1090
-        source "$ENV_FILE"
-        set +a
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line//[[:space:]]/}" ]] && continue
+            [[ "$line" != *"="* ]] && continue
+
+            local key="${line%%=*}"
+            local value="${line#*=}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+
+            [[ -n "$key" ]] || continue
+            export "$key=$value"
+        done < "$ENV_FILE"
     fi
 }
 

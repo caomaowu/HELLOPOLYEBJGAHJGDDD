@@ -44,7 +44,7 @@ const AccountList: React.FC = () => {
   const [accountImportModalVisible, setAccountImportModalVisible] = useState(false)
   const [accountImportForm] = Form.useForm()
   const loadedBalanceIdsRef = useRef<Set<number>>(new Set())
-  const loadingBalanceIdsRef = useRef<Set<number>>(new Set())
+  const [balanceReloadToken, setBalanceReloadToken] = useState(0)
 
   useEffect(() => {
     fetchAccounts()
@@ -62,7 +62,6 @@ const AccountList: React.FC = () => {
     let cancelled = false
 
     const loadSingleBalance = async (account: Account) => {
-      loadingBalanceIdsRef.current.add(account.id)
       setBalanceLoading(prev => ({ ...prev, [account.id]: true }))
       try {
         const balanceData = await withTimeout(
@@ -89,7 +88,6 @@ const AccountList: React.FC = () => {
         }))
         loadedBalanceIdsRef.current.add(account.id)
       } finally {
-        loadingBalanceIdsRef.current.delete(account.id)
         if (!cancelled) {
           setBalanceLoading(prev => ({ ...prev, [account.id]: false }))
         }
@@ -98,7 +96,7 @@ const AccountList: React.FC = () => {
 
     const loadBalances = async () => {
       const pendingAccounts = accounts.filter(
-        account => !loadedBalanceIdsRef.current.has(account.id) && !loadingBalanceIdsRef.current.has(account.id)
+        account => !loadedBalanceIdsRef.current.has(account.id)
       )
       if (pendingAccounts.length === 0) {
         return
@@ -113,7 +111,12 @@ const AccountList: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accounts, fetchAccountBalance])
+  }, [accounts, fetchAccountBalance, balanceReloadToken])
+
+  const handleRefreshBalances = () => {
+    loadedBalanceIdsRef.current.clear()
+    setBalanceReloadToken((prev) => prev + 1)
+  }
 
   const handleDelete = async (account: Account) => {
     try {
@@ -574,6 +577,16 @@ const AccountList: React.FC = () => {
         <Title level={isMobile ? 3 : 2} style={{ margin: 0, fontSize: isMobile ? '18px' : undefined }}>
           {t('accountList.title')}
         </Title>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={handleRefreshBalances}
+          loading={Object.values(balanceLoading).some(Boolean)}
+          size={isMobile ? 'middle' : 'large'}
+          block={isMobile}
+          style={isMobile ? { minHeight: '44px' } : undefined}
+        >
+          {t('accountList.refreshBalance')}
+        </Button>
         <Button
           type="primary"
           icon={<PlusOutlined />}

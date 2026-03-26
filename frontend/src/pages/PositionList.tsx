@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Card, Table, Tag, message, Space, Input, Radio, Select, Button, Row, Col, Empty, Modal, Form, Descriptions } from 'antd'
-import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons'
+import { SearchOutlined, AppstoreOutlined, UnorderedListOutlined, UpOutlined, DownOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { apiService } from '../services/api'
 import type { AccountPosition, Account, PositionPushMessage, PositionSellRequest, MarketPriceResponse, RedeemablePositionsSummary, PositionRedeemRequest, PositionCloseRequest, PositionCloseResponse } from '../types'
@@ -21,6 +21,7 @@ const PositionList: React.FC = () => {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(false)
   const [accountsLoading, setAccountsLoading] = useState(false)
+  const [refreshingPositions, setRefreshingPositions] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [positionFilter, setPositionFilter] = useState<PositionFilter>('current')
   const [selectedAccountId, setSelectedAccountId] = useState<number | undefined>(undefined)
@@ -276,6 +277,27 @@ const PositionList: React.FC = () => {
       setAccountsLoading(false)
     }
   }
+
+  const handleManualRefreshPositions = useCallback(async () => {
+    setRefreshingPositions(true)
+    setLoading(true)
+    try {
+      const response = await apiService.accounts.positionsList()
+      if (response.data.code === 0 && response.data.data) {
+        setCurrentPositions(response.data.data.currentPositions || [])
+        setHistoryPositions(response.data.data.historyPositions || [])
+        await fetchRedeemableSummarySilently()
+        message.success('仓位刷新成功')
+      } else {
+        message.error(response.data.msg || '刷新仓位失败')
+      }
+    } catch (error: any) {
+      message.error(error.message || '刷新仓位失败')
+    } finally {
+      setLoading(false)
+      setRefreshingPositions(false)
+    }
+  }, [fetchRedeemableSummarySilently])
 
   // 已移除 fetchPositions 函数，完全依赖 WebSocket 推送更新数据
 
@@ -1289,6 +1311,13 @@ const PositionList: React.FC = () => {
                 />
               </Button.Group>
             )}
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={handleManualRefreshPositions}
+              loading={refreshingPositions}
+            >
+              手动刷新
+            </Button>
             <span style={{ color: '#999', fontSize: '14px', whiteSpace: 'nowrap' }}>
               {searchKeyword || selectedAccountId !== undefined
                 ? `找到 ${filteredPositions.length} / ${basePositions.length} 个仓位`

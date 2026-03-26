@@ -89,7 +89,10 @@ class CopyTradingStatisticsService(
                 totalRealizedPnl = statistics.totalRealizedPnl,
                 totalUnrealizedPnl = unrealizedPnl,
                 totalPnl = statistics.totalRealizedPnl,
-                totalPnlPercent = calculatePnlPercentOnlyRealized(statistics.totalBuyAmount, statistics.totalRealizedPnl),
+                totalPnlPercent = calculatePnlPercentOnlyRealized(
+                    totalMatchedBuyCost = statistics.totalMatchedBuyCost,
+                    totalRealizedPnl = statistics.totalRealizedPnl
+                ),
                 executionLatencySummary = executionLatencySummary
             )
             
@@ -435,7 +438,8 @@ class CopyTradingStatisticsService(
         
         // 已实现盈亏
         val totalRealizedPnl = matchDetails.sumOf { it.realizedPnl.toSafeBigDecimal() }
-        
+        val totalMatchedBuyCost = matchDetails.sumOf { it.matchedQuantity.toSafeBigDecimal().multi(it.buyPrice) }
+
         return StatisticsData(
             totalBuyQuantity = totalBuyQuantity.toString(),
             totalBuyOrders = totalBuyOrders,
@@ -445,7 +449,8 @@ class CopyTradingStatisticsService(
             totalSellOrders = totalSellOrders,
             totalSellAmount = totalSellAmount.toString(),
             currentPositionQuantity = currentPositionQuantity.toString(),
-            totalRealizedPnl = totalRealizedPnl.toString()
+            totalRealizedPnl = totalRealizedPnl.toString(),
+            totalMatchedBuyCost = totalMatchedBuyCost.toString()
         )
     }
     
@@ -453,13 +458,13 @@ class CopyTradingStatisticsService(
      * 计算盈亏百分比（仅基于已实现盈亏）
      */
     private fun calculatePnlPercentOnlyRealized(
-        totalBuyAmount: String,
+        totalMatchedBuyCost: String,
         totalRealizedPnl: String
     ): String {
-        val buyAmount = totalBuyAmount.toSafeBigDecimal()
-        if (buyAmount.lte(BigDecimal.ZERO)) return "0"
+        val matchedBuyCost = totalMatchedBuyCost.toSafeBigDecimal()
+        if (matchedBuyCost.lte(BigDecimal.ZERO)) return "0"
         
-        val percent = totalRealizedPnl.toSafeBigDecimal().div(buyAmount).multi(100)
+        val percent = totalRealizedPnl.toSafeBigDecimal().div(matchedBuyCost).multi(100)
         
         return percent.setScale(2, RoundingMode.HALF_UP).toString()
     }
@@ -636,7 +641,8 @@ class CopyTradingStatisticsService(
         val totalSellOrders: Long,
         val totalSellAmount: String,
         val currentPositionQuantity: String,
-        val totalRealizedPnl: String
+        val totalRealizedPnl: String,
+        val totalMatchedBuyCost: String
     )
     
     /**

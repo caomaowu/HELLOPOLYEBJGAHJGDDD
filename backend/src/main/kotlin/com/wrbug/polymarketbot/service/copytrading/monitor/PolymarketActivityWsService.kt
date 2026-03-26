@@ -404,7 +404,11 @@ class PolymarketActivityWsService(
                 }
             }
 
-            traderCandidatePoolService.recordActivityTrade(payload)
+            val shouldPersistDiscoveryActivity =
+                traderCandidatePoolService.isRealtimeDiscoveryEnabled() || matchedLeaderIds.isNotEmpty()
+            if (shouldPersistDiscoveryActivity) {
+                traderCandidatePoolService.recordActivityTrade(payload)
+            }
 
             // 提取交易者地址
             val traderAddress = extractTraderAddress(payload) ?: run {
@@ -767,4 +771,3 @@ class PolymarketActivityWsService(
         scope.cancel()
     }
 }
-
