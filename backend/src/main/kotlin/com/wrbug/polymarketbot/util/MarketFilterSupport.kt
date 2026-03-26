@@ -93,9 +93,10 @@ object MarketFilterSupport {
 
     fun deriveMarketSeriesMetadata(
         slug: String?,
-        eventSlug: String? = null
+        eventSlug: String? = null,
+        seriesSlug: String? = null
     ): MarketSeriesMetadata {
-        val candidate = sequenceOf(eventSlug, slug)
+        val candidate = sequenceOf(seriesSlug, eventSlug, slug)
             .filterNotNull()
             .map { it.trim().lowercase() }
             .firstOrNull { it.isNotBlank() }
@@ -141,6 +142,8 @@ object MarketFilterSupport {
             normalized.contains("-1h") -> 3600
             normalized.contains("-4h") -> 14400
             normalized.contains("-1d") -> 86400
+            normalized.contains("-hourly") || normalized.endsWith("hourly") -> 3600
+            normalized.contains("-daily") || normalized.endsWith("daily") -> 86400
             else -> null
         }
     }

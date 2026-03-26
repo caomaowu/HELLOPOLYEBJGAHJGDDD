@@ -98,7 +98,8 @@ class CopyOrderTrackingServiceTest {
         assertEquals(
             MarketFilterInput(
                 seriesSlugPrefix = "btc-updown-15m",
-                intervalSeconds = 900
+                intervalSeconds = 900,
+                coinSymbol = "BTC"
             ),
             resolved.input
         )

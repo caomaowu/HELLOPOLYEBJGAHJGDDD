@@ -70,12 +70,14 @@ data class EventResponse(
     val id: String? = null,
     val ticker: String? = null,
     val slug: String? = null,
+    val seriesSlug: String? = null,
     val title: String? = null,
     val category: String? = null,
     val active: Boolean? = null,
     val closed: Boolean? = null,
     val archived: Boolean? = null,
     val startDate: String? = null,
+    val startTime: String? = null,
     val endDate: String? = null,
     val createdAt: String? = null,
     val negRisk: Boolean? = null
@@ -100,6 +102,7 @@ data class MarketResponse(
     val liquidity: String? = null,
     val endDate: String? = null,
     val startDate: String? = null,
+    val eventStartTime: String? = null,
     val outcomes: String? = null,
     val outcomePrices: String? = null,
     val volumeNum: Double? = null,
@@ -114,4 +117,3 @@ data class MarketResponse(
     val negRisk: Boolean? = null,       // 事件级 neg risk（部分 API 直接返回在 market）
     val negRiskOther: Boolean? = null  // Market 级 neg risk 标记
 )
-

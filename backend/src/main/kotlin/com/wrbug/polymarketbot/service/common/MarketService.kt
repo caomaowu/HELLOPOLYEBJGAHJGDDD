@@ -199,7 +199,15 @@ class MarketService(
             val eventSlug = marketResponse.getEventSlug()
             val seriesMetadata = MarketFilterSupport.deriveMarketSeriesMetadata(
                 slug = slug,
-                eventSlug = eventSlug
+                eventSlug = eventSlug,
+                seriesSlug = marketResponse.events?.firstOrNull()?.seriesSlug
+            )
+            val resolvedIntervalSeconds = resolveIntervalSeconds(
+                metadataIntervalSeconds = seriesMetadata.intervalSeconds,
+                endDate = marketResponse.endDate,
+                eventStartTime = marketResponse.eventStartTime,
+                eventStartTimeFromEvent = marketResponse.events?.firstOrNull()?.startTime,
+                fallback = existingMarket?.intervalSeconds
             )
             
             val market = if (existingMarket != null) {
@@ -209,7 +217,7 @@ class MarketService(
                     slug = slug ?: existingMarket.slug,
                     eventSlug = eventSlug ?: existingMarket.eventSlug,
                     seriesSlugPrefix = seriesMetadata.seriesSlugPrefix ?: existingMarket.seriesSlugPrefix,
-                    intervalSeconds = seriesMetadata.intervalSeconds ?: existingMarket.intervalSeconds,
+                    intervalSeconds = resolvedIntervalSeconds,
                     marketSourceType = seriesMetadata.marketSourceType.takeIf { it != "GENERIC" }
                         ?: existingMarket.marketSourceType,
                     category = resolvedCategory ?: existingMarket.category,
@@ -230,7 +238,7 @@ class MarketService(
                     slug = slug,
                     eventSlug = eventSlug,
                     seriesSlugPrefix = seriesMetadata.seriesSlugPrefix,
-                    intervalSeconds = seriesMetadata.intervalSeconds,
+                    intervalSeconds = resolvedIntervalSeconds,
                     marketSourceType = seriesMetadata.marketSourceType,
                     category = resolvedCategory,
                     icon = marketResponse.icon,
@@ -318,6 +326,41 @@ class MarketService(
             logger.warn("解析市场截止时间失败: endDate=$endDate, error=${e.message}")
             null
         }
+    }
+
+    private fun parseIsoInstantToMillis(value: String?): Long? {
+        if (value.isNullOrBlank()) {
+            return null
+        }
+        return try {
+            Instant.parse(value).toEpochMilli()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveIntervalSeconds(
+        metadataIntervalSeconds: Int?,
+        endDate: String?,
+        eventStartTime: String?,
+        eventStartTimeFromEvent: String?,
+        fallback: Int?
+    ): Int? {
+        if (metadataIntervalSeconds != null && metadataIntervalSeconds > 0) {
+            return metadataIntervalSeconds
+        }
+
+        val endMillis = parseIsoInstantToMillis(endDate)
+        val startMillis = parseIsoInstantToMillis(eventStartTime)
+            ?: parseIsoInstantToMillis(eventStartTimeFromEvent)
+        if (endMillis != null && startMillis != null && endMillis > startMillis) {
+            val deltaSeconds = (endMillis - startMillis) / 1000L
+            if (deltaSeconds in 1..Int.MAX_VALUE.toLong()) {
+                return deltaSeconds.toInt()
+            }
+        }
+
+        return fallback?.takeIf { it > 0 }
     }
 
     /**
