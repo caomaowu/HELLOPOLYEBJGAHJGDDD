@@ -107,6 +107,12 @@ data class CopyTradingTemplate(
 
     @Column(name = "market_series", columnDefinition = "JSON")
     val marketSeries: String? = null,  // 市场系列过滤列表（JSON数组，如 btc-updown-15m）
+
+    @Column(name = "coin_filter_mode", nullable = false, length = 20)
+    val coinFilterMode: String = "DISABLED",  // 币种过滤模式：DISABLED/WHITELIST/BLACKLIST
+
+    @Column(name = "coin_symbols", columnDefinition = "JSON")
+    val coinSymbols: String? = null,  // 币种过滤列表（JSON数组，如 ["BTC","ETH"]）
     
     @Column(name = "push_filtered_orders", nullable = false)
     val pushFilteredOrders: Boolean = false,  // 推送已过滤订单（默认关闭）
@@ -141,4 +147,3 @@ data class CopyTradingTemplate(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Long = System.currentTimeMillis()
 )
-

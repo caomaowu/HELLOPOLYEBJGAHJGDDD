@@ -44,6 +44,8 @@ data class TemplateCreateRequest(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -92,6 +94,8 @@ data class TemplateUpdateRequest(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -147,6 +151,8 @@ data class TemplateCopyRequest(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     val pushFilteredOrders: Boolean? = null  // 推送已过滤订单（默认关闭）
 )
 
@@ -202,6 +208,8 @@ data class TemplateDto(
     val marketIntervals: List<Int>?,
     val marketSeriesMode: String,
     val marketSeries: List<String>?,
+    val coinFilterMode: String,
+    val coinSymbols: List<String>?,
     val pushFilteredOrders: Boolean,  // 推送已过滤订单（默认关闭）
     val createdAt: Long,
     val updatedAt: Long
@@ -214,4 +222,3 @@ data class TemplateListResponse(
     val list: List<TemplateDto>,
     val total: Long
 )
-

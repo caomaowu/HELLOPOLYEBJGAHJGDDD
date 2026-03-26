@@ -164,6 +164,12 @@ data class CopyTrading(
 
     @Column(name = "market_series", columnDefinition = "JSON")
     val marketSeries: String? = null,  // 市场系列过滤列表（JSON数组，如 btc-updown-15m）
+
+    @Column(name = "coin_filter_mode", nullable = false, length = 20)
+    val coinFilterMode: String = "DISABLED",  // 币种过滤模式：DISABLED/WHITELIST/BLACKLIST
+
+    @Column(name = "coin_symbols", columnDefinition = "JSON")
+    val coinSymbols: String? = null,  // 币种过滤列表（JSON数组，如 ["BTC","ETH"]）
     
     // 新增配置字段
     @Column(name = "config_name", length = 255)
@@ -184,4 +190,3 @@ data class CopyTrading(
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Long = System.currentTimeMillis()
 )
-

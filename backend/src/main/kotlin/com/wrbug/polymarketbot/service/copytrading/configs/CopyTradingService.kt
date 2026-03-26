@@ -159,6 +159,15 @@ class CopyTradingService(
                         ),
                         series = request.marketSeries ?: convertJsonToKeywords(template.marketSeries)
                     ),
+                    coinFilterMode = MarketFilterSupport.normalizeFilterMode(
+                        request.coinFilterMode ?: template.coinFilterMode
+                    ),
+                    coinSymbols = resolveCoinSymbolsJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(
+                            request.coinFilterMode ?: template.coinFilterMode
+                        ),
+                        symbols = request.coinSymbols ?: convertJsonToKeywords(template.coinSymbols)
+                    ),
                     maxMarketEndDate = request.maxMarketEndDate,
                     pushFilteredOrders = request.pushFilteredOrders ?: template.pushFilteredOrders
                 )
@@ -225,6 +234,11 @@ class CopyTradingService(
                     marketSeries = resolveMarketSeriesJson(
                         mode = MarketFilterSupport.normalizeFilterMode(request.marketSeriesMode),
                         series = request.marketSeries
+                    ),
+                    coinFilterMode = MarketFilterSupport.normalizeFilterMode(request.coinFilterMode),
+                    coinSymbols = resolveCoinSymbolsJson(
+                        mode = MarketFilterSupport.normalizeFilterMode(request.coinFilterMode),
+                        symbols = request.coinSymbols
                     ),
                     maxMarketEndDate = request.maxMarketEndDate,
                     pushFilteredOrders = request.pushFilteredOrders ?: false  // 手动输入时使用请求中的值，默认为 false
@@ -302,6 +316,8 @@ class CopyTradingService(
                 marketIntervals = config.marketIntervals,
                 marketSeriesMode = config.marketSeriesMode,
                 marketSeries = config.marketSeries,
+                coinFilterMode = config.coinFilterMode,
+                coinSymbols = config.coinSymbols,
                 configName = configName,
                 pushFailedOrders = request.pushFailedOrders ?: false,
                 maxMarketEndDate = config.maxMarketEndDate,
@@ -500,6 +516,13 @@ class CopyTradingService(
                     request.marketSeries != null -> convertMarketSeriesToJson(request.marketSeries)
                     else -> copyTrading.marketSeries
                 },
+                coinFilterMode = request.coinFilterMode?.let { MarketFilterSupport.normalizeFilterMode(it) }
+                    ?: copyTrading.coinFilterMode,
+                coinSymbols = when {
+                    request.coinFilterMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
+                    request.coinSymbols != null -> convertCoinSymbolsToJson(request.coinSymbols)
+                    else -> copyTrading.coinSymbols
+                },
                 configName = configName,
                 pushFailedOrders = request.pushFailedOrders ?: copyTrading.pushFailedOrders,
                 pushFilteredOrders = request.pushFilteredOrders ?: copyTrading.pushFilteredOrders,
@@ -563,6 +586,8 @@ class CopyTradingService(
                     marketIntervals = updated.marketIntervals,
                     marketSeriesMode = updated.marketSeriesMode,
                     marketSeries = updated.marketSeries,
+                    coinFilterMode = updated.coinFilterMode,
+                    coinSymbols = updated.coinSymbols,
                     maxMarketEndDate = updated.maxMarketEndDate,
                     pushFilteredOrders = updated.pushFilteredOrders
                 )
@@ -819,6 +844,8 @@ class CopyTradingService(
             marketIntervals = jsonUtils.parseIntArray(copyTrading.marketIntervals).takeIf { it.isNotEmpty() },
             marketSeriesMode = copyTrading.marketSeriesMode,
             marketSeries = convertJsonToKeywords(copyTrading.marketSeries),
+            coinFilterMode = copyTrading.coinFilterMode,
+            coinSymbols = convertJsonToKeywords(copyTrading.coinSymbols),
             configName = copyTrading.configName,
             pushFailedOrders = copyTrading.pushFailedOrders,
             pushFilteredOrders = copyTrading.pushFilteredOrders,
@@ -868,6 +895,15 @@ class CopyTradingService(
 
     private fun resolveMarketSeriesJson(mode: String, series: List<String>?): String? {
         return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertMarketSeriesToJson(series)
+    }
+
+    private fun convertCoinSymbolsToJson(symbols: List<String>?): String? {
+        val normalized = MarketFilterSupport.normalizeCoinSymbols(symbols)
+        return if (normalized.isEmpty()) null else gson.toJson(normalized)
+    }
+
+    private fun resolveCoinSymbolsJson(mode: String, symbols: List<String>?): String? {
+        return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertCoinSymbolsToJson(symbols)
     }
     
     /**
@@ -934,6 +970,8 @@ class CopyTradingService(
         val marketIntervals: String?,  // JSON 字符串
         val marketSeriesMode: String,
         val marketSeries: String?,  // JSON 字符串
+        val coinFilterMode: String,
+        val coinSymbols: String?,  // JSON 字符串
         val maxMarketEndDate: Long?,  // 市场截止时间限制（毫秒时间戳）
         val pushFilteredOrders: Boolean  // 推送已过滤订单（默认关闭）
     )
@@ -1008,6 +1046,14 @@ class CopyTradingService(
             mode = marketSeriesMode,
             values = jsonUtils.parseStringArray(config.marketSeries),
             fieldLabel = "市场系列过滤"
+        )?.let { return it }
+
+        val coinFilterMode = MarketFilterSupport.normalizeFilterMode(config.coinFilterMode)
+        MarketFilterSupport.validateFilterMode(coinFilterMode, "coinFilterMode")?.let { return it }
+        MarketFilterSupport.validateFilterValues(
+            mode = coinFilterMode,
+            values = jsonUtils.parseStringArray(config.coinSymbols),
+            fieldLabel = "币种过滤"
         )?.let { return it }
 
         return null

@@ -29,7 +29,9 @@ enum class FilterStatus {
     /** 失败：市场周期过滤 */
     FAILED_MARKET_INTERVAL,
     /** 失败：市场系列过滤 */
-    FAILED_MARKET_SERIES
+    FAILED_MARKET_SERIES,
+    /** 失败：币种过滤 */
+    FAILED_COIN_SYMBOL
 }
 
 /**
@@ -121,6 +123,11 @@ data class FilterResult(
             status = FilterStatus.FAILED_MARKET_SERIES,
             reason = reason
         )
+
+        /** 币种过滤失败 */
+        fun coinSymbolFailed(reason: String) = FilterResult(
+            status = FilterStatus.FAILED_COIN_SYMBOL,
+            reason = reason
+        )
     }
 }
-

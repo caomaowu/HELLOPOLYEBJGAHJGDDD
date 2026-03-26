@@ -26,6 +26,14 @@ const MARKET_INTERVAL_OPTIONS = [
   { label: '1d', value: 86400 },
 ]
 
+const COIN_SYMBOL_OPTIONS = [
+  { label: 'BTC', value: 'BTC' },
+  { label: 'ETH', value: 'ETH' },
+  { label: 'SOL', value: 'SOL' },
+  { label: 'XRP', value: 'XRP' },
+  { label: 'DOGE', value: 'DOGE' },
+]
+
 interface EditModalProps {
   open: boolean
   onClose: () => void
@@ -137,6 +145,8 @@ const EditModal: React.FC<EditModalProps> = ({
           marketIntervals: found.marketIntervals,
           marketSeriesMode: found.marketSeriesMode || 'DISABLED',
           marketSeries: found.marketSeries,
+          coinFilterMode: found.coinFilterMode || 'DISABLED',
+          coinSymbols: found.coinSymbols,
           configName: found.configName || '',
           pushFailedOrders: found.pushFailedOrders ?? false,
           pushFilteredOrders: found.pushFilteredOrders ?? false
@@ -247,6 +257,14 @@ const EditModal: React.FC<EditModalProps> = ({
       (!values.marketSeries || values.marketSeries.length === 0)
     ) {
       message.error('请至少输入一个市场系列')
+      return
+    }
+
+    if (
+      (values.coinFilterMode === 'WHITELIST' || values.coinFilterMode === 'BLACKLIST') &&
+      (!values.coinSymbols || values.coinSymbols.length === 0)
+    ) {
+      message.error('请至少选择一个币种')
       return
     }
 
@@ -364,6 +382,10 @@ const EditModal: React.FC<EditModalProps> = ({
         marketSeries: (values.marketSeriesMode === 'WHITELIST' || values.marketSeriesMode === 'BLACKLIST')
           ? (values.marketSeries as string[] | undefined)?.map((item) => item.trim()).filter(Boolean)
           : undefined,
+        coinFilterMode: values.coinFilterMode || 'DISABLED',
+        coinSymbols: (values.coinFilterMode === 'WHITELIST' || values.coinFilterMode === 'BLACKLIST')
+          ? values.coinSymbols
+          : undefined,
         configName: values.configName?.trim() || undefined,
         pushFailedOrders: values.pushFailedOrders,
         pushFilteredOrders: values.pushFilteredOrders,
@@ -414,6 +436,7 @@ const EditModal: React.FC<EditModalProps> = ({
             marketCategoryMode: 'DISABLED',
             marketIntervalMode: 'DISABLED',
             marketSeriesMode: 'DISABLED',
+            coinFilterMode: 'DISABLED',
             multiplierMode: 'NONE',
             buyCycleEnabled: false,
             buyCycleRunMinutes: 45,
@@ -956,6 +979,40 @@ const EditModal: React.FC<EditModalProps> = ({
                     mode="tags"
                     tokenSeparators={[',', ' ']}
                     placeholder="输入系列前缀，例如 btc-updown-15m"
+                  />
+                </Form.Item>
+              )
+            }}
+          </Form.Item>
+
+          <Form.Item
+            label="币种过滤"
+            name="coinFilterMode"
+            tooltip="按加密货币币种过滤，例如只跟 ETH，或 ETH+BTC"
+          >
+            <Radio.Group>
+              <Radio value="DISABLED">{t('copyTradingEdit.disabled') || '不启用'}</Radio>
+              <Radio value="WHITELIST">{t('copyTradingEdit.whitelist') || '白名单'}</Radio>
+              <Radio value="BLACKLIST">{t('copyTradingEdit.blacklist') || '黑名单'}</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.coinFilterMode !== currentValues.coinFilterMode}>
+            {({ getFieldValue }) => {
+              const mode = getFieldValue('coinFilterMode')
+              if (mode !== 'WHITELIST' && mode !== 'BLACKLIST') {
+                return null
+              }
+              return (
+                <Form.Item
+                  label="币种"
+                  name="coinSymbols"
+                  rules={[{ required: true, message: '请至少选择一个币种' }]}
+                >
+                  <Select
+                    mode="multiple"
+                    options={COIN_SYMBOL_OPTIONS}
+                    placeholder="选择需要过滤的币种"
                   />
                 </Form.Item>
               )

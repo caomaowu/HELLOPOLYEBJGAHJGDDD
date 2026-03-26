@@ -309,6 +309,8 @@ type MarketFilterSummaryConfig = {
   marketIntervals?: Array<string | number | null | undefined> | null
   marketSeriesMode?: string | null
   marketSeries?: Array<string | null | undefined> | null
+  coinFilterMode?: string | null
+  coinSymbols?: Array<string | null | undefined> | null
   maxMarketEndDate?: number | null
 }
 
@@ -388,6 +390,15 @@ export const formatMarketFilterSummary = (config: MarketFilterSummaryConfig): st
     summary.push(`系列: ${compactSummaryValues(seriesValues)}`)
   } else if (config.marketSeriesMode === 'BLACKLIST' && seriesValues.length > 0) {
     summary.push(`系列排除: ${compactSummaryValues(seriesValues)}`)
+  }
+
+  const coinValues = Array.from(
+    new Set((config.coinSymbols || []).map((value) => String(value || '').trim().toUpperCase()).filter(Boolean))
+  )
+  if (config.coinFilterMode === 'WHITELIST' && coinValues.length > 0) {
+    summary.push(`币种: ${compactSummaryValues(coinValues)}`)
+  } else if (config.coinFilterMode === 'BLACKLIST' && coinValues.length > 0) {
+    summary.push(`币种排除: ${compactSummaryValues(coinValues)}`)
   }
 
   const durationLabel = formatDurationLabel(config.maxMarketEndDate)

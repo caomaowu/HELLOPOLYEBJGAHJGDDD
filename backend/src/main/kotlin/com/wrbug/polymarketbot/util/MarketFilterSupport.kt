@@ -16,6 +16,7 @@ object MarketFilterSupport {
     )
 
     private val timedSeriesPattern = Regex("^([a-z0-9-]+-(?:5m|15m|1h|4h|1d))(?:-\\d+)?$")
+    private val supportedCoinSymbols = setOf("BTC", "ETH", "SOL", "XRP", "DOGE")
 
     fun normalizeFilterMode(mode: String?): String {
         if (mode.isNullOrBlank()) {
@@ -63,6 +64,18 @@ object MarketFilterSupport {
             .sorted()
     }
 
+    fun normalizeCoinSymbol(symbol: String?): String? {
+        val normalized = symbol?.trim()?.uppercase()
+        return normalized?.takeIf { it in supportedCoinSymbols }
+    }
+
+    fun normalizeCoinSymbols(symbols: List<String>?): List<String> {
+        return symbols.orEmpty()
+            .mapNotNull { normalizeCoinSymbol(it) }
+            .distinct()
+            .sorted()
+    }
+
     fun validateFilterValues(
         mode: String,
         values: Collection<*>,
@@ -92,6 +105,7 @@ object MarketFilterSupport {
         val seriesSlugPrefix = match?.groupValues?.getOrNull(1)
             ?: candidate.takeIf { extractIntervalSeconds(candidate) != null }
         val intervalSeconds = extractIntervalSeconds(seriesSlugPrefix ?: candidate)
+        val coinSymbol = extractCoinSymbol(seriesSlugPrefix ?: candidate)
 
         val marketSourceType = when {
             seriesSlugPrefix?.contains("-updown-") == true -> "CRYPTO_UPDOWN"
@@ -102,8 +116,18 @@ object MarketFilterSupport {
         return MarketSeriesMetadata(
             seriesSlugPrefix = seriesSlugPrefix,
             intervalSeconds = intervalSeconds,
+            coinSymbol = coinSymbol,
             marketSourceType = marketSourceType
         )
+    }
+
+    fun extractCoinSymbol(seriesSlugPrefix: String?): String? {
+        if (seriesSlugPrefix.isNullOrBlank()) {
+            return null
+        }
+        val normalized = seriesSlugPrefix.trim().lowercase()
+        val coin = normalized.substringBefore('-')
+        return normalizeCoinSymbol(coin)
     }
 
     private fun extractIntervalSeconds(value: String?): Int? {
@@ -125,5 +149,6 @@ object MarketFilterSupport {
 data class MarketSeriesMetadata(
     val seriesSlugPrefix: String? = null,
     val intervalSeconds: Int? = null,
+    val coinSymbol: String? = null,
     val marketSourceType: String = "GENERIC"
 )

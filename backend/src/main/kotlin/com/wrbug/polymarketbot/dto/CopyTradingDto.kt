@@ -63,6 +63,8 @@ data class CopyTradingCreateRequest(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选）
     val pushFailedOrders: Boolean? = null,  // 推送失败订单（可选）
@@ -125,6 +127,8 @@ data class CopyTradingUpdateRequest(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选，但提供时必须非空）
     val pushFailedOrders: Boolean? = null,  // 推送失败订单（可选）
@@ -229,6 +233,8 @@ data class CopyTradingDto(
     val marketIntervals: List<Int>? = null,  // 市场周期过滤列表（单位秒）
     val marketSeriesMode: String? = null,  // 市场系列过滤模式
     val marketSeries: List<String>? = null,  // 市场系列过滤列表
+    val coinFilterMode: String? = null,  // 币种过滤模式
+    val coinSymbols: List<String>? = null,  // 币种过滤列表
     // 新增配置字段
     val configName: String? = null,  // 配置名（可选）
     val pushFailedOrders: Boolean = false,  // 推送失败订单（默认关闭）
@@ -266,4 +272,3 @@ data class AccountTemplatesResponse(
     val list: List<AccountTemplateDto>,
     val total: Long
 )
-

@@ -41,6 +41,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
     MAX_POSITION_COUNT: { color: 'volcano', text: t('filteredOrdersList.filterTypes.maxPositionCount') || '超过最大活跃仓位数量' },
     MARKET_END_DATE: { color: 'cyan', text: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
     KEYWORD_FILTER: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' },
+    COIN_SYMBOL: { color: 'cyan', text: '币种过滤' },
     SIZING: { color: 'magenta', text: t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝' },
     AGGREGATION_BUFFERED: { color: 'purple', text: t('filteredOrdersList.filterTypes.aggregationBuffered') || '已进入聚合缓冲' },
     AGGREGATION_RELEASED: { color: 'geekblue', text: t('filteredOrdersList.filterTypes.aggregationReleased') || '聚合已释放执行' },
@@ -204,6 +205,7 @@ const FilteredOrdersModal: React.FC<FilteredOrdersModalProps> = ({
           <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败'}</Option>
           <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空'}</Option>
           <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符'}</Option>
+          <Option value="COIN_SYMBOL">币种过滤</Option>
           <Option value="SIZING">{t('filteredOrdersList.filterTypes.sizing') || 'Sizing 拒绝'}</Option>
           <Option value="AGGREGATION_BUFFERED">{t('filteredOrdersList.filterTypes.aggregationBuffered') || '已进入聚合缓冲'}</Option>
           <Option value="AGGREGATION_RELEASED">{t('filteredOrdersList.filterTypes.aggregationReleased') || '聚合已释放执行'}</Option>

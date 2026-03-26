@@ -643,6 +643,8 @@ export interface CopyTradingTemplate {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   pushFilteredOrders?: boolean  // 推送已过滤订单（默认关闭）
   createdAt: number
   updatedAt: number
@@ -694,6 +696,8 @@ export interface TemplateCreateRequest {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   pushFilteredOrders?: boolean
 }
 
@@ -736,6 +740,8 @@ export interface TemplateUpdateRequest {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   pushFilteredOrders?: boolean
 }
 
@@ -843,6 +849,8 @@ export interface CopyTrading {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders: boolean  // 推送失败订单（默认关闭）
@@ -917,6 +925,8 @@ export interface CopyTradingCreateRequest {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders?: boolean  // 推送失败订单（可选）
@@ -979,6 +989,8 @@ export interface CopyTradingUpdateRequest {
   marketIntervals?: number[]
   marketSeriesMode?: FilterMode
   marketSeries?: string[]
+  coinFilterMode?: FilterMode
+  coinSymbols?: string[]
   // 新增配置字段
   configName?: string  // 配置名（可选，但提供时必须非空）
   pushFailedOrders?: boolean  // 推送失败订单（可选）

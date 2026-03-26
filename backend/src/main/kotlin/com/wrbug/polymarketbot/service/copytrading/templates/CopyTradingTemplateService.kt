@@ -102,6 +102,11 @@ class CopyTradingTemplateService(
                     mode = MarketFilterSupport.normalizeFilterMode(request.marketSeriesMode),
                     series = request.marketSeries
                 ),
+                coinFilterMode = MarketFilterSupport.normalizeFilterMode(request.coinFilterMode),
+                coinSymbols = resolveCoinSymbolsJson(
+                    mode = MarketFilterSupport.normalizeFilterMode(request.coinFilterMode),
+                    symbols = request.coinSymbols
+                ),
                 pushFilteredOrders = request.pushFilteredOrders ?: false
             )
 
@@ -201,6 +206,13 @@ class CopyTradingTemplateService(
                     request.marketSeriesMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
                     request.marketSeries != null -> convertMarketSeriesToJson(request.marketSeries)
                     else -> template.marketSeries
+                },
+                coinFilterMode = request.coinFilterMode?.let { MarketFilterSupport.normalizeFilterMode(it) }
+                    ?: template.coinFilterMode,
+                coinSymbols = when {
+                    request.coinFilterMode?.let { MarketFilterSupport.normalizeFilterMode(it) } == MarketFilterSupport.FILTER_MODE_DISABLED -> null
+                    request.coinSymbols != null -> convertCoinSymbolsToJson(request.coinSymbols)
+                    else -> template.coinSymbols
                 },
                 pushFilteredOrders = request.pushFilteredOrders ?: template.pushFilteredOrders,
                 updatedAt = System.currentTimeMillis()
@@ -316,6 +328,15 @@ class CopyTradingTemplateService(
                     ),
                     series = request.marketSeries ?: jsonUtils.parseStringArray(sourceTemplate.marketSeries)
                 ),
+                coinFilterMode = MarketFilterSupport.normalizeFilterMode(
+                    request.coinFilterMode ?: sourceTemplate.coinFilterMode
+                ),
+                coinSymbols = resolveCoinSymbolsJson(
+                    mode = MarketFilterSupport.normalizeFilterMode(
+                        request.coinFilterMode ?: sourceTemplate.coinFilterMode
+                    ),
+                    symbols = request.coinSymbols ?: jsonUtils.parseStringArray(sourceTemplate.coinSymbols)
+                ),
                 pushFilteredOrders = request.pushFilteredOrders ?: sourceTemplate.pushFilteredOrders
             )
 
@@ -412,6 +433,8 @@ class CopyTradingTemplateService(
             marketIntervals = jsonUtils.parseIntArray(template.marketIntervals).takeIf { it.isNotEmpty() },
             marketSeriesMode = template.marketSeriesMode,
             marketSeries = jsonUtils.parseStringArray(template.marketSeries).takeIf { it.isNotEmpty() },
+            coinFilterMode = template.coinFilterMode,
+            coinSymbols = jsonUtils.parseStringArray(template.coinSymbols).takeIf { it.isNotEmpty() },
             pushFilteredOrders = template.pushFilteredOrders,
             createdAt = template.createdAt,
             updatedAt = template.updatedAt
@@ -443,6 +466,15 @@ class CopyTradingTemplateService(
 
     private fun resolveMarketSeriesJson(mode: String, series: List<String>?): String? {
         return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertMarketSeriesToJson(series)
+    }
+
+    private fun convertCoinSymbolsToJson(symbols: List<String>?): String? {
+        val normalized = MarketFilterSupport.normalizeCoinSymbols(symbols)
+        return if (normalized.isEmpty()) null else gson.toJson(normalized)
+    }
+
+    private fun resolveCoinSymbolsJson(mode: String, symbols: List<String>?): String? {
+        return if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) null else convertCoinSymbolsToJson(symbols)
     }
 
     private fun mergeOptionalDecimal(rawValue: String?, currentValue: BigDecimal?): BigDecimal? {
@@ -508,7 +540,14 @@ class CopyTradingTemplateService(
             fieldLabel = "模板市场系列过滤"
         )?.let { return it }
 
+        val coinFilterMode = MarketFilterSupport.normalizeFilterMode(template.coinFilterMode)
+        MarketFilterSupport.validateFilterMode(coinFilterMode, "coinFilterMode")?.let { return it }
+        MarketFilterSupport.validateFilterValues(
+            mode = coinFilterMode,
+            values = jsonUtils.parseStringArray(template.coinSymbols),
+            fieldLabel = "模板币种过滤"
+        )?.let { return it }
+
         return null
     }
 }
-

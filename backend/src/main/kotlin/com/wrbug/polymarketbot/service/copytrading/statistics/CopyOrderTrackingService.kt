@@ -2930,6 +2930,7 @@ open class CopyOrderTrackingService(
             FilterStatus.FAILED_MARKET_CATEGORY -> "MARKET_CATEGORY"
             FilterStatus.FAILED_MARKET_INTERVAL -> "MARKET_INTERVAL"
             FilterStatus.FAILED_MARKET_SERIES -> "MARKET_SERIES"
+            FilterStatus.FAILED_COIN_SYMBOL -> "COIN_SYMBOL"
         }
     }
 
@@ -2973,7 +2974,9 @@ open class CopyOrderTrackingService(
         )
         var marketFilterInput = MarketFilterInput(
             seriesSlugPrefix = payload.marketSeriesSlugPrefix ?: payloadMetadata.seriesSlugPrefix,
-            intervalSeconds = payload.marketIntervalSeconds ?: payloadMetadata.intervalSeconds
+            intervalSeconds = payload.marketIntervalSeconds ?: payloadMetadata.intervalSeconds,
+            coinSymbol = MarketFilterSupport.extractCoinSymbol(payload.marketSeriesSlugPrefix)
+                ?: payloadMetadata.coinSymbol
         )
         val resolvedIntervalSeconds = marketFilterInput.intervalSeconds
 
@@ -2984,8 +2987,16 @@ open class CopyOrderTrackingService(
             marketFilterInput.seriesSlugPrefix.isNullOrBlank()
         val needStoredInterval = copyTrading.marketIntervalMode != MarketFilterSupport.FILTER_MODE_DISABLED &&
             (resolvedIntervalSeconds == null || resolvedIntervalSeconds <= 0)
+        val needStoredCoin = copyTrading.coinFilterMode != MarketFilterSupport.FILTER_MODE_DISABLED &&
+            marketFilterInput.coinSymbol.isNullOrBlank()
 
-        if (!needStoredTitle && !needStoredCategory && !needStoredEndDate && !needStoredSeries && !needStoredInterval) {
+        if (!needStoredTitle &&
+            !needStoredCategory &&
+            !needStoredEndDate &&
+            !needStoredSeries &&
+            !needStoredInterval &&
+            !needStoredCoin
+        ) {
             return ResolvedMarketFilterInput(
                 input = marketFilterInput,
                 metadataSource = "payload"
@@ -3007,6 +3018,7 @@ open class CopyOrderTrackingService(
                     needStoredEndDate = needStoredEndDate,
                     needStoredSeries = needStoredSeries,
                     needStoredInterval = needStoredInterval,
+                    needStoredCoin = needStoredCoin,
                     marketFilterInput = marketFilterInput
                 )
             ) {
@@ -3023,7 +3035,9 @@ open class CopyOrderTrackingService(
                     category = market?.category,
                     endDate = market?.endDate,
                     seriesSlugPrefix = marketFilterInput.seriesSlugPrefix ?: market?.seriesSlugPrefix,
-                    intervalSeconds = marketFilterInput.intervalSeconds ?: market?.intervalSeconds
+                    intervalSeconds = marketFilterInput.intervalSeconds ?: market?.intervalSeconds,
+                    coinSymbol = marketFilterInput.coinSymbol
+                        ?: MarketFilterSupport.extractCoinSymbol(market?.seriesSlugPrefix)
                 ),
                 metadataSource = metadataSource
             )
@@ -3043,6 +3057,7 @@ open class CopyOrderTrackingService(
         needStoredEndDate: Boolean,
         needStoredSeries: Boolean,
         needStoredInterval: Boolean,
+        needStoredCoin: Boolean,
         marketFilterInput: MarketFilterInput
     ): Boolean {
         if (needStoredTitle && market.title.isBlank()) {
@@ -3063,6 +3078,12 @@ open class CopyOrderTrackingService(
         if (needStoredInterval &&
             (marketFilterInput.intervalSeconds == null || marketFilterInput.intervalSeconds <= 0) &&
             (market.intervalSeconds == null || market.intervalSeconds <= 0)
+        ) {
+            return true
+        }
+        if (needStoredCoin &&
+            marketFilterInput.coinSymbol.isNullOrBlank() &&
+            MarketFilterSupport.extractCoinSymbol(market.seriesSlugPrefix).isNullOrBlank()
         ) {
             return true
         }

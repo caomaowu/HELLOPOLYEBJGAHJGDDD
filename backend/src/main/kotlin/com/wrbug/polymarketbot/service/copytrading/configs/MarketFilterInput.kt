@@ -9,5 +9,6 @@ data class MarketFilterInput(
     val category: String? = null,
     val endDate: Long? = null,
     val seriesSlugPrefix: String? = null,
-    val intervalSeconds: Int? = null
+    val intervalSeconds: Int? = null,
+    val coinSymbol: String? = null
 )

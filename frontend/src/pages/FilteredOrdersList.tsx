@@ -67,6 +67,7 @@ const FilteredOrdersList: React.FC = () => {
       'MAX_POSITION_COUNT': { color: 'volcano', label: t('filteredOrdersList.filterTypes.maxPositionCount') || '超过最大活跃仓位数量' },
       'MARKET_END_DATE': { color: 'cyan', label: t('filteredOrdersList.filterTypes.marketEndDate') || '市场截止时间超出限制' },
       'KEYWORD_FILTER': { color: 'geekblue', label: t('filteredOrdersList.filterTypes.keywordFilter') || '关键字过滤' },
+      'COIN_SYMBOL': { color: 'cyan', label: '币种过滤' },
       'SIZING': { color: 'magenta', label: 'Sizing 拒绝' },
       'AGGREGATION_TIMEOUT': { color: 'purple', label: '聚合超时' },
       'AGGREGATION_DISABLED': { color: 'default', label: '聚合取消' },
@@ -221,6 +222,7 @@ const FilteredOrdersList: React.FC = () => {
               <Option value="ORDERBOOK_ERROR">{t('filteredOrdersList.filterTypes.orderbookError') || '订单簿获取失败'}</Option>
               <Option value="ORDERBOOK_EMPTY">{t('filteredOrdersList.filterTypes.orderbookEmpty') || '订单簿为空'}</Option>
               <Option value="PRICE_RANGE">{t('filteredOrdersList.filterTypes.priceRange') || '价格区间不符'}</Option>
+              <Option value="COIN_SYMBOL">币种过滤</Option>
               <Option value="SIZING">Sizing 拒绝</Option>
               <Option value="AGGREGATION_TIMEOUT">聚合超时</Option>
               <Option value="AGGREGATION_DISABLED">聚合取消</Option>

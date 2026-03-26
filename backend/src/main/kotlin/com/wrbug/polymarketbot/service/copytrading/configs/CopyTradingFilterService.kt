@@ -68,6 +68,13 @@ class CopyTradingFilterService(
                 return seriesCheck
             }
         }
+
+        if (copyTrading.coinFilterMode != MarketFilterSupport.FILTER_MODE_DISABLED) {
+            val coinCheck = checkCoinSymbolFilter(copyTrading, market.coinSymbol, market.seriesSlugPrefix)
+            if (!coinCheck.isPassed) {
+                return coinCheck
+            }
+        }
         
         // 1.5. 市场截止时间检查（如果配置了市场截止时间限制）
         if (copyTrading.maxMarketEndDate != null) {
@@ -251,6 +258,53 @@ class CopyTradingFilterService(
             MarketFilterSupport.FILTER_MODE_BLACKLIST -> {
                 if (matched) {
                     FilterResult.marketSeriesFailed("市场系列命中黑名单: series=$normalizedSeries")
+                } else {
+                    FilterResult.passed()
+                }
+            }
+
+            else -> FilterResult.passed()
+        }
+    }
+
+    private fun checkCoinSymbolFilter(
+        copyTrading: CopyTrading,
+        marketCoinSymbol: String?,
+        seriesSlugPrefix: String?
+    ): FilterResult {
+        val mode = MarketFilterSupport.normalizeFilterMode(copyTrading.coinFilterMode)
+        if (mode == MarketFilterSupport.FILTER_MODE_DISABLED) {
+            return FilterResult.passed()
+        }
+
+        val normalizedCoinSymbol = MarketFilterSupport.normalizeCoinSymbol(marketCoinSymbol)
+            ?: MarketFilterSupport.extractCoinSymbol(seriesSlugPrefix)
+        if (normalizedCoinSymbol.isNullOrBlank()) {
+            return FilterResult.coinSymbolFailed("市场币种缺失，无法进行币种过滤")
+        }
+
+        val coinSymbols = MarketFilterSupport.normalizeCoinSymbols(
+            jsonUtils.parseStringArray(copyTrading.coinSymbols)
+        )
+        if (coinSymbols.isEmpty()) {
+            return FilterResult.coinSymbolFailed("币种过滤已启用，但币种列表为空")
+        }
+
+        val matched = normalizedCoinSymbol in coinSymbols
+        return when (mode) {
+            MarketFilterSupport.FILTER_MODE_WHITELIST -> {
+                if (matched) {
+                    FilterResult.passed()
+                } else {
+                    FilterResult.coinSymbolFailed(
+                        "市场币种不在白名单中: coinSymbol=$normalizedCoinSymbol, allowed=${coinSymbols.joinToString(", ")}"
+                    )
+                }
+            }
+
+            MarketFilterSupport.FILTER_MODE_BLACKLIST -> {
+                if (matched) {
+                    FilterResult.coinSymbolFailed("市场币种命中黑名单: coinSymbol=$normalizedCoinSymbol")
                 } else {
                     FilterResult.passed()
                 }
@@ -468,4 +522,3 @@ class CopyTradingFilterService(
         return FilterResult.passed()
     }
 }
-
